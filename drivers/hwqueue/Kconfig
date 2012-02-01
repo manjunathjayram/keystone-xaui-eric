@@ -8,4 +8,12 @@ config HWQUEUE
 
 menu "Hardware Queue drivers"
 
+config HWQUEUE_TEST
+	tristate "Hardware Queue test driver"
+	depends on HWQUEUE
+	help
+	  Say y here to enable test code for the hardware queue subsystem
+
+	  If unsure, say N.
+
 endmenu
