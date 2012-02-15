@@ -261,6 +261,7 @@ struct dma_chan_percpu {
  * @private: private data for certain client-channel associations
  */
 struct dma_chan {
+	const char *name;
 	struct dma_device *device;
 	dma_cookie_t cookie;
 	dma_cookie_t completed_cookie;
@@ -1038,8 +1039,8 @@ struct dma_chan *dma_find_channel(enum dma_transaction_type tx_type);
 enum dma_status dma_sync_wait(struct dma_chan *chan, dma_cookie_t cookie);
 enum dma_status dma_wait_for_async_tx(struct dma_async_tx_descriptor *tx);
 void dma_issue_pending_all(void);
-struct dma_chan *__dma_request_channel(const dma_cap_mask_t *mask,
-					dma_filter_fn fn, void *fn_param);
+struct dma_chan *__dma_request_channel(const dma_cap_mask_t *mask, const char *name,
+				       dma_filter_fn fn, void *fn_param);
 struct dma_chan *dma_request_slave_channel(struct device *dev, const char *name);
 void dma_release_channel(struct dma_chan *chan);
 #else
@@ -1058,7 +1059,8 @@ static inline enum dma_status dma_wait_for_async_tx(struct dma_async_tx_descript
 static inline void dma_issue_pending_all(void)
 {
 }
-static inline struct dma_chan *__dma_request_channel(const dma_cap_mask_t *mask,
+static inline struct dma_chan *
+__dma_request_channel(const dma_cap_mask_t *mask,  const char *name,
 					      dma_filter_fn fn, void *fn_param)
 {
 	return NULL;
@@ -1080,7 +1082,10 @@ void dma_async_device_unregister(struct dma_device *device);
 void dma_run_dependencies(struct dma_async_tx_descriptor *tx);
 struct dma_chan *dma_get_slave_channel(struct dma_chan *chan);
 struct dma_chan *net_dma_find_channel(void);
-#define dma_request_channel(mask, x, y) __dma_request_channel(&(mask), x, y)
+#define dma_request_channel(mask, x, y)			\
+	__dma_request_channel(&(mask), NULL, x, y)
+#define dma_request_channel_by_name(mask, name)			\
+	__dma_request_channel(&(mask), name, NULL, NULL)
 #define dma_request_slave_channel_compat(mask, x, y, dev, name) \
 	__dma_request_slave_channel_compat(&(mask), x, y, dev, name)
 
@@ -1095,7 +1100,7 @@ static inline struct dma_chan
 	if (chan)
 		return chan;
 
-	return __dma_request_channel(mask, fn, fn_param);
+	return __dma_request_channel(mask, name, fn, fn_param);
 }
 
 /* --- Helper iov-locking functions --- */
