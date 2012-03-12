@@ -16,4 +16,14 @@ config HWQUEUE_TEST
 
 	  If unsure, say N.
 
+config HWQUEUE_KEYSTONE
+	tristate "Keystone Hardware Queue device"
+	depends on TI_KEYSTONE
+	default y if TI_KEYSTONE
+	select HWQUEUE
+	help
+	  Say y here to support the Keystone Hardware queue device
+
+	  If unsure, say N.
+
 endmenu
