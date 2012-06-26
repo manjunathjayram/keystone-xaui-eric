@@ -29,6 +29,37 @@
 #define PDSP_CTRL_ENABLE	BIT(1)
 #define PDSP_CTRL_RUNNING	BIT(15)
 
+#define ACC_MAX_CHANNEL		48
+#define ACC_DEFAULT_PERIOD		25 /* usecs */
+#define ACC_DESCS_MAX			SZ_1K
+#define ACC_DESCS_MASK		(ACC_DESCS_MAX - 1)
+#define ACC_CHANNEL_INT_BASE		2
+
+#define ACC_LIST_ENTRY_TYPE		1
+#define ACC_LIST_ENTRY_WORDS		(1 << ACC_LIST_ENTRY_TYPE)
+#define ACC_LIST_ENTRY_QUEUE_IDX	0
+#define ACC_LIST_ENTRY_DESC_IDX	(ACC_LIST_ENTRY_WORDS - 1)
+
+#define ACC_CMD_DISABLE_CHANNEL	0x80
+#define ACC_CMD_ENABLE_CHANNEL	0x81
+#define ACC_CFG_MULTI_QUEUE		BIT(21)
+
+#define ACC_INTD_OFFSET_EOI		(0x0010)
+#define ACC_INTD_OFFSET_COUNT(ch)	(0x0300 + 4 * (ch))
+#define ACC_INTD_OFFSET_STATUS(ch)	(0x0200 + 4 * ((ch) / 32))
+
+enum khwq_acc_result {
+	ACC_RET_IDLE,
+	ACC_RET_SUCCESS,
+	ACC_RET_INVALID_COMMAND,
+	ACC_RET_INVALID_CHANNEL,
+	ACC_RET_INACTIVE_CHANNEL,
+	ACC_RET_ACTIVE_CHANNEL,
+	ACC_RET_INVALID_QUEUE,
+
+	ACC_RET_INVALID_RET,
+};
+
 struct khwq_reg_config {
 	u32		revision;
 	u32		__pad1;
@@ -59,6 +90,14 @@ struct khwq_reg_pdsp_regs {
 	u32		status;
 	u32		cycle_count;
 	u32		stall_count;
+};
+
+struct khwq_reg_acc_command {
+	u32		command;
+	u32		queue_mask;
+	u32		list_phys;
+	u32		queue_num;
+	u32		timer_config;
 };
 
 struct khwq_region {
@@ -97,12 +136,34 @@ struct khwq_pdsp_info {
 	struct khwq_reg_pdsp_regs  __iomem	*regs;
 	union {
 		void __iomem				*command;
+		struct khwq_reg_acc_command __iomem	*acc_command;
 	};
 	void __iomem				*intd;
 	u32 __iomem				*iram;
 	const char				*firmware;
 	u32					 id;
 	struct list_head			 list;
+};
+
+struct khwq_acc_info {
+	u32			 pdsp_id;
+	u32			 start_channel;
+	u32			 list_entries;
+	u32			 pacing_mode;
+	u32			 timer_count;
+	int			 mem_size;
+	int			 list_size;
+	struct khwq_pdsp_info	*pdsp;
+};
+
+struct khwq_acc_channel {
+	u32			 channel;
+	u32			 list_index;
+	u32			 open_mask;
+	u32			*list_cpu[2];
+	dma_addr_t		 list_dma[2];
+	char			 name[32];
+	atomic_t		 retrigger_count;
 };
 
 struct khwq_range_ops;
@@ -116,6 +177,8 @@ struct khwq_range_info {
 	unsigned		 flags;
 	struct list_head	 list;
 	struct khwq_range_ops	*ops;
+	struct khwq_acc_info	 acc_info;
+	struct khwq_acc_channel	*acc;
 };
 
 struct khwq_range_ops {
@@ -133,6 +196,8 @@ struct khwq_range_ops {
 
 #define RANGE_RESERVED		BIT(0)
 #define RANGE_HAS_IRQ		BIT(1)
+#define RANGE_HAS_ACCUMULATOR	BIT(2)
+#define RANGE_MULTI_QUEUE	BIT(3)
 
 struct khwq_qmgr_info {
 	unsigned			 start_queue;
@@ -157,9 +222,18 @@ struct khwq_device {
 	struct list_head		 qmgrs;
 };
 
+struct khwq_desc {
+	u32			 val;
+	unsigned		 size;
+	struct list_head	 list;
+};
+
 struct khwq_instance {
 	struct khwq_device	*kdev;
 	struct khwq_range_info	*range;
+	u32			*descs;
+	atomic_t		 desc_head, desc_tail, desc_count;
+	struct khwq_acc_channel	*acc;
 	struct khwq_region	*last; /* cache last region used */
 	struct khwq_qmgr_info	*qmgr; /* cache qmgr for the instance */
 	int			 irq_num; /*irq num -ve for non-irq queues */
@@ -213,5 +287,8 @@ khwq_find_qmgr(struct hwqueue_instance *inst)
 
 	return NULL;
 }
+
+int khwq_init_acc_range(struct khwq_device *kdev, struct device_node *node,
+			struct khwq_range_info *range);
 
 #endif /* __KEYSTONE_HWQUEUE_H__ */
