@@ -71,6 +71,13 @@ static int khwq_match(struct hwqueue_instance *inst, unsigned flags)
 	if (range->flags & RANGE_RESERVED)
 		score += 1000;
 
+	if ((range->flags & RANGE_HAS_ACCUMULATOR) &&
+	    !(flags & O_HIGHTHROUGHPUT))
+		score += 100;
+	if (!(range->flags & RANGE_HAS_ACCUMULATOR) &&
+	    (flags & O_HIGHTHROUGHPUT))
+		score += 100;
+
 	if ((range->flags & RANGE_HAS_IRQ) &&
 	    !(flags & (O_LOWLATENCY | O_HIGHTHROUGHPUT)))
 		score += 100;
@@ -231,16 +238,33 @@ static dma_addr_t khwq_pop(struct hwqueue_instance *inst, unsigned *size)
 	struct khwq_device *kdev = from_hdev(inst->hdev);
 	unsigned id = hwqueue_inst_to_id(inst);
 	struct khwq_qmgr_info *qmgr;
-	u32 val, desc_size;
+	u32 val, desc_size, idx;
 	dma_addr_t dma;
 
 	qmgr = khwq_find_qmgr(inst);
 	if (unlikely(!qmgr))
 		return -ENODEV;
 
-	val = __raw_readl(&qmgr->reg_pop[id].ptr_size_thresh);
-	if (unlikely(!val))
-		return 0;
+	/* are we accumulated? */
+	if (kq->descs) {
+		if (unlikely(atomic_dec_return(&kq->desc_count) < 0)) {
+			atomic_inc(&kq->desc_count);
+			dev_dbg(kdev->dev, "acc-pop empty queue %d\n", id);
+			return 0;
+		}
+
+		idx  = atomic_inc_return(&kq->desc_head);
+		idx &= ACC_DESCS_MASK;
+
+		val = kq->descs[idx];
+
+		dev_dbg(kdev->dev, "acc-pop %08x (at %d) from queue %d\n",
+			val, idx, id);
+	} else {
+		val = __raw_readl(&qmgr->reg_pop[id].ptr_size_thresh);
+		if (unlikely(!val))
+			return 0;
+	}
 
 	dma = val & DESC_PTR_MASK;
 	desc_size = ((val & DESC_SIZE_MASK) + 1) * 16;
@@ -275,6 +299,7 @@ static int khwq_flush(struct hwqueue_instance *inst)
 	if (!qmgr)
 		return -ENODEV;
 
+	atomic_set(&kq->desc_count, 0);
 	__raw_writel(0, &qmgr->reg_push[id].ptr_size_thresh);
 	return 0;
 }
@@ -663,6 +688,14 @@ static int khwq_setup_queue_range(struct khwq_device *kdev,
 	if (of_get_property(node, "reserved", NULL))
 		range->flags |= RANGE_RESERVED;
 
+	if (of_get_property(node, "accumulator", NULL)) {
+		ret = khwq_init_acc_range(kdev, node, range);
+		if (ret < 0) {
+			devm_kfree(dev, range);
+			return ret;
+		}
+	}
+
 	/* set threshold to 1, and flush out the queues */
 	for_each_qmgr(kdev, qmgr) {
 		start = max(qmgr->start_queue, range->queue_base);
@@ -684,7 +717,8 @@ static int khwq_setup_queue_range(struct khwq_device *kdev,
 		range->irq_base,
 		range->irq_base + range->num_queues - 1,
 		(range->flags & RANGE_HAS_IRQ) ? ", has irq" : "",
-		(range->flags & RANGE_RESERVED) ? ", reserved" : "");
+		(range->flags & RANGE_RESERVED) ? ", reserved" : "",
+		(range->flags & RANGE_HAS_ACCUMULATOR) ? ", acc" : "");
 
 	return 0;
 }
