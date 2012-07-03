@@ -434,7 +434,7 @@ EXPORT_SYMBOL(phy_start_aneg);
  *   function.
  */
 void phy_start_machine(struct phy_device *phydev,
-		void (*handler)(struct net_device *))
+		       void (*handler)(struct net_device *, void *context))
 {
 	phydev->adjust_state = handler;
 
@@ -731,7 +731,7 @@ EXPORT_SYMBOL(phy_start);
 
 static inline void phy_adjust_link(struct phy_device *phydev)
 {
-	phydev->adjust_link(phydev->attached_dev);
+	phydev->adjust_link(phydev->attached_dev, phydev->context);
 }
 
 /**
@@ -749,7 +749,7 @@ void phy_state_machine(struct work_struct *work)
 	mutex_lock(&phydev->lock);
 
 	if (phydev->adjust_state)
-		phydev->adjust_state(phydev->attached_dev);
+		phydev->adjust_state(phydev->attached_dev, phydev->context);
 
 	switch(phydev->state) {
 		case PHY_DOWN:
