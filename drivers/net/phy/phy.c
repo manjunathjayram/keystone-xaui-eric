@@ -729,6 +729,11 @@ void phy_start(struct phy_device *phydev)
 EXPORT_SYMBOL(phy_stop);
 EXPORT_SYMBOL(phy_start);
 
+static inline void phy_adjust_link(struct phy_device *phydev)
+{
+	phydev->adjust_link(phydev->attached_dev);
+}
+
 /**
  * phy_state_machine - Handle the state machine
  * @work: work_struct that describes the work to be done
@@ -769,7 +774,7 @@ void phy_state_machine(struct work_struct *work)
 			if (!phydev->link) {
 				phydev->state = PHY_NOLINK;
 				netif_carrier_off(phydev->attached_dev);
-				phydev->adjust_link(phydev->attached_dev);
+				phy_adjust_link(phydev);
 				break;
 			}
 
@@ -783,7 +788,7 @@ void phy_state_machine(struct work_struct *work)
 			if (err > 0) {
 				phydev->state = PHY_RUNNING;
 				netif_carrier_on(phydev->attached_dev);
-				phydev->adjust_link(phydev->attached_dev);
+				phy_adjust_link(phydev);
 
 			} else if (0 == phydev->link_timeout--) {
 				needs_aneg = 1;
@@ -802,7 +807,7 @@ void phy_state_machine(struct work_struct *work)
 			if (phydev->link) {
 				phydev->state = PHY_RUNNING;
 				netif_carrier_on(phydev->attached_dev);
-				phydev->adjust_link(phydev->attached_dev);
+				phy_adjust_link(phydev);
 			}
 			break;
 		case PHY_FORCING:
@@ -819,7 +824,7 @@ void phy_state_machine(struct work_struct *work)
 					needs_aneg = 1;
 			}
 
-			phydev->adjust_link(phydev->attached_dev);
+			phy_adjust_link(phydev);
 			break;
 		case PHY_RUNNING:
 			/* Only register a CHANGE if we are
@@ -842,7 +847,7 @@ void phy_state_machine(struct work_struct *work)
 				netif_carrier_off(phydev->attached_dev);
 			}
 
-			phydev->adjust_link(phydev->attached_dev);
+			phy_adjust_link(phydev);
 
 			if (phy_interrupt_is_valid(phydev))
 				err = phy_config_interrupt(phydev,
@@ -852,7 +857,7 @@ void phy_state_machine(struct work_struct *work)
 			if (phydev->link) {
 				phydev->link = 0;
 				netif_carrier_off(phydev->attached_dev);
-				phydev->adjust_link(phydev->attached_dev);
+				phy_adjust_link(phydev);
 			}
 			break;
 		case PHY_RESUMING:
@@ -886,7 +891,7 @@ void phy_state_machine(struct work_struct *work)
 						netif_carrier_on(phydev->attached_dev);
 					} else
 						phydev->state = PHY_NOLINK;
-					phydev->adjust_link(phydev->attached_dev);
+					phy_adjust_link(phydev);
 				} else {
 					phydev->state = PHY_AN;
 					phydev->link_timeout = PHY_AN_TIMEOUT;
@@ -901,7 +906,7 @@ void phy_state_machine(struct work_struct *work)
 					netif_carrier_on(phydev->attached_dev);
 				} else
 					phydev->state = PHY_NOLINK;
-				phydev->adjust_link(phydev->attached_dev);
+				phy_adjust_link(phydev);
 			}
 			break;
 	}
