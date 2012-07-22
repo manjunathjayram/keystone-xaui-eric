@@ -374,6 +374,24 @@ config ARCH_BCM2835
 	  This enables support for the Broadcom BCM2835 SoC. This SoC is
 	  use in the Raspberry Pi, and Roku 2 devices.
 
+config ARCH_KEYSTONE
+	bool "Texas Instruments Keystone Devices"
+	select ARCH_WANT_OPTIONAL_GPIOLIB
+	select ARM_GIC
+	select MULTI_IRQ_HANDLER
+	select CLKDEV_LOOKUP
+	select COMMON_CLK
+	select CLKSRC_MMIO
+	select CPU_V7
+	select GENERIC_CLOCKEVENTS
+	select USE_OF
+	select SPARSE_IRQ
+	select NEED_MACH_MEMORY_H
+	select HAVE_SCHED_CLOCK
+	help
+	  Support for boards based on the Texas Instruments Keystone family of
+	  SoCs.
+
 config ARCH_CNS3XXX
 	bool "Cavium Networks CNS3XXX family"
 	select ARM_GIC
@@ -1069,6 +1087,8 @@ source "arch/arm/mach-iop33x/Kconfig"
 source "arch/arm/mach-iop13xx/Kconfig"
 
 source "arch/arm/mach-ixp4xx/Kconfig"
+
+source "arch/arm/mach-keystone/Kconfig"
 
 source "arch/arm/mach-kirkwood/Kconfig"
 
