@@ -306,6 +306,8 @@ static inline __deprecated void *bus_to_virt(unsigned long x)
 #define virt_addr_valid(kaddr)	(((unsigned long)(kaddr) >= PAGE_OFFSET && (unsigned long)(kaddr) < (unsigned long)high_memory) \
 					&& pfn_valid(__pa(kaddr) >> PAGE_SHIFT) )
 
+#define ARCH_LOW_ADDRESS_LIMIT		PHYS_MASK
+
 #endif
 
 #include <asm-generic/memory_model.h>
