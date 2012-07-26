@@ -55,6 +55,7 @@
 #include <asm/unwind.h>
 #include <asm/memblock.h>
 #include <asm/virt.h>
+#include <asm/runtime-patch.h>
 
 #include "atags.h"
 
@@ -844,6 +845,8 @@ void __init setup_arch(char **cmdline_p)
 
 	if (mdesc->init_early)
 		mdesc->init_early();
+
+	runtime_patch_kernel();
 }
 
 
