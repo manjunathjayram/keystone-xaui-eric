@@ -916,7 +916,7 @@ static void octeon_mgmt_update_link(struct octeon_mgmt *p)
 	}
 }
 
-static void octeon_mgmt_adjust_link(struct net_device *netdev)
+static void octeon_mgmt_adjust_link(struct net_device *netdev, void *context)
 {
 	struct octeon_mgmt *p = netdev_priv(netdev);
 	unsigned long flags;
@@ -971,7 +971,7 @@ static int octeon_mgmt_init_phy(struct net_device *netdev)
 
 	p->phydev = of_phy_connect(netdev, p->phy_np,
 				   octeon_mgmt_adjust_link, 0,
-				   PHY_INTERFACE_MODE_MII);
+				   PHY_INTERFACE_MODE_MII, NULL);
 
 	if (!p->phydev)
 		return -ENODEV;
