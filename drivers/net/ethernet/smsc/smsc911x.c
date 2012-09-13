@@ -943,7 +943,7 @@ static void smsc911x_phy_update_flowcontrol(struct smsc911x_data *pdata)
 
 /* Update link mode if anything has changed.  Called periodically when the
  * PHY is in polling mode, even if nothing has changed. */
-static void smsc911x_phy_adjust_link(struct net_device *dev)
+static void smsc911x_phy_adjust_link(struct net_device *dev, void *context)
 {
 	struct smsc911x_data *pdata = netdev_priv(dev);
 	struct phy_device *phy_dev = pdata->phy_dev;
@@ -1024,8 +1024,9 @@ static int smsc911x_mii_probe(struct net_device *dev)
 	SMSC_TRACE(pdata, probe, "PHY: addr %d, phy_id 0x%08X",
 		   phydev->addr, phydev->phy_id);
 
-	ret = phy_connect_direct(dev, phydev, &smsc911x_phy_adjust_link,
-				 pdata->config.phy_interface);
+	ret = phy_connect_direct(dev, phydev,
+			&smsc911x_phy_adjust_link,
+			pdata->config.phy_interface, NULL);
 
 	if (ret) {
 		netdev_err(dev, "Could not attach to PHY\n");

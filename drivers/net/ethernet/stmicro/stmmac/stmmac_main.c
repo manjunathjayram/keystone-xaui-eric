@@ -685,7 +685,7 @@ static void stmmac_release_ptp(struct stmmac_priv *priv)
  * @dev: net device structure
  * Description: it adjusts the link parameters.
  */
-static void stmmac_adjust_link(struct net_device *dev)
+static void stmmac_adjust_link(struct net_device *dev, void *context)
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
 	struct phy_device *phydev = priv->phydev;
@@ -832,7 +832,8 @@ static int stmmac_init_phy(struct net_device *dev)
 		 priv->plat->phy_addr);
 	pr_debug("stmmac_init_phy:  trying to attach to %s\n", phy_id_fmt);
 
-	phydev = phy_connect(dev, phy_id_fmt, &stmmac_adjust_link, interface);
+	phydev = phy_connect(dev, phy_id_fmt, &stmmac_adjust_link,
+			     interface, NULL);
 
 	if (IS_ERR(phydev)) {
 		pr_err("%s: Could not attach to PHY\n", dev->name);
