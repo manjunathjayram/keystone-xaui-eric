@@ -292,7 +292,7 @@ static void au1000_enable_rx_tx(struct net_device *dev)
 }
 
 static void
-au1000_adjust_link(struct net_device *dev)
+au1000_adjust_link(struct net_device *dev, void *context)
 {
 	struct au1000_private *aup = netdev_priv(dev);
 	struct phy_device *phydev = aup->phy_dev;
@@ -437,8 +437,8 @@ static int au1000_mii_probe(struct net_device *dev)
 	/* now we are supposed to have a proper phydev, to attach to... */
 	BUG_ON(phydev->attached_dev);
 
-	phydev = phy_connect(dev, dev_name(&phydev->dev),
-			     &au1000_adjust_link, PHY_INTERFACE_MODE_MII);
+	phydev = phy_connect(dev, dev_name(&phydev->dev), &au1000_adjust_link,
+			PHY_INTERFACE_MODE_MII, NULL);
 
 	if (IS_ERR(phydev)) {
 		netdev_err(dev, "Could not attach to PHY\n");

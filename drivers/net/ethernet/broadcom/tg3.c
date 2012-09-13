@@ -2002,7 +2002,7 @@ static void tg3_setup_flow_control(struct tg3 *tp, u32 lcladv, u32 rmtadv)
 		tw32_f(MAC_TX_MODE, tp->tx_mode);
 }
 
-static void tg3_adjust_link(struct net_device *dev)
+static void tg3_adjust_link(struct net_device *dev, void *context)
 {
 	u8 oldflowctrl, linkmesg = 0;
 	u32 mac_mode, lcl_adv, rmt_adv;
@@ -2099,8 +2099,8 @@ static int tg3_phy_init(struct tg3 *tp)
 	phydev = tp->mdio_bus->phy_map[tp->phy_addr];
 
 	/* Attach the MAC to the PHY. */
-	phydev = phy_connect(tp->dev, dev_name(&phydev->dev),
-			     tg3_adjust_link, phydev->interface);
+	phydev = phy_connect(tp->dev, dev_name(&phydev->dev), tg3_adjust_link,
+			     phydev->interface, NULL);
 	if (IS_ERR(phydev)) {
 		dev_err(&tp->pdev->dev, "Could not attach to PHY\n");
 		return PTR_ERR(phydev);
