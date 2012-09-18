@@ -63,6 +63,8 @@ config CLK_TWL6040
 	  McPDM. McPDM module is using the external bit clock on the McPDM bus
 	  as functional clock.
 
+source "drivers/clk/davinci/Kconfig"
+source "drivers/clk/keystone/Kconfig"
 endmenu
 
 source "drivers/clk/mvebu/Kconfig"
