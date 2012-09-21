@@ -355,7 +355,6 @@ static int davinci_mdio_probe(struct platform_device *pdev)
 	data->dev = dev;
 
 	pm_runtime_enable(&pdev->dev);
-	pm_runtime_get_sync(&pdev->dev);
 	data->clk = clk_get(&pdev->dev, "fck");
 	if (IS_ERR(data->clk)) {
 		dev_err(dev, "failed to get device clock\n");
@@ -364,6 +363,8 @@ static int davinci_mdio_probe(struct platform_device *pdev)
 		goto bail_out;
 	}
 
+	clk_prepare(data->clk);
+	pm_runtime_get_sync(&pdev->dev);
 	dev_set_drvdata(dev, data);
 	spin_lock_init(&data->lock);
 
