@@ -13,10 +13,11 @@
 #include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/io.h>
+#include <linux/of_address.h>
+#include <linux/of.h>
 #include <linux/slab.h>
+#include <linux/module.h>
 #include <linux/platform_data/clk-keystone-pll.h>
-
-#include <mach/cputype.h>
 
 /**
  * struct clk_pll - DaVinci Main pll clock
@@ -88,7 +89,58 @@ struct clk *clk_register_keystone_pll(struct device *dev, const char *name,
 
 	clk = clk_register(NULL, &pll->hw);
 	if (IS_ERR(clk))
-		kfree(pll);
+		goto out;
 
 	return clk;
+out:
+	kfree(pll);
+	return NULL;
 }
+EXPORT_SYMBOL_GPL(clk_register_keystone_pll);
+
+#ifdef CONFIG_OF
+void __init of_keystone_pll_clk_init(struct device_node *node)
+{
+	struct clk_keystone_pll_data *pll_data;
+	const char *parent_name;
+	struct clk *clk;
+
+	pll_data = kzalloc(sizeof(*pll_data), GFP_KERNEL);
+	WARN_ON(!pll_data);
+
+	parent_name = of_clk_get_parent_name(node, 0);
+
+	pll_data->pllm = of_iomap(node, 0);
+	WARN_ON(!pll_data->pllm);
+
+	pll_data->main_pll_ctl0 = of_iomap(node, 1);
+	WARN_ON(!pll_data->main_pll_ctl0);
+
+	if (of_property_read_u32(node, "pllm_lower_mask",
+			&pll_data->pllm_lower_mask))
+		goto out;
+
+	if (of_property_read_u32(node, "pllm_upper_mask",
+			&pll_data->pllm_upper_mask))
+		goto out;
+
+	if (of_property_read_u32(node, "plld_mask", &pll_data->plld_mask))
+		goto out;
+
+	if (of_property_read_u32(node, "fixed_postdiv",
+					&pll_data->fixed_postdiv))
+		goto out;
+
+	clk = clk_register_keystone_pll(NULL, node->name, parent_name,
+					 pll_data);
+	if (clk) {
+		of_clk_add_provider(node, of_clk_src_simple_get, clk);
+		return;
+	}
+out:
+	pr_err("of_keystone_pll_clk_init - error initializing clk %s\n",
+		 node->name);
+	kfree(pll_data);
+}
+EXPORT_SYMBOL_GPL(of_keystone_pll_clk_init);
+#endif
