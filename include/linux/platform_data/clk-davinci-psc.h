@@ -50,4 +50,9 @@ extern struct clk *clk_register_davinci_psc(struct device *dev,
 			const char *name, const char *parent_name,
 			struct clk_davinci_psc_data *psc_data,
 			spinlock_t *lock);
+
+#ifdef CONFIG_OF
+extern void __init of_davinci_psc_clk_init(struct device_node *node,
+			 spinlock_t *lock);
+#endif
 #endif /* __CLK_DAVINCI_PSC_H */
