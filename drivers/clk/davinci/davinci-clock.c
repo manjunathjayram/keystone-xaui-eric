@@ -14,13 +14,16 @@
 #include <linux/clkdev.h>
 #include <linux/slab.h>
 #include <linux/io.h>
+#include <linux/of_address.h>
 #include <linux/platform_data/clk-davinci-pll.h>
 #include <linux/platform_data/clk-keystone-pll.h>
 #include <linux/platform_data/clk-davinci-psc.h>
 #include <linux/platform_data/davinci-clock.h>
+#include <linux/of.h>
 
 static DEFINE_SPINLOCK(_lock);
 
+#ifndef CONFIG_OF
 struct clk *davinci_lookup_clk(struct davinci_clk_lookup *clocks,
 				const char *con_id)
 {
@@ -230,3 +233,175 @@ int __init davinci_common_clk_init(struct davinci_clk_lookup *clocks,
 	}
 	return 0;
 }
+#else
+
+static void __init pll_div_clk_init(struct device_node *node)
+{
+	const char *parent_name;
+	void __iomem *reg;
+	u32 shift, width;
+	struct clk *clk;
+
+	reg = of_iomap(node, 0);
+	WARN_ON(!reg);
+
+	parent_name = of_clk_get_parent_name(node, 0);
+	WARN_ON(!parent_name);
+
+	if (of_property_read_u32(node, "shift", &shift)) {
+		pr_err("pll_div_clk_init - no shift value defined\n");
+		return;
+	}
+
+	if (of_property_read_u32(node, "width", &width)) {
+		pr_err("pll_div_clk_init - no width value defined\n");
+		return;
+	}
+
+	clk = clk_register_divider(NULL, node->name, parent_name, 0, reg, shift,
+				 width, 0, &_lock);
+
+	if (clk)
+		of_clk_add_provider(node, of_clk_src_simple_get, clk);
+	else
+		pr_err("pll_div_clk_init - error in registering mux clk %s\n",
+			node->name);
+}
+
+/* These will go away once there is support in clk-mux for DT */
+static void __init of_fixed_factor_clk_setup(struct device_node *node)
+{
+	const char *parent_name;
+	struct clk *clk;
+	u32 mult, div;
+
+	parent_name = of_clk_get_parent_name(node, 0);
+	WARN_ON(!parent_name);
+
+	if (of_property_read_u32(node, "mult", &mult)) {
+		pr_err("of_fixed_factor_clk_setup - no mult value defined\n");
+		return;
+	}
+
+	if (of_property_read_u32(node, "div", &div)) {
+		pr_err("of_fixed_factor_clk_setup - no div value defined\n");
+		return;
+	}
+
+	WARN_ON(!mult);
+	WARN_ON(!div);
+	clk = clk_register_fixed_factor(NULL, node->name, parent_name, 0,
+					mult, div);
+	if (clk)
+		of_clk_add_provider(node, of_clk_src_simple_get, clk);
+	else
+		pr_err("error registering fixed factor clk %s\n", node->name);
+}
+
+/* These will go away once there is support in clk-mux for DT */
+static void __init main_pll_mux_clk_init(struct device_node *node)
+{
+	const char *parents[2];
+	void __iomem *reg;
+	u32 shift, width;
+	struct clk *clk;
+
+	reg = of_iomap(node, 0);
+	WARN_ON(!reg);
+
+	parents[0] = of_clk_get_parent_name(node, 0);
+	WARN_ON(!parents[0]);
+	parents[1] = of_clk_get_parent_name(node, 1);
+	WARN_ON(!parents[1]);
+
+	if (of_property_read_u32(node, "shift", &shift)) {
+		pr_err("main_pll_mux_clk_init - no shift value defined\n");
+		return;
+	}
+
+	if (of_property_read_u32(node, "width", &width)) {
+		pr_err("main_pll_mux_clk_init - no width value defined\n");
+		return;
+	}
+
+	clk = clk_register_mux(NULL, node->name, (const char **)&parents,
+				ARRAY_SIZE(parents) , 0, reg, shift, width,
+				0, &_lock);
+
+	if (clk)
+		of_clk_add_provider(node, of_clk_src_simple_get, clk);
+	else
+		pr_err("main_pll_mux_clk_init - error registe mux clk %s\n",
+			 node->name);
+}
+
+static void __init of_davinci_psc_clk_setup(struct device_node *node)
+{
+	of_davinci_psc_clk_init(node, &_lock);
+}
+
+static const __initconst struct of_device_id clk_match[] = {
+	{ .compatible = "fixed-clock", .data = of_fixed_clk_setup, },
+	{ .compatible = "fixed-clock-factor", .data =
+					 of_fixed_factor_clk_setup, },
+	{ .compatible = "keystone,main-pll-clk", .data =
+					of_keystone_pll_clk_init, },
+	{ .compatible = "davinci,main-pll-mux-clk", .data =
+						main_pll_mux_clk_init, },
+	{ .compatible = "davinci,pll-divider-clk", .data = pll_div_clk_init, },
+	{ .compatible = "davinci,psc-clk", .data = of_davinci_psc_clk_setup, },
+	{}
+};
+
+static const __initconst struct of_device_id clk_psc_match[] = {
+	{ .compatible = "davinci,psc-clk", .data = of_davinci_psc_clk_setup, },
+	{}
+};
+
+void __init davinci_of_clk_init()
+{
+	/* initialize clk providers from device tree */
+	of_clk_init(clk_match);
+}
+
+void __init davinci_add_clkdev(struct davinci_clk_lookup *clocks)
+{
+	struct device_node *np;
+
+	/*
+	 * When drivers use device nodes for provider clock info, this will
+	 * become obsolete. Until then we need a way to register clk devices.
+	 * for dt incompatible device drivers.
+	 */
+	if (clocks == NULL)
+		return;
+
+	for_each_matching_node(np, clk_psc_match) {
+		struct davinci_clk_lookup *c;
+		struct davinci_clk *_clk;
+		const char *clk_name;
+		struct clk *clk;
+
+		clk_name = np->name;
+		of_property_read_string(np,
+			"clock-output-names", &clk_name);
+		/* get clk through provider */
+		clk = of_clk_get(np, 0);
+		if (clk) {
+			for (c = clocks; c->_clk; c++) {
+				_clk = c->_clk;
+				if (!strcmp(_clk->name, clk_name) &&
+					(clk_register_clkdev(clk, c->con_id,
+						 c->dev_id) < 0)) {
+					pr_err("Error register clkdev,%s\n",
+						clk_name);
+					break;
+				}
+			}
+		} else {
+			pr_err("Error getting clk provider info, %s\n",
+				clk_name);
+		}
+	}
+}
+#endif
