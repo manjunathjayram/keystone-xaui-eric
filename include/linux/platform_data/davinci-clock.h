@@ -142,4 +142,8 @@ struct davinci_dev_lookup {
 extern int davinci_common_clk_init(struct davinci_clk_lookup *clocks,
 				struct davinci_dev_lookup *dev_lookups,
 				u8 num_gpscs, u32 *psc_bases);
+#ifdef CONFIG_OF
+extern void davinci_add_clkdev(struct davinci_clk_lookup *clocks);
+extern void davinci_of_clk_init(void);
+#endif
 #endif
