@@ -34,4 +34,8 @@ struct clk_keystone_pll_data {
 extern struct clk *clk_register_keystone_pll(struct device *dev,
 			const char *name, const char *parent_name,
 			struct clk_keystone_pll_data *pll_data);
+
+#ifdef CONFIG_OF
+extern void __init of_keystone_pll_clk_init(struct device_node *node);
+#endif
 #endif /* CLK_KEYSTONE_PLL_H */
