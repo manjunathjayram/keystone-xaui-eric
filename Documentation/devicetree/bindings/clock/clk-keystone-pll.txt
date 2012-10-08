@@ -1,0 +1,30 @@
+Binding for keystone main pll clocks
+
+This binding uses the common clock binding[1].
+
+[1] Documentation/devicetree/bindings/clock/clock-bindings.txt
+
+Required properties:
+- compatible : shall be "keystone,main-pll-clk".
+- #clock-cells : from common clock binding; shall be set to 0.
+- clocks : parent clock phandle
+- reg - index 0 -  PLLCTRL PLLM register address
+- 	index 1 -  MAINPLL_CTL0 register address
+- pllm_lower_mask - pllm lower bit mask
+- pllm_upper_mask - pllm upper bit mask
+- plld_mask - plld mask
+- fixed_postdiv - fixed post divider value
+
+Example:
+	clock {
+		#clock-cells = <0>;
+		compatible = "keystone,main-pll-clk";
+		clocks = <&refclk>;
+		reg = <0x02310110 4	/* PLLCTRL PLLM */
+			0x02620328 4>;	/* MAINPLL_CTL0 */
+		pllm_lower_mask	= <0x3f>;
+		pllm_upper_mask = <0x7f000>;
+		pllm_upper_shift = <6>;
+		plld_mask = <0x3f>;
+		fixed_postdiv = <2>;
+	};
