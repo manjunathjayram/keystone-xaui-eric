@@ -16,6 +16,9 @@
 #include <linux/io.h>
 #include <linux/slab.h>
 #include <linux/platform_data/clk-davinci-psc.h>
+#include <linux/of_address.h>
+#include <linux/of.h>
+#include <linux/module.h>
 
 /* PSC register offsets */
 #define EPCPR		0x070
@@ -166,6 +169,14 @@ static const struct clk_ops clk_psc_ops = {
 	.is_enabled = clk_psc_is_enabled,
 };
 
+/**
+ * clk_register_davinci_psc - register davinci psc clock
+ * @dev: device that is registering this clock
+ * @name: name of this clock
+ * @parent_name: name of clock's parent
+ * @psc_data: platform data to configure this clock
+ * @lock: spinlock used by this clock
+ */
 struct clk *clk_register_davinci_psc(struct device *dev, const char *name,
 			const char *parent_name,
 			struct clk_davinci_psc_data *psc_data,
@@ -195,3 +206,94 @@ struct clk *clk_register_davinci_psc(struct device *dev, const char *name,
 
 	return clk;
 }
+EXPORT_SYMBOL_GPL(clk_register_davinci_psc);
+
+#ifdef CONFIG_OF
+#define NUM_GPSC	2
+struct reg_psc {
+	u32 phy_base;
+	u32 size;
+	void __iomem *io_base;
+};
+
+static struct reg_psc psc_addr[NUM_GPSC];
+
+/**
+ * of_davinci_psc_clk_init - initialize davinci psc clock through DT
+ * @node: device tree node for this clock
+ * @lock: spinlock used by this clock
+ */
+void __init of_davinci_psc_clk_init(struct device_node *node, spinlock_t *lock)
+{
+	const char *parent_name, *status, *base_flags;
+	struct clk_davinci_psc_data *data;
+	const char *clk_name = node->name;
+	u32 gpsc = 0, lpsc = 0, pd = 0;
+	struct resource res;
+	struct clk *clk;
+	int rc;
+
+	data = kzalloc(sizeof(*data), GFP_KERNEL);
+	WARN_ON(!data);
+
+	if (of_address_to_resource(node, 0, &res)) {
+		pr_err("psc_clk_init - no reg property defined\n");
+		goto out;
+	}
+
+	of_property_read_u32(node, "gpsc", &gpsc);
+	of_property_read_u32(node, "lpsc", &lpsc);
+	of_property_read_u32(node, "pd", &pd);
+
+	if (gpsc >= NUM_GPSC) {
+		pr_err("psc_clk_init - no reg property defined\n");
+		goto out;
+	}
+
+	of_property_read_string(node,
+			"clock-output-names", &clk_name);
+	parent_name = of_clk_get_parent_name(node, 0);
+	WARN_ON(!parent_name);
+
+	/* Expected that same phy_base is used for all psc clocks of
+	 * a give gpsc. So ioremap is done only once.
+	 */
+	if (psc_addr[gpsc].phy_base) {
+		if (psc_addr[gpsc].phy_base != res.start) {
+			pr_err("Different psc base for same GPSC\n");
+			goto out;
+		}
+	} else {
+		psc_addr[gpsc].phy_base = res.start;
+		psc_addr[gpsc].io_base =
+			ioremap(res.start, resource_size(&res));
+	}
+
+	WARN_ON(!psc_addr[gpsc].io_base);
+	data->base = psc_addr[gpsc].io_base;
+	data->lpsc = lpsc;
+	data->gpsc = gpsc;
+	data->domain = pd;
+
+	of_property_read_string_index(node, "base-flags", 0, &base_flags);
+	if (base_flags && !strcmp(base_flags, "ignore-unused"))
+		data->flags = CLK_IGNORE_UNUSED;
+
+	clk = clk_register_davinci_psc(NULL, clk_name, parent_name,
+				data, lock);
+
+	if (clk) {
+		of_clk_add_provider(node, of_clk_src_simple_get, clk);
+
+		rc = of_property_read_string(node, "status", &status);
+		if (status && !strcmp(status, "enabled"))
+			clk_prepare_enable(clk);
+		return;
+	}
+	pr_err("psc_clk_init - error registering psc clk %s\n", node->name);
+out:
+	kfree(data);
+	return;
+}
+EXPORT_SYMBOL_GPL(of_davinci_psc_clk_init);
+#endif
