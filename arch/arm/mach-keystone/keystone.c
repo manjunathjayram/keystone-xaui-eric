@@ -19,6 +19,7 @@
 #include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/dma-mapping.h>
+#include <linux/platform_data/davinci-clock.h>
 
 #include <asm/setup.h>
 #include <asm/mach/map.h>
@@ -59,6 +60,7 @@ static void __init keystone_init_irq(void)
 
 static void __init keystone_timer_init(void)
 {
+	davinci_of_clk_init();
 	arch_timer_of_register();
 	arch_timer_sched_clock_init();
 }
