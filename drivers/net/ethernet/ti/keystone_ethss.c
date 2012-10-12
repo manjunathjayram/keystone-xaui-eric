@@ -206,8 +206,8 @@ struct cpsw_ale_regs {
 struct cpsw_priv {
 	struct device			*dev;
 	struct net_device		*ndev;
-	struct netcp_module_data	 module;
 	struct clk			*cpgmac;
+	struct netcp_device		*netcp_device;
 	u32				 num_slaves;
 	u32				 ale_ageout;
 	u32				 ale_entries;
@@ -255,9 +255,6 @@ struct netcp_ethtool_stat {
 	u32 size;
 	int offset;
 };
-
-#define cpsw_from_module(data)	container_of(data, struct cpsw_priv, module)
-#define cpsw_to_module(cpsw)	(&(cpsw)->module)
 
 #define for_each_slave(priv, func, arg...)			\
 	do {							\
@@ -445,11 +442,6 @@ static const struct ethtool_ops keystone_ethtool_ops = {
 	.get_sset_count		= keystone_get_sset_count,
 	.get_ethtool_stats	= keystone_get_ethtool_stats,
 };
-
-void keystone_set_ethtool_ops(struct net_device *ndev)
-{
-	SET_ETHTOOL_OPS(ndev, &keystone_ethtool_ops);
-}
 
 #define mac_hi(mac)	(((mac)[0] << 0) | ((mac)[1] << 8) |	\
 			 ((mac)[2] << 16) | ((mac)[3] << 24))
@@ -707,10 +699,9 @@ static void cpsw_slave_init(struct cpsw_slave *slave, struct cpsw_priv *priv)
 	slave->sliver	= regs + priv->sliver_reg_ofs + (0x40 * slave_num);
 }
 
-int cpsw_add_ucast(struct netcp_module_data *data, u8 *uc_list,
-		   int uc_count, int vid)
+int cpsw_add_ucast(void *intf_priv, u8 *uc_list, int uc_count, int vid)
 {
-	struct cpsw_priv *cpsw_dev = cpsw_from_module(data);
+	struct cpsw_priv *cpsw_dev = intf_priv;
 	u8 mac_addr[ETH_ALEN];
 	int i;
 
@@ -732,10 +723,9 @@ int cpsw_add_ucast(struct netcp_module_data *data, u8 *uc_list,
 	return 0;
 }
 
-int cpsw_add_mcast(struct netcp_module_data *data, u8 *mc_list,
-		   int mc_count, int vid)
+int cpsw_add_mcast(void *intf_priv, u8 *mc_list, int mc_count, int vid)
 {
-	struct cpsw_priv *cpsw_dev = cpsw_from_module(data);
+	struct cpsw_priv *cpsw_dev = intf_priv;
 	u8 mac_addr[ETH_ALEN];
 	int i;
 
@@ -757,9 +747,9 @@ int cpsw_add_mcast(struct netcp_module_data *data, u8 *mc_list,
 	return 0;
 }
 
-int cpsw_add_vid(struct netcp_module_data *data, int vid)
+int cpsw_add_vid(void *intf_priv, int vid)
 {
-	struct cpsw_priv *cpsw_dev = cpsw_from_module(data);
+	struct cpsw_priv *cpsw_dev = intf_priv;
 
 	cpsw_ale_add_vlan(cpsw_dev->ale, vid, CPSW_MASK_ALL_PORTS,
 			  CPSW_MASK_ALL_PORTS, CPSW_MASK_PHYS_PORTS,
@@ -768,9 +758,9 @@ int cpsw_add_vid(struct netcp_module_data *data, int vid)
 	return 0;
 }
 
-int cpsw_del_vid(struct netcp_module_data *data, int vid)
+int cpsw_del_vid(void *intf_priv, int vid)
 {
-	struct cpsw_priv *cpsw_dev = cpsw_from_module(data);
+	struct cpsw_priv *cpsw_dev = intf_priv;
 
 	cpsw_ale_del_vlan(cpsw_dev->ale, vid);
 
@@ -781,6 +771,8 @@ static void cpsw_timer(unsigned long arg)
 {
 	struct cpsw_priv *cpsw_dev = (struct cpsw_priv *)arg;
 	uint64_t data[128];
+	
+//	printk("in cpsw_timer()\n");
 
 	cpsw_dev->sgmii_link = keystone_sgmii_link_status(cpsw_dev->sgmii_port_regs,
 						cpsw_dev->num_slaves);
@@ -807,7 +799,7 @@ static void cpsw_timer(unsigned long arg)
 
 	cpsw_update_stats(cpsw_dev, data);
 
-	cpsw_dev->timer.expires = jiffies;
+	cpsw_dev->timer.expires = jiffies + (HZ/10);
 	add_timer(&cpsw_dev->timer);
 
 	return;
@@ -825,6 +817,7 @@ static int cpsw_tx_hook(int order, void *data, struct netcp_packet *p_info)
 
 static int cpsw_open_txchan(struct cpsw_priv *cpsw_dev)
 {
+	struct netcp_priv *netcp = netdev_priv(cpsw_dev->ndev);
 	struct dma_keystone_info config;
 	dma_cap_mask_t mask;
 	const char *name;
@@ -855,8 +848,7 @@ static int cpsw_open_txchan(struct cpsw_priv *cpsw_dev)
 	atomic_set(&cpsw_dev->tx_pipe.dma_poll_count,
 		   cpsw_dev->tx_pipe.dma_poll_threshold);
 
-	netcp_register_txhook(cpsw_dev->module.priv,
-			      CPSW_TXHOOK_ORDER, cpsw_tx_hook, cpsw_dev);
+	netcp_register_txhook(netcp, CPSW_TXHOOK_ORDER, cpsw_tx_hook, cpsw_dev);
 
 	dev_dbg(cpsw_dev->dev, "opened TX channel: %p\n",
 		cpsw_dev->tx_pipe.dma_channel);
@@ -866,12 +858,12 @@ static int cpsw_open_txchan(struct cpsw_priv *cpsw_dev)
 
 static void cpsw_close_txchan(struct cpsw_priv *cpsw_dev)
 {
+	struct netcp_priv *netcp = netdev_priv(cpsw_dev->ndev);
 	struct netcp_tx_pipe *tx_pipe = &cpsw_dev->tx_pipe;
 
 	dmaengine_pause(tx_pipe->dma_channel);
 
-	netcp_unregister_txhook(cpsw_dev->module.priv, CPSW_TXHOOK_ORDER,
-				cpsw_tx_hook, cpsw_dev);
+	netcp_unregister_txhook(netcp, CPSW_TXHOOK_ORDER, cpsw_tx_hook, cpsw_dev);
 
 	if (tx_pipe->dma_channel) {
 		dma_release_channel(tx_pipe->dma_channel);
@@ -879,10 +871,10 @@ static void cpsw_close_txchan(struct cpsw_priv *cpsw_dev)
 	}
 }
 
-static int cpsw_open(struct netcp_module_data *data, struct net_device *ndev)
+static int cpsw_open(void *intf_priv, struct net_device *ndev)
 {
-	struct cpsw_priv *cpsw_dev = cpsw_from_module(data);
-	struct cpsw_ale_params		ale_params;
+	struct cpsw_priv *cpsw_dev = intf_priv;
+	struct cpsw_ale_params ale_params;
 	int i, ret = 0;
 	u32 reg;
 
@@ -967,6 +959,12 @@ static int cpsw_open(struct netcp_module_data *data, struct net_device *ndev)
 	cpsw_dev->timer.expires		= jiffies + CPSW_TIMER_INTERVAL;
 	add_timer(&cpsw_dev->timer);
 
+	dev_dbg(cpsw_dev->dev, "%s(): cpsw_timer = %p\n", __func__, cpsw_timer );
+	
+	/* Configure the streaming switch */
+#define	PSTREAM_ROUTE_DMA	6
+	netcp_set_streaming_switch(cpsw_dev->netcp_device, 0, PSTREAM_ROUTE_DMA);
+
 	return 0;
 
 clean_ale:
@@ -976,9 +974,9 @@ out:
 	return ret;
 }
 
-static int cpsw_close(struct netcp_module_data *data)
+static int cpsw_close(void *intf_priv, struct net_device *ndev)
 {
-	struct cpsw_priv *cpsw_dev = cpsw_from_module(data);
+	struct cpsw_priv *cpsw_dev = intf_priv;
 
 	del_timer_sync(&cpsw_dev->timer);
 
@@ -991,22 +989,25 @@ static int cpsw_close(struct netcp_module_data *data)
 		clk_put(cpsw_dev->cpgmac);
 	}
 
+	cpsw_ale_destroy(cpsw_dev->ale);
+	cpsw_close_txchan(cpsw_dev);
+
 	kfree(cpsw_dev->slaves);
 	cpsw_dev->cpgmac = NULL;
 
 	return 0;
 }
 
-static int cpsw_remove(struct netcp_module_data *data)
+static int cpsw_remove(struct netcp_device *netcp_device, void *inst_priv)
 {
-	struct cpsw_priv *cpsw_dev = cpsw_from_module(data);
+	struct cpsw_priv *cpsw_dev = inst_priv;
 
-	cpsw_ale_destroy(cpsw_dev->ale);
+	SET_ETHTOOL_OPS(cpsw_dev->ndev, NULL);
+	netcp_delete_interface(netcp_device, cpsw_dev->ndev);
 
 	iounmap(cpsw_dev->ss_regs);
+	memset(cpsw_dev, 0x00, sizeof(*cpsw_dev));	/* FIXME: Poison */
 	kfree(cpsw_dev);
-	cpsw_dev = NULL;
-
 	return 0;
 }
 
@@ -1028,8 +1029,10 @@ static int init_slave(struct cpsw_priv *cpsw_dev,
 }
 
 
-static struct netcp_module_data *cpsw_probe(struct device *dev,
-					    struct device_node *node)
+static int cpsw_probe(struct netcp_device *netcp_device,
+			struct device *dev,
+			struct device_node *node,
+			void **inst_priv)
 {
 	struct cpsw_priv *cpsw_dev;
 	struct device_node *slaves, *slave;
@@ -1043,6 +1046,8 @@ static struct netcp_module_data *cpsw_probe(struct device *dev,
 		ret = -ENOMEM;
 		goto exit;
 	}
+	*inst_priv = cpsw_dev;
+	dev_dbg(dev, "%s(): cpsw_priv = %p\n", __func__, cpsw_dev);
 
 	if (!node) {
 		dev_err(dev, "device tree info unavailable\n");
@@ -1051,8 +1056,9 @@ static struct netcp_module_data *cpsw_probe(struct device *dev,
 	}
 
 	cpsw_dev->dev = dev;
+	cpsw_dev->netcp_device = netcp_device;
 	
-	priv = cpsw_dev;
+	priv = cpsw_dev;	/* FIXME: Remove this!! */
 
 	regs = ioremap(TCI6614_SS_BASE, 0xf00);
 	BUG_ON(!regs);
@@ -1159,36 +1165,66 @@ static struct netcp_module_data *cpsw_probe(struct device *dev,
 	}
 
 	of_node_put(slaves);
-	cpsw_dev->module.open		= cpsw_open;
-	cpsw_dev->module.close		= cpsw_close;
-	cpsw_dev->module.remove		= cpsw_remove;
-	cpsw_dev->module.add_mcast	= cpsw_add_mcast;
-	cpsw_dev->module.add_ucast	= cpsw_add_ucast;
-	cpsw_dev->module.add_vid	= cpsw_add_vid;
-	cpsw_dev->module.del_vid	= cpsw_del_vid;
 
-	return cpsw_to_module(cpsw_dev);
+	/* Configure the streaming switch */
+#define	PSTREAM_ROUTE_DMA	6
+	netcp_set_streaming_switch(netcp_device, 0, PSTREAM_ROUTE_DMA);
+
+	/* Create the interface */
+	netcp_create_interface(netcp_device, &cpsw_dev->ndev, NULL);
+	SET_ETHTOOL_OPS(cpsw_dev->ndev, &keystone_ethtool_ops);
+
+	return 0;
 exit:
-	return NULL;
+	*inst_priv = NULL;
+	return ret;
 }
 
+static int cpsw_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
+{
+	struct cpsw_priv *cpsw_dev = inst_priv;
+
+	printk("%s() called for interface %s\n", __func__, cpsw_dev->ndev->name);
+
+	*intf_priv = cpsw_dev;
+	return 0;
+}
+
+static int cpsw_release(void *inst_priv)
+{
+	struct cpsw_priv *cpsw_dev = inst_priv;
+
+	printk("%s() called for interface %s\n", __func__, cpsw_dev->ndev->name);
+	return 0;
+}
+
+
 static struct netcp_module cpsw_module = {
-	.name	= "keystone-cpsw",
-	.owner	= THIS_MODULE,
-	.probe	= cpsw_probe,
+	.name		= "keystone-cpsw",
+	.owner		= THIS_MODULE,
+	.probe		= cpsw_probe,
+	.open		= cpsw_open,
+	.close		= cpsw_close,
+	.remove		= cpsw_remove,
+	.attach		= cpsw_attach,
+	.release	= cpsw_release,
+	.add_mcast	= cpsw_add_mcast,
+	.add_ucast	= cpsw_add_ucast,
+	.add_vid	= cpsw_add_vid,
+	.del_vid	= cpsw_del_vid,
 };
 
-static int __init keystone_cpsw_init(void)
+int __init keystone_cpsw_init(void)
 {
 	return netcp_register_module(&cpsw_module);
 }
-subsys_initcall(keystone_cpsw_init);
+//module_init(keystone_cpsw_init);
 
-static void __exit keystone_cpsw_exit(void)
+void __exit keystone_cpsw_exit(void)
 {
 	netcp_unregister_module(&cpsw_module);
 }
-module_exit(keystone_cpsw_exit);
+//module_exit(keystone_cpsw_exit);
 
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Sandeep Paulraj <s-paulraj@ti.com>");
