@@ -202,9 +202,15 @@ struct pa_statistics_regs {
 	u32 stats_red[32];
 };
 
+struct pa_intf {
+	struct pa_device		*pa_device;
+	struct net_device		*net_device;
+};
+
 struct pa_device {
+	struct netcp_device		*netcp_device;
+	struct net_device		*net_device;		/* FIXME */
 	struct device			*dev;
-	struct netcp_module_data	 module;
 	struct clk			*clk;
 	struct dma_chan			*tx_channel;
 	struct dma_chan			*rx_channel;
@@ -217,15 +223,16 @@ struct pa_device {
 
 	u64				 pa2system_offset;
 
-	struct pa_mailbox_regs __iomem	*reg_mailbox;
+	struct pa_mailbox_regs __iomem		*reg_mailbox;
 	struct pa_packet_id_alloc_regs __iomem	*reg_packet_id;
 	struct pa_lut2_control_regs __iomem	*reg_lut2;
 	struct pa_pdsp_control_regs __iomem	*reg_control;
 	struct pa_pdsp_timer_regs   __iomem	*reg_timer;
 	struct pa_statistics_regs   __iomem	*reg_stats;
-	void __iomem			*pa_sram;
-	void __iomem			*pa_iram;
-	void __iomem			*streaming_switch;
+	void __iomem				*pa_sram;
+	void __iomem				*pa_iram;
+	
+	u32				 saved_ss_state;
 
 	u8				*mc_list;
 	u8				 addr_count;
@@ -1225,8 +1232,7 @@ static int pa_fmtcmd_align(struct netcp_packet *p_info, const unsigned bytes)
 
 static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 {
-	struct netcp_module_data *module = data;
-	struct pa_device *pa_dev = pa_from_module(module);
+	struct pa_device *pa_dev = data;
 	static const struct pa_cmd_next_route route_cmd = {
 					0,		/*  ctrlBitfield */
 					PA_DEST_EMAC,	/* Route - host */
@@ -1277,9 +1283,8 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 
 static int pa_rx_timestamp(int order, void *data, struct netcp_packet *p_info)
 {
-	struct netcp_module_data *module = data;
-	struct pa_device *pa_dev = pa_from_module(module);
-	struct netcp_priv *netcp = module->priv;
+	struct pa_device *pa_dev = data;
+	struct netcp_priv *netcp = netdev_priv(pa_dev->net_device);
 	struct sk_buff *skb = p_info->skb;
 	struct skb_shared_hwtstamps *sh_hw_tstamps;
 	u64 rx_timestamp;
@@ -1301,12 +1306,16 @@ static int pa_rx_timestamp(int order, void *data, struct netcp_packet *p_info)
 	return 0;
 }
 
-static int pa_close(struct netcp_module_data *data)
+static int pa_close(void *intf_priv, struct net_device *ndev)
 {
-	struct pa_device *pa_dev = pa_from_module(data);
+	struct pa_device *pa_dev = intf_priv;
+	struct netcp_priv *netcp_priv = netdev_priv(ndev);
 
-	netcp_unregister_txhook(data->priv, PA_TXHOOK_ORDER, pa_tx_hook, data);
-	netcp_unregister_rxhook(data->priv, PA_RXHOOK_ORDER, pa_rx_timestamp, data);
+	/* De-Configure the streaming switch */
+	netcp_set_streaming_switch(pa_dev->netcp_device, 0, pa_dev->saved_ss_state);
+
+	netcp_unregister_txhook(netcp_priv, PA_TXHOOK_ORDER, pa_tx_hook, pa_dev);
+	netcp_unregister_rxhook(netcp_priv, PA_RXHOOK_ORDER, pa_rx_timestamp, pa_dev);
 
 	tasklet_disable(&pa_dev->task);
 	
@@ -1339,9 +1348,10 @@ static int pa_close(struct netcp_module_data *data)
 	return 0;
 }
 
-static int pa_open(struct netcp_module_data *data, struct net_device *ndev)
+static int pa_open(void *intf_priv, struct net_device *ndev)
 {
-	struct pa_device *pa_dev = pa_from_module(data);
+	struct pa_device *pa_dev = intf_priv;
+	struct netcp_priv *netcp_priv = netdev_priv(ndev);
 	const struct firmware *fw;
 	const u8 bcast_addr[6] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
 	struct dma_chan *chan;
@@ -1349,6 +1359,8 @@ static int pa_open(struct netcp_module_data *data, struct net_device *ndev)
 	dma_cap_mask_t mask;
 	int i, factor;
 	int ret, err;
+
+	pa_dev->saved_ss_state = netcp_get_streaming_switch(pa_dev->netcp_device, 0);
 
 	pa_dev->clk = clk_get(pa_dev->dev, "clk_pa");
 	if (IS_ERR_OR_NULL(pa_dev->clk)) {
@@ -1360,9 +1372,6 @@ static int pa_open(struct netcp_module_data *data, struct net_device *ndev)
 	clk_prepare_enable(pa_dev->clk);
 
 	keystone_pa_reset(pa_dev);
-
-	/* Configure the streaming switch */
-	__raw_writel(PSTREAM_ROUTE_PDSP0, pa_dev->streaming_switch);
 
 	for (i = 0; i <= 5; i++) {
 		if (i <= 2)
@@ -1481,7 +1490,7 @@ static int pa_open(struct netcp_module_data *data, struct net_device *ndev)
 
 	dma_set_notify(pa_dev->rx_channel, pa_chan_notify, pa_dev);
 
-	chan = netcp_get_rx_chan(data->priv);
+	chan = netcp_get_rx_chan(netcp_priv);
 
 	pa_dev->data_flow_num = dma_get_rx_flow(chan);
 	pa_dev->data_queue_num = dma_get_rx_queue(chan);
@@ -1502,55 +1511,87 @@ static int pa_open(struct netcp_module_data *data, struct net_device *ndev)
 	ret = keystone_pa_add_mac(pa_dev, ndev->dev_addr,   PACKET_PARSE, 0x86dd, 59);
 	pa_dev->addr_count = 5;
 
-	netcp_register_txhook(data->priv, PA_TXHOOK_ORDER, pa_tx_hook, data);
-	netcp_register_rxhook(data->priv, PA_RXHOOK_ORDER, pa_rx_timestamp, data);
+	netcp_register_txhook(netcp_priv, PA_TXHOOK_ORDER, pa_tx_hook, intf_priv);
+	netcp_register_rxhook(netcp_priv, PA_RXHOOK_ORDER, pa_rx_timestamp, intf_priv);
+
+	/* Configure the streaming switch */
+	netcp_set_streaming_switch(pa_dev->netcp_device, 0, PSTREAM_ROUTE_PDSP0);
+
 	return 0;
 
 fail:
-	pa_close(data);
+	pa_close(intf_priv, ndev);
 	return ret;
 }
 
-static int pa_remove(struct netcp_module_data *data)
+static int pa_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 {
-	struct pa_device *pa_dev = pa_from_module(data);
+	struct pa_device *pa_dev = inst_priv;
+
+	printk("%s() called for interface %s\n", __func__, ndev->name);
+
+	pa_dev->net_device = ndev;
+	*intf_priv = pa_dev;
+	return 0;
+}
+
+static int pa_release(void *inst_priv)
+{
+	struct pa_device *pa_dev = inst_priv;
+
+	printk("%s() called for interface %s\n", __func__, pa_dev->net_device->name);
+	pa_dev->net_device = NULL;
+	return 0;
+}
+
+
+
+#define pa_cond_unmap(field)					\
+	do {							\
+		if (pa_dev->field)				\
+			devm_iounmap(dev, pa_dev->field);	\
+	} while(0)
+
+static int pa_remove(struct netcp_device *netcp_device, void *inst_priv)
+{
+	struct pa_device *pa_dev = inst_priv;
 	struct device *dev = pa_dev->dev;
 
-	devm_iounmap(dev, pa_dev->reg_mailbox);
-	devm_iounmap(dev, pa_dev->reg_mailbox);
-	devm_iounmap(dev, pa_dev->reg_packet_id);
-	devm_iounmap(dev, pa_dev->reg_lut2);
-	devm_iounmap(dev, pa_dev->reg_control);
-	devm_iounmap(dev, pa_dev->reg_timer);
-	devm_iounmap(dev, pa_dev->reg_stats);
-	devm_iounmap(dev, pa_dev->pa_iram);
-	devm_iounmap(dev, pa_dev->pa_sram);
-	devm_iounmap(dev, pa_dev->streaming_switch);
+	pa_cond_unmap(reg_mailbox);
+	pa_cond_unmap(reg_packet_id);
+	pa_cond_unmap(reg_lut2);
+	pa_cond_unmap(reg_control);
+	pa_cond_unmap(reg_timer);
+	pa_cond_unmap(reg_stats);
+	pa_cond_unmap(pa_iram);
+	pa_cond_unmap(pa_sram);
 
 	kfree(pa_dev);
 
 	return 0;
 }
 
-static struct netcp_module_data *pa_probe(struct device *dev,
-					  struct device_node *node)
+static int pa_probe(struct netcp_device *netcp_device,
+		    struct device *dev,
+		    struct device_node *node,
+		    void **inst_priv)
 {
 	struct pa_device *pa_dev;
 	int ret = 0;
 
+	if (!node) {
+		dev_err(dev, "device tree info unavailable\n");
+		return -ENODEV;
+	}
+
 	pa_dev = devm_kzalloc(dev, sizeof(struct pa_device), GFP_KERNEL);
 	if (!pa_dev) {
 		dev_err(dev, "memory allocation failed\n");
-		ret = -ENOMEM;
-		goto exit;
+		return -ENOMEM;
 	}
+	*inst_priv = pa_dev;
 
-	if (!node) {
-		dev_err(dev, "device tree info unavailable\n");
-		ret = -ENODEV;
-		goto exit;
-	}
-
+	pa_dev->netcp_device = netcp_device;
 	pa_dev->dev = dev;
 
 	ret = of_property_read_u32(node, "tx_cmd_queue_depth",
@@ -1597,13 +1638,11 @@ static struct netcp_module_data *pa_probe(struct device *dev,
 	pa_dev->reg_stats	= devm_ioremap(dev, 0x2006000, 0x100);
 	pa_dev->pa_iram		= devm_ioremap(dev, 0x2010000, 0x30000);
 	pa_dev->pa_sram		= devm_ioremap(dev, 0x2040000, 0x8000);
-	pa_dev->streaming_switch	= devm_ioremap(dev, 0x02000604, 4);
 
 	if (!pa_dev->reg_mailbox || !pa_dev->reg_packet_id ||
 	    !pa_dev->reg_lut2 || !pa_dev->reg_control ||
 	    !pa_dev->reg_timer || !pa_dev->reg_stats ||
-	    !pa_dev->pa_sram || !pa_dev->pa_iram ||
-	    !pa_dev->streaming_switch) {
+	    !pa_dev->pa_sram || !pa_dev->pa_iram) {
 		dev_err(dev, "failed to set up register areas\n");
 		ret = -ENOMEM;
 		goto exit;
@@ -1612,26 +1651,31 @@ static struct netcp_module_data *pa_probe(struct device *dev,
 	spin_lock_init(&pa_dev->lock);
 	spin_lock_init(&tstamp_lock);
 
-	pa_dev->module.open		= pa_open;
-	pa_dev->module.close		= pa_close;
-	pa_dev->module.remove		= pa_remove;
+	return 0;
 
-	return pa_to_module(pa_dev);
 exit:
-	return NULL;
+	pa_remove(netcp_device, pa_dev);
+	*inst_priv = NULL;
+	return ret;
 }
 
+
 static struct netcp_module pa_module = {
-	.name	= "keystone-pa",
-	.owner	= THIS_MODULE,
-	.probe	= pa_probe,
+	.name		= "keystone-pa",
+	.owner		= THIS_MODULE,
+	.probe		= pa_probe,
+	.open		= pa_open,
+	.close		= pa_close,
+	.remove		= pa_remove,
+	.attach		= pa_attach,
+	.release	= pa_release,
 };
 
 static int __init keystone_pa_init(void)
 {
 	return netcp_register_module(&pa_module);
 }
-subsys_initcall(keystone_pa_init);
+module_init(keystone_pa_init);
 
 static void __exit keystone_pa_exit(void)
 {
