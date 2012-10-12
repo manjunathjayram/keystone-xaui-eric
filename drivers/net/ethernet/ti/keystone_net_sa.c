@@ -31,14 +31,12 @@
 #include "keystone_pasahost.h"
 
 struct sa_device {
+	struct netcp_device		*netcp_device;
+	struct net_device		*net_device;		/* FIXME */
 	struct device			*dev;
-	struct netcp_module_data	 module;
 	struct netcp_tx_pipe		 tx_pipe;
 	u32				 tx_queue_depth;
 };
-
-#define sa_from_module(data)	container_of(data, struct sa_device, module)
-#define sa_to_module(sa)	(&(sa)->module)
 
 struct ipsecmgr_mod_sa_swinfo {
 	u32 word0;
@@ -49,11 +47,10 @@ struct ipsecmgr_mod_sa_swinfo {
 
 static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 {
+	struct sa_device *sa_dev = data;
 	u16 offset, len, ihl;
 	u32 *psdata;
 	const struct iphdr *iph;
-	struct netcp_module_data *module = data;
-	struct sa_device *sa_dev = sa_from_module(module);
 	struct ipsecmgr_mod_sa_swinfo *swinfo =
 			(struct ipsecmgr_mod_sa_swinfo *)p_info->skb->sp;
 
@@ -81,11 +78,12 @@ static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	return 0;
 }
 
-static int sa_close(struct netcp_module_data *data)
+static int sa_close(void *intf_priv, struct net_device *ndev)
 {
-	struct sa_device *sa_dev = sa_from_module(data);
+	struct sa_device *sa_dev = intf_priv;
+	struct netcp_priv *netcp_priv = netdev_priv(ndev);
 
-	netcp_unregister_txhook(data->priv, SA_TXHOOK_ORDER, sa_tx_hook, data);
+	netcp_unregister_txhook(netcp_priv, SA_TXHOOK_ORDER, sa_tx_hook, sa_dev);
 
 	if (sa_dev->tx_pipe.dma_channel) {
 		dmaengine_pause(sa_dev->tx_pipe.dma_channel);
@@ -95,9 +93,10 @@ static int sa_close(struct netcp_module_data *data)
 	return 0;
 }
 
-static int sa_open(struct netcp_module_data *data, struct net_device *ndev)
+static int sa_open(void *intf_priv, struct net_device *ndev)
 {
-	struct sa_device *sa_dev = sa_from_module(data);
+	struct sa_device *sa_dev = intf_priv;
+	struct netcp_priv *netcp_priv = netdev_priv(ndev);
 	struct dma_keystone_info config;
 	dma_cap_mask_t mask;
 	int ret, err;
@@ -131,39 +130,61 @@ static int sa_open(struct netcp_module_data *data, struct net_device *ndev)
 	atomic_set(&sa_dev->tx_pipe.dma_poll_count,
 			sa_dev->tx_pipe.dma_poll_threshold);
 
-	netcp_register_txhook(data->priv, SA_TXHOOK_ORDER, sa_tx_hook, data);
+	netcp_register_txhook(netcp_priv, SA_TXHOOK_ORDER, sa_tx_hook, sa_dev);
 	return 0;
 
 fail:
-	sa_close(data);
+	sa_close(intf_priv, ndev);
 	return ret;
 }
 
-static int sa_remove(struct netcp_module_data *data)
+static int sa_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 {
-	struct sa_device *sa_dev = sa_from_module(data);
+	struct sa_device *sa_dev = inst_priv;
+
+	printk("%s() called for interface %s\n", __func__, ndev->name);
+
+	sa_dev->net_device = ndev;
+	*intf_priv = sa_dev;
+	return 0;
+}
+
+static int sa_release(void *inst_priv)
+{
+	struct sa_device *sa_dev = inst_priv;
+
+	printk("%s() called for interface %s\n", __func__, sa_dev->net_device->name);
+	sa_dev->net_device = NULL;
+	return 0;
+}
+
+static int sa_remove(struct netcp_device *netcp_device, void *intf_priv)
+{
+	struct sa_device *sa_dev = intf_priv;
 	kfree(sa_dev);
 	return 0;
 }
 
-static struct netcp_module_data *sa_probe(struct device *dev,
-					  struct device_node *node)
+static int sa_probe(struct netcp_device *netcp_device,
+		    struct device *dev,
+		    struct device_node *node,
+		    void **inst_priv)
 {
 	struct sa_device *sa_dev;
 	int ret = 0;
 
+	if (!node) {
+		dev_err(dev, "device tree info unavailable\n");
+		return -ENODEV;
+	}
+
 	sa_dev = devm_kzalloc(dev, sizeof(struct sa_device), GFP_KERNEL);
 	if (!sa_dev) {
 		dev_err(dev, "memory allocation failed\n");
-		ret = -ENOMEM;
-		goto exit;
+		return -ENOMEM;
 	}
-
-	if (!node) {
-		dev_err(dev, "device tree info unavailable\n");
-		ret = -ENODEV;
-		goto exit;
-	}
+	*inst_priv = sa_dev;
+	sa_dev->dev = dev;
 
 	ret = of_property_read_u32(node, "tx_queue_depth",
 				   &sa_dev->tx_queue_depth);
@@ -173,33 +194,32 @@ static struct netcp_module_data *sa_probe(struct device *dev,
 	}
 	dev_dbg(dev, "tx_queue_depth %u\n", sa_dev->tx_queue_depth);
 
-	sa_dev->dev = dev;
-	sa_dev->module.open		= sa_open;
-	sa_dev->module.close		= sa_close;
-	sa_dev->module.remove		= sa_remove;
 
-	return sa_to_module(sa_dev);
-exit:
-	return NULL;
+	return 0;
 }
 
 static struct netcp_module sa_module = {
-	.name	= "keystone-sa",
-	.owner	= THIS_MODULE,
-	.probe	= sa_probe,
+	.name		= "keystone-sa",
+	.owner		= THIS_MODULE,
+	.probe		= sa_probe,
+	.open		= sa_open,
+	.close		= sa_close,
+	.remove		= sa_remove,
+	.attach		= sa_attach,
+	.release	= sa_release,
 };
 
-static int __init keysone_sa_init(void)
+static int __init keystone_sa_init(void)
 {
 	return netcp_register_module(&sa_module);
 }
-subsys_initcall(keysone_sa_init);
+module_init(keystone_sa_init);
 
-static void __exit keysone_sa_exit(void)
+static void __exit keystone_sa_exit(void)
 {
 	netcp_unregister_module(&sa_module);
 }
-module_exit(keysone_sa_exit);
+module_exit(keystone_sa_exit);
 
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Sandeep Nair <sandeep_n@ti.com>");
