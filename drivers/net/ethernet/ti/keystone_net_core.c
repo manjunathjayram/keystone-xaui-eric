@@ -58,9 +58,6 @@ static inline int emac_arch_get_mac_addr(char *x,
 	return 0;
 }
 
-static LIST_HEAD(netcp_modules);
-static DEFINE_MUTEX(netcp_modules_lock);
-
 static unsigned int sg_count(struct scatterlist *sg, unsigned int max_ents)
 {
 	unsigned int count;
@@ -71,12 +68,57 @@ static unsigned int sg_count(struct scatterlist *sg, unsigned int max_ents)
 	return count;
 }
 
+static const char *netcp_node_name(struct device_node *node)
+{
+	const char *name;
+
+	if (of_property_read_string(node, "label", &name) < 0)
+		name = node->name;
+	if (!name)
+		name = "unknown";
+	return name;
+}
+
+
+/*
+ *  Module management structures
+ */
+struct netcp_device {
+	struct list_head	 device_list;
+	struct list_head	 interface_head;
+	struct list_head	 modpriv_head;
+	struct platform_device	*platform_device;
+	void __iomem		*streaming_switch;
+};
+
+struct netcp_inst_modpriv {
+	struct netcp_device	*netcp_device;
+	struct netcp_module	*netcp_module;
+	struct list_head	 inst_list;
+	void			*module_priv;
+};
+
+struct netcp_intf_modpriv {
+	struct netcp_priv	*netcp_priv;
+	struct netcp_module	*netcp_module;
+	struct list_head	 intf_list;
+	void			*module_priv;
+};
+
+static LIST_HEAD(netcp_devices);
+static LIST_HEAD(netcp_modules);
+static DEFINE_MUTEX(netcp_modules_lock);
+
+/*
+ *  Module management routines
+ */
 #define for_each_netcp_module(module)			\
-	list_for_each_entry(module, &netcp_modules, list)
+	list_for_each_entry(module, &netcp_modules, module_list)
 
 int netcp_register_module(struct netcp_module *module)
 {
 	struct netcp_module *tmp;
+	struct netcp_device *netcp_device;
 	int ret;
 
 	BUG_ON(!module->name);
@@ -87,42 +129,164 @@ int netcp_register_module(struct netcp_module *module)
 	ret = -EEXIST;
 	for_each_netcp_module(tmp) {
 		if (!strcasecmp(tmp->name, module->name))
-			goto found;
+			goto done;
 	}
 
-	list_add_tail(&module->list, &netcp_modules);
+	list_add_tail(&module->module_list, &netcp_modules);
+	
+	list_for_each_entry(netcp_device, &netcp_devices, device_list) {
+		struct platform_device *pdev = netcp_device->platform_device;
+		struct device_node *node = pdev->dev.of_node;
+		struct device_node *child;
+		struct netcp_inst_modpriv *inst_modpriv;
+		struct netcp_priv *netcp_priv;
 
-found:
+		/* Find this module in the sub-tree for this device */
+		for_each_child_of_node(node, child) {
+			const char *name = netcp_node_name(child);
+			if (!strcasecmp(module->name, name))
+				break;
+		}
+		
+		/* If module not used for this device, skip it */
+		if (child == NULL)
+			continue;
+
+		inst_modpriv = kzalloc(sizeof(*inst_modpriv), GFP_KERNEL);
+		if (!inst_modpriv) {
+			dev_err(&pdev->dev, "Failed to allocate instance for for %s\n", pdev->name);
+			continue;	/* FIXME: Fail instead? */
+		}
+		inst_modpriv->netcp_device = netcp_device;
+		inst_modpriv->netcp_module = module;
+		list_add_tail(&inst_modpriv->inst_list, &netcp_device->modpriv_head);
+
+		dev_dbg(&pdev->dev, "%s(): probing module \"%s\"\n", __func__, module->name);
+
+		ret = module->probe(netcp_device, &pdev->dev, child, &inst_modpriv->module_priv);
+		if (ret) {
+			dev_warn(&pdev->dev, "Probe of module %s failed with %d\n",
+					module->name, ret);
+			list_del(&inst_modpriv->inst_list);
+			kfree(inst_modpriv);
+			continue;
+		}
+		
+		/* Attach module to interfaces */
+		list_for_each_entry(netcp_priv, &netcp_device->interface_head, interface_list) {
+			struct netcp_intf_modpriv *intf_modpriv;
+			int found = 0;
+
+			list_for_each_entry(intf_modpriv, &netcp_priv->module_head, intf_list) {
+				if (intf_modpriv->netcp_module == module) {
+					found = 1;
+					break;
+				}
+			}
+
+			if (!found) {
+				intf_modpriv = kzalloc(sizeof(*intf_modpriv), GFP_KERNEL);
+				if (!intf_modpriv) {
+					dev_err(&pdev->dev, "Error allocating intf_modpriv for %s\n",
+							module->name);
+					continue;
+				}
+
+				intf_modpriv->netcp_priv = netcp_priv;
+				intf_modpriv->netcp_module = module;
+				list_add_tail(&intf_modpriv->intf_list, &netcp_priv->module_head);
+
+				dev_dbg(&pdev->dev, "Attaching module \"%s\"\n", module->name);
+				ret = module->attach(inst_modpriv->module_priv, netcp_priv->ndev, &intf_modpriv->module_priv);
+				if (ret) {
+					dev_info(&pdev->dev, "Attach of module %s declined with %d\n",
+							module->name, ret);
+					list_del(&intf_modpriv->intf_list);
+					kfree(intf_modpriv);
+					continue;
+				}
+
+			}
+		}
+	}
+
+	ret = 0;
+
+done:
 	mutex_unlock(&netcp_modules_lock);
 	return ret;
 }
 EXPORT_SYMBOL(netcp_register_module);
 
-static struct netcp_module *netcp_find_module(const char *name)
+static struct netcp_module *__netcp_find_module(const char *name)
 {
 	struct netcp_module *tmp;
-	mutex_lock(&netcp_modules_lock);
+
 	for_each_netcp_module(tmp) {
 		if (!strcasecmp(tmp->name, name))
-			goto found;
+			return tmp;
 	}
-	mutex_unlock(&netcp_modules_lock);
 	return NULL;
-found:
+}
+
+static struct netcp_module *netcp_find_module(const char *name)
+{
+	struct netcp_module *module;
+
+	mutex_lock(&netcp_modules_lock);
+	module = __netcp_find_module(name);
 	mutex_unlock(&netcp_modules_lock);
-	return tmp;
+	return module;
 }
 
 void netcp_unregister_module(struct netcp_module *module)
 {
-	if (module == netcp_find_module(module->name)) {
-		mutex_lock(&netcp_modules_lock);
-		list_del(&module->list);
-		mutex_unlock(&netcp_modules_lock);
+	struct netcp_device *netcp_device;
+	struct netcp_module *module_tmp;
+
+	mutex_lock(&netcp_modules_lock);
+
+	list_for_each_entry(netcp_device, &netcp_devices, device_list) {
+		struct netcp_priv *netcp_priv, *netcp_tmp;
+		struct netcp_inst_modpriv *inst_modpriv, *inst_tmp;
+
+		list_for_each_entry_safe(netcp_priv, netcp_tmp, 
+				&netcp_device->interface_head, interface_list) {
+			struct netcp_intf_modpriv *intf_modpriv, *intf_tmp;
+
+			list_for_each_entry_safe(intf_modpriv, intf_tmp,
+					&netcp_priv->module_head, intf_list) {
+				if (intf_modpriv->netcp_module == module) {
+					module->release(intf_modpriv->module_priv);
+					list_del(&intf_modpriv->intf_list);
+				}
+			}
+		}
+
+		list_for_each_entry_safe(inst_modpriv, inst_tmp,
+				&netcp_device->modpriv_head, inst_list) {
+			if (inst_modpriv->netcp_module == module) {
+				module->remove(netcp_device, inst_modpriv->module_priv);
+				list_del(&inst_modpriv->inst_list);
+			}
+		}
 	}
+
+	for_each_netcp_module(module_tmp) {
+		if (module == module_tmp) {
+			list_del(&module->module_list);
+			break;
+		}
+	}
+
+	mutex_unlock(&netcp_modules_lock);
 }
 EXPORT_SYMBOL(netcp_unregister_module);
 
+
+/*
+ *  Module TX and RX Hook management
+ */
 struct netcp_hook_list {
 	struct list_head	 list;
 	netcp_hook_rtn		*hook_rtn;
@@ -275,10 +439,8 @@ EXPORT_SYMBOL(netcp_align_psdata);
 static int netcp_rx_packet_max = NETCP_MAX_PACKET_SIZE;
 static int netcp_debug_level;
 
-#define for_each_module(netcp, module)			\
-	list_for_each_entry(module, &netcp->modules, list)
-#define for_each_module_safe(netcp, module, tmp)	\
-	list_for_each_entry_safe(module, tmp, &netcp->modules, list)
+#define for_each_module(netcp, intf_modpriv)			\
+	list_for_each_entry(intf_modpriv, &netcp->module_head, intf_list)
 
 static const char *netcp_rx_state_str(struct netcp_priv *netcp)
 {
@@ -745,7 +907,8 @@ out:
 static void netcp_uc_list_set(struct net_device *ndev, int vid)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
-	struct netcp_module_data *module;
+	struct netcp_intf_modpriv *intf_modpriv;
+	struct netcp_module *module;
 	struct netdev_hw_addr *uc_addr;
 	int i = 0, err;
 	int uc_count;
@@ -768,10 +931,11 @@ static void netcp_uc_list_set(struct net_device *ndev, int vid)
 
 	}
 
-	for_each_module(netcp, module) {
+	for_each_module(netcp, intf_modpriv) {
+		module = intf_modpriv->netcp_module;
 		if (module->add_ucast != NULL) {
-			err = module->add_ucast(module, (u8 *)uc_list,
-						uc_count, vid);
+			err = module->add_ucast(intf_modpriv->module_priv,
+					(u8 *)uc_list, uc_count, vid);
 			if (err != 0) {
 				dev_err(netcp->dev, "Could not add "
 					"unicast entries\n");
@@ -788,7 +952,8 @@ out:
 static void netcp_mc_list_set(struct net_device *ndev, int vid)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
-	struct netcp_module_data *module;
+	struct netcp_intf_modpriv *intf_modpriv;
+	struct netcp_module *module;
 	struct netdev_hw_addr *mc_addr;
 	int i = 0, err;
 	int mc_count;
@@ -811,10 +976,11 @@ static void netcp_mc_list_set(struct net_device *ndev, int vid)
 
 	}
 
-	for_each_module(netcp, module) {
+	for_each_module(netcp, intf_modpriv) {
+		module = intf_modpriv->netcp_module;
 		if (module->add_mcast != NULL) {
-			err = module->add_mcast(module, (u8 *)mc_list,
-						mc_count, vid);
+			err = module->add_mcast(intf_modpriv->module_priv,
+					(u8 *)mc_list, mc_count, vid);
 			if (err != 0) {
 				dev_err(netcp->dev, "Could not add "
 					"multicast entries\n");
@@ -858,6 +1024,7 @@ struct dma_chan *netcp_get_rx_chan(struct netcp_priv *netcp)
 {
 	return netcp->rx_channel;
 }
+EXPORT_SYMBOL(netcp_get_rx_chan);
 
 static void netcp_rx_notify(struct dma_chan *chan, void *arg)
 {
@@ -873,7 +1040,8 @@ static void netcp_rx_notify(struct dma_chan *chan, void *arg)
 static int netcp_ndo_open(struct net_device *ndev)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
-	struct netcp_module_data *module;
+	struct netcp_intf_modpriv *intf_modpriv;
+	struct netcp_module *module;
 	struct dma_keystone_info config;
 	dma_cap_mask_t mask;
 	int err = -ENODEV;
@@ -924,9 +1092,10 @@ static int netcp_ndo_open(struct net_device *ndev)
 
 	netcp_set_rx_state(netcp, RX_STATE_INTERRUPT);
 
-	for_each_module(netcp, module) {
+	for_each_module(netcp, intf_modpriv) {
+		module = intf_modpriv->netcp_module;
 		if (module->open != NULL) {
-			err = module->open(module, ndev);
+			err = module->open(intf_modpriv->module_priv, ndev);
 			if (err != 0) {
 				dev_err(netcp->dev, "Open failed\n");
 				goto fail;
@@ -952,7 +1121,8 @@ fail:
 static int netcp_ndo_stop(struct net_device *ndev)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
-	struct netcp_module_data *module;
+	struct netcp_intf_modpriv *intf_modpriv;
+	struct netcp_module *module;
 	unsigned long flags;
 	int err = 0;
 
@@ -978,9 +1148,10 @@ static int netcp_ndo_stop(struct net_device *ndev)
 
 	netcp_set_rx_state(netcp, RX_STATE_INVALID);
 
-	for_each_module(netcp, module) {
+	for_each_module(netcp, intf_modpriv) {
+		module = intf_modpriv->netcp_module;
 		if (module->close != NULL) {
-			err = module->close(module);
+			err = module->close(intf_modpriv->module_priv, ndev);
 			if (err != 0) {
 				dev_err(netcp->dev, "Close failed\n");
 				goto out;
@@ -1108,7 +1279,8 @@ static void netcp_ndo_tx_timeout(struct net_device *ndev)
 static int netcp_rx_add_vid(struct net_device *ndev, u16 vid)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
-	struct netcp_module_data *module;
+	struct netcp_intf_modpriv *intf_modpriv;
+	struct netcp_module *module;
 	unsigned long flags;
 	int err = 0;
 
@@ -1118,9 +1290,10 @@ static int netcp_rx_add_vid(struct net_device *ndev, u16 vid)
 
 	set_bit(vid, netcp->active_vlans);
 
-	for_each_module(netcp, module) {
+	for_each_module(netcp, intf_modpriv) {
+		module = intf_modpriv->netcp_module;
 		if ((module->add_vid != NULL) && (vid != 0)) {
-			err = module->add_vid(module, vid);
+			err = module->add_vid(intf_modpriv->module_priv, vid);
 			if (err != 0) {
 				dev_err(netcp->dev, "Could not add "
 					"vlan id = %d\n", vid);
@@ -1137,14 +1310,16 @@ static int netcp_rx_add_vid(struct net_device *ndev, u16 vid)
 static int netcp_rx_kill_vid(struct net_device *ndev, u16 vid)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
-	struct netcp_module_data *module;
+	struct netcp_intf_modpriv *intf_modpriv;
+	struct netcp_module *module;
 	int err = 0;
 
 	dev_info(netcp->dev, "removing rx vlan id: %d\n", vid);
 
-	for_each_module(netcp, module) {
+	for_each_module(netcp, intf_modpriv) {
+		module = intf_modpriv->netcp_module;
 		if (module->del_vid != NULL) {
-			err = module->del_vid(module, vid);
+			err = module->del_vid(intf_modpriv->module_priv, vid);
 			if (err != 0) {
 				dev_err(netcp->dev, "Could not delete "
 					"vlan id = %d\n", vid);
@@ -1157,6 +1332,39 @@ static int netcp_rx_kill_vid(struct net_device *ndev, u16 vid)
 
 	return 0;
 }
+
+u32 netcp_get_streaming_switch(struct netcp_device *netcp_device, int port)
+{
+	u32	reg;
+
+	reg = __raw_readl(netcp_device->streaming_switch);
+	return (port == 0) ? reg : (reg >> ((port - 1) * 8)) & 0xff;
+}
+EXPORT_SYMBOL(netcp_get_streaming_switch);
+
+u32 netcp_set_streaming_switch(struct netcp_device *netcp_device,
+				int port, u32 new_value)
+{
+	u32	reg;
+	u32	old_value;
+
+	reg = __raw_readl(netcp_device->streaming_switch);
+	
+	if (port == 0) {
+		old_value = reg;
+		reg = (new_value << 8) | new_value;
+	} else {
+		int shift = (port - 1) * 8;
+		old_value = (reg >> shift) & 0xff;
+		reg &= ~(0xff << shift);
+		reg |= (new_value & 0xff) << shift;
+	}
+
+	__raw_writel(reg, netcp_device->streaming_switch);
+	return old_value;
+}
+EXPORT_SYMBOL(netcp_set_streaming_switch);
+
 
 static const struct net_device_ops netcp_netdev_ops = {
 	.ndo_open		= netcp_ndo_open,
@@ -1172,45 +1380,33 @@ static const struct net_device_ops netcp_netdev_ops = {
 	.ndo_tx_timeout		= netcp_ndo_tx_timeout,
 };
 
-static const char *netcp_node_name(struct device_node *node)
+int netcp_create_interface(struct netcp_device *netcp_device,
+			   struct net_device **ndev_p,
+			   const char *ifname_proto)
 {
-	const char *name;
-
-	if (of_property_read_string(node, "label", &name) < 0)
-		name = node->name;
-	if (!name)
-		name = "unknown";
-	return name;
-}
-
-static int netcp_probe(struct platform_device *pdev)
-{
+	struct platform_device *pdev = netcp_device->platform_device;
 	struct device_node *node = pdev->dev.of_node;
-	struct device_node *child;
-	struct netcp_module *module;
-	struct netcp_module_data *module_data;
+	struct netcp_inst_modpriv *inst_modpriv;
 	struct netcp_priv *netcp;
 	struct net_device *ndev;
 	resource_size_t size;
 	struct resource res;
 	void __iomem *efuse = NULL;
 	u32 efuse_mac = 0;
-	const char *name;
 	const void *mac_addr;
 	u8 efuse_mac_addr[6];
 	int ret = 0;
 
-	if (!node) {
-		dev_err(&pdev->dev, "could not find device info\n");
-		return -EINVAL;
-	}
-
-	ndev = alloc_etherdev(sizeof(struct netcp_priv));
+	ndev = alloc_netdev(sizeof(struct netcp_priv),
+			(ifname_proto ? ifname_proto : "eth%d"),
+			ether_setup);
+	*ndev_p = ndev;
 	if (!ndev) {
 		dev_err(&pdev->dev, "Error allocating net_device\n");
 		ret = -ENOMEM;
 		goto probe_quit;
 	}
+	dev_dbg(&pdev->dev, "%s(): ndev = %p\n", __func__, ndev);
 	ndev->features |= NETIF_F_SG;
 	ndev->features |= NETIF_F_FRAGLIST;
 
@@ -1223,13 +1419,13 @@ static int netcp_probe(struct platform_device *pdev)
 				NETIF_F_SG|
 				NETIF_F_FRAGLIST;
 
-	platform_set_drvdata(pdev, ndev);
 	netcp = netdev_priv(ndev);
 	spin_lock_init(&netcp->lock);
-	INIT_LIST_HEAD(&netcp->modules);
+	INIT_LIST_HEAD(&netcp->module_head);
 	INIT_LIST_HEAD(&netcp->txhook_list_head);
 	INIT_LIST_HEAD(&netcp->rxhook_list_head);
-	netcp->pdev = pdev;
+	netcp->netcp_device = netcp_device;
+	netcp->pdev = netcp_device->platform_device;
 	netcp->ndev = ndev;
 	netcp->dev  = &ndev->dev;
 	netcp->msg_enable = netif_msg_init(netcp_debug_level, NETCP_DEBUG);
@@ -1237,7 +1433,6 @@ static int netcp_probe(struct platform_device *pdev)
 	netcp_set_rx_state(netcp, RX_STATE_INVALID);
 
 	ret = of_property_read_u32(node, "efuse-mac", &efuse_mac);
-
 	if (efuse_mac) {
 		if (of_address_to_resource(node, 1, &res)) {
 			dev_err(&pdev->dev, "could not find resource\n");
@@ -1280,22 +1475,6 @@ static int netcp_probe(struct platform_device *pdev)
 	}
 
 
-	for_each_child_of_node(node, child) {
-		name = netcp_node_name(child);
-		module = netcp_find_module(name);
-		if (!module) {
-			dev_err(&pdev->dev, "Could not find module %s\n", name);
-			goto clean_ndev_ret;
-		}
-		module_data = module->probe(&pdev->dev, child);
-		if (IS_ERR_OR_NULL(module_data)) {
-			dev_err(&pdev->dev, "Probe of module %s failed\n", name);
-			goto clean_ndev_ret;
-		}
-		list_add_tail(&module_data->list, &netcp->modules);
-		module_data->priv = netcp;
-	}
-
 	if (efuse_mac == 1) {
 		emac_arch_get_mac_addr(efuse_mac_addr, efuse);
 		if (is_valid_ether_addr(efuse_mac_addr))
@@ -1308,8 +1487,6 @@ static int netcp_probe(struct platform_device *pdev)
 			random_ether_addr(ndev->dev_addr);
 	}
 
-	ether_setup(ndev);
-
 	/* NAPI register */
 	netif_napi_add(ndev, &netcp->napi, netcp_poll, NETCP_NAPI_WEIGHT);
 
@@ -1319,7 +1496,6 @@ static int netcp_probe(struct platform_device *pdev)
 	ndev->netdev_ops	= &netcp_netdev_ops;
 
 	SET_NETDEV_DEV(ndev, &pdev->dev);
-	keystone_set_ethtool_ops(ndev);
 
 	ret = register_netdev(ndev);
 	if (ret) {
@@ -1327,26 +1503,169 @@ static int netcp_probe(struct platform_device *pdev)
 		ret = -ENODEV;
 		goto clean_ndev_ret;
 	}
+	dev_info(&pdev->dev, "Created interface \"%s\"\n", ndev->name);
+	list_add_tail(&netcp->interface_list, &netcp_device->interface_head);
+	
+	/* Notify each registered module of the new interface */
+	list_for_each_entry(inst_modpriv, &netcp_device->modpriv_head, inst_list) {
+		struct netcp_module *module = inst_modpriv->netcp_module;
+		struct netcp_intf_modpriv *intf_modpriv;
+		
+		intf_modpriv = kzalloc(sizeof(*intf_modpriv), GFP_KERNEL);
+		if (!intf_modpriv) {
+			dev_err(&pdev->dev, "Error allocating intf_modpriv for %s\n",
+					module->name);
+			continue;
+		}
+
+		intf_modpriv->netcp_priv = netcp;
+		intf_modpriv->netcp_module = module;
+		list_add_tail(&intf_modpriv->intf_list, &netcp->module_head);
+
+		dev_dbg(&pdev->dev, "Attaching module \"%s\"\n", module->name);
+		ret = module->attach(inst_modpriv->module_priv, ndev, &intf_modpriv->module_priv);
+		if (ret) {
+			dev_info(&pdev->dev, "Attach of module %s declined with %d\n",
+					module->name, ret);
+			list_del(&intf_modpriv->intf_list);
+			kfree(intf_modpriv);
+			continue;
+		}
+	}
 
 	return 0;
 
 clean_ndev_ret:
 	free_netdev(ndev);
 probe_quit:
+	*ndev_p = NULL;
+	return ret;
+}
+EXPORT_SYMBOL(netcp_create_interface);
+
+void netcp_delete_interface(struct netcp_device *netcp_device,
+			    struct net_device *ndev)
+{
+	struct netcp_intf_modpriv *intf_modpriv, *tmp;
+	struct netcp_priv *netcp = netdev_priv(ndev);
+	struct netcp_module *module;
+
+	/* Notify each of the modules that the interface is going away */
+	list_for_each_entry_safe(intf_modpriv, tmp, &netcp->module_head, intf_list) {
+		module = intf_modpriv->netcp_module;
+		dev_dbg(&netcp_device->platform_device->dev,
+				"Releasing module \"%s\"\n", module->name);
+		if (module->release)
+			module->release(intf_modpriv->module_priv);
+		list_del(&intf_modpriv->intf_list);
+		kfree(intf_modpriv);
+	}
+	WARN(!list_empty(&intf_modpriv->intf_list),
+			"%s interface list is not empty!\n", ndev->name);
+
+	list_del(&netcp->interface_list);
+	unregister_netdev(ndev);
+	free_netdev(ndev);
+}
+EXPORT_SYMBOL(netcp_delete_interface);
+
+
+static int netcp_probe(struct platform_device *pdev)
+{
+	struct device_node *node = pdev->dev.of_node;
+	struct device_node *child;
+	struct netcp_device *netcp_device;
+	struct netcp_module *module;
+	struct netcp_inst_modpriv *inst_modpriv;
+	const char *name;
+	int ret;
+
+	if (!node) {
+		dev_err(&pdev->dev, "could not find device info\n");
+		return -EINVAL;
+	}
+
+	/* Allocate a new NETCP device instance */
+	netcp_device = kzalloc(sizeof(*netcp_device), GFP_KERNEL);
+	if (!netcp_device) {
+		dev_err(&pdev->dev, "failure allocating NETCP device\n");
+		return -ENOMEM;
+	}
+	dev_dbg(&pdev->dev, "%s(): netcp_device = %p\n", __func__, netcp_device);
+
+	/* Initialize the NETCP device instance */
+	INIT_LIST_HEAD(&netcp_device->interface_head);
+	INIT_LIST_HEAD(&netcp_device->modpriv_head);
+	netcp_device->platform_device = pdev;
+	platform_set_drvdata(pdev, netcp_device);
+
+	/* Map the Streaming Switch */
+	netcp_device->streaming_switch = devm_ioremap_nocache(&pdev->dev, 0x02000604, 4);
+	if (!netcp_device->streaming_switch) {
+		dev_err(&pdev->dev, "can't map streaming switch\n");
+		ret = -ENOMEM;
+		goto probe_quit;
+	}
+
+	/* Add the device instance to the list */
+	list_add_tail(&netcp_device->device_list, &netcp_devices);
+
+	/* Probe any modules already registered */
+	for_each_child_of_node(node, child) {
+		name = netcp_node_name(child);
+		module = netcp_find_module(name);
+		if (!module)
+			continue;
+
+		inst_modpriv = kzalloc(sizeof(*inst_modpriv), GFP_KERNEL);
+		if (!inst_modpriv) {
+			dev_err(&pdev->dev, "Failed to allocate instance for for %s\n", name);
+			continue;	/* FIXME: Fail instead? */
+		}
+		inst_modpriv->netcp_device = netcp_device;
+		inst_modpriv->netcp_module = module;
+		list_add_tail(&inst_modpriv->inst_list, &netcp_device->modpriv_head);
+
+		dev_dbg(&pdev->dev, "%s(): probing module \"%s\"\n", __func__, name);
+		ret = module->probe(netcp_device, &pdev->dev, child, &inst_modpriv->module_priv);
+		if (ret) {
+			dev_warn(&pdev->dev, "Probe of module %s failed with %d\n", name, ret);
+			list_del(&inst_modpriv->inst_list);
+			kfree(inst_modpriv);
+			continue;
+		}
+	}
+
+	return 0;
+
+probe_quit:
+	platform_set_drvdata(pdev, NULL);
+	kfree(netcp_device);
 	return ret;
 }
 
 static int netcp_remove(struct platform_device *pdev)
 {
-	struct net_device *ndev = platform_get_drvdata(pdev);
-	struct netcp_priv *netcp = netdev_priv(ndev);
-	struct netcp_module_data *module, *tmp;
+	struct netcp_device *netcp_device = platform_get_drvdata(pdev);
+	struct netcp_inst_modpriv *inst_modpriv, *tmp;
+	struct netcp_module *module;
 
-	for_each_module_safe(netcp, module, tmp)
-		module->remove(module);
-	free_netdev(ndev);
+	list_for_each_entry_safe(inst_modpriv, tmp, &netcp_device->modpriv_head, inst_list) {
+		module = inst_modpriv->netcp_module;
+		dev_dbg(&pdev->dev, "Removing module \"%s\"\n", module->name);
+		module->remove(netcp_device, inst_modpriv->module_priv);
+		list_del(&inst_modpriv->inst_list);
+		kfree(inst_modpriv);
+	}
+	WARN(!list_empty(&netcp_device->interface_head),
+			"%s interface list not empty!\n", pdev->name);
+
+	/* Unmap the Streaming Switch */
+	devm_iounmap(&pdev->dev, netcp_device->streaming_switch);
+
 	platform_set_drvdata(pdev, NULL);
-
+	kfree(netcp_device);
+	printk("%s() done\n", __func__);
 	return 0;
 }
 
@@ -1354,8 +1673,7 @@ static struct of_device_id of_match[] = {
 	{ .compatible = "ti,keystone-netcp", },
 	{},
 };
-
-MODULE_DEVICE_TABLE(of, keystone_hwqueue_of_match);
+MODULE_DEVICE_TABLE(of, of_match);
 
 static struct platform_driver netcp_driver = {
 	.driver = {
@@ -1367,8 +1685,12 @@ static struct platform_driver netcp_driver = {
 	.remove = netcp_remove,
 };
 
+extern void keystone_cpsw_init(void);
+extern void keystone_cpsw_exit(void);
+
 static int __init netcp_init(void)
 {
+	keystone_cpsw_init();
 	return platform_driver_register(&netcp_driver);
 }
 module_init(netcp_init);
@@ -1376,6 +1698,7 @@ module_init(netcp_init);
 static void __exit netcp_exit(void)
 {
 	platform_driver_unregister(&netcp_driver);
+	keystone_cpsw_exit();
 }
 module_exit(netcp_exit);
 

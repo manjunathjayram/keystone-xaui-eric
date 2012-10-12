@@ -29,12 +29,12 @@
 #define SGMII_LINK_MAC_FIBER		3
 
 int serdes_init(void);
-void keystone_set_ethtool_ops(struct net_device *ndev);
-
 int keystone_sgmii_reset(void __iomem *sgmii_ofs, int port);
 int keystone_sgmii_link_status(void __iomem *sgmii_ofs, int port);
 int keystone_sgmii_config(void __iomem *sgmii_ofs,
 			  int port, u32 interface);
+
+struct netcp_device;
 
 enum netcp_rx_state {
 	RX_STATE_INTERRUPT,
@@ -55,6 +55,7 @@ struct netcp_tx_pipe {
 
 struct netcp_priv {
 	spinlock_t			 lock;
+	struct netcp_device		*netcp_device;
 	struct platform_device		*pdev;
 	struct net_device		*ndev;
 	struct napi_struct		 napi;
@@ -76,7 +77,8 @@ struct netcp_priv {
 	unsigned long			 active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
 
 	enum netcp_rx_state		 rx_state;
-	struct list_head		 modules;
+	struct list_head		 module_head;
+	struct list_head		 interface_list;
 	struct list_head		 txhook_list_head;
 	struct list_head		 rxhook_list_head;
 
@@ -111,43 +113,48 @@ static inline int netcp_prepend_psdata(struct netcp_packet *p_info, u32 *data, u
 	return 0;
 }
 
-struct netcp_module_data {
-	struct netcp_priv	*priv;
-	struct netcp_module	*module;
-	struct list_head	 list;
-	int			(*open)(struct netcp_module_data *data,
-					struct net_device *ndev);
-	int			(*close)(struct netcp_module_data *data);
-	int			(*remove)(struct netcp_module_data *data);
-	int			(*send_packet)(struct netcp_module_data *data,
-					       void *buffer);
-	int			(*get_timestamp)(struct netcp_module_data *data,
-						 u64 *ts);
-	u64			(*get_offset)(struct netcp_module_data *data);
-	u64			(*to_sys_time)(struct netcp_module_data *data,
-					       u64 offset, u64 pa_ticks);
-	int			(*add_mcast)(struct netcp_module_data *data,
-						u8 *mc_list, int mc_count,
-						int vid);
-	int			(*add_ucast)(struct netcp_module_data *data,
-						u8 *uc_list, int uc_count,
-						int vid);
-	int			(*add_vid)(struct netcp_module_data *data,
-						int vid);
-	int			(*del_vid)(struct netcp_module_data *data,
-						int vid);
-};
-
 struct netcp_module {
 	const char		*name;
 	struct module		*owner;
-	struct list_head	 list;
-	struct netcp_module_data *(*probe)(struct device *device,
-					   struct device_node *node);
+	struct list_head	 module_list;
+	struct list_head	 interface_list;
+
+	/* probe/remove: called once per NETCP instance */
+	int			(*probe)(struct netcp_device *netcp_device,
+					 struct device *device,
+					 struct device_node *node,
+					 void **inst_priv);
+	int			(*remove)(struct netcp_device *netcp_device,
+					  void *inst_priv);
+
+	/* attach/release: called once per network interface */
+	int			(*attach)(void *inst_priv, struct net_device *ndev,
+					  void **intf_priv);
+	int			(*release)(void *intf_priv);
+
+	int			(*open)(void *intf_priv, struct net_device *ndev);
+	int			(*close)(void *intf_priv, struct net_device *ndev);
+	int			(*add_mcast)(void *intf_priv, u8 *mc_list,
+						int mc_count, int vid);
+	int			(*add_ucast)(void *intf_priv, u8 *uc_list,
+						int uc_count, int vid);
+	int			(*add_vid)(void *intf_priv, int vid);
+	int			(*del_vid)(void *intf_priv, int vid);
 };
+
 
 int netcp_register_module(struct netcp_module *module);
 void netcp_unregister_module(struct netcp_module *module);
+
+u32 netcp_get_streaming_switch(struct netcp_device *netcp_device, int port);
+u32 netcp_set_streaming_switch(struct netcp_device *netcp_device,
+				int port, u32 new_value);
+
+int netcp_create_interface(struct netcp_device *netcp_device,
+			   struct net_device **ndev_p,
+			   const char *ifname_proto);
+void netcp_delete_interface(struct netcp_device *netcp_device,
+			    struct net_device *ndev);
 
 struct dma_chan *netcp_get_rx_chan(struct netcp_priv *priv);
 struct dma_chan *netcp_get_tx_chan(struct netcp_priv *priv);
