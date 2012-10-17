@@ -725,7 +725,8 @@ static int keystone_pa_set_firmware(struct pa_device *pa_dev,
 
 static struct pa_packet *pa_alloc_packet(struct pa_device *pa_dev,
 					 unsigned cmd_size,
-					 enum dma_transfer_direction direction)
+					 enum dma_transfer_direction direction,
+					 struct dma_chan *dma_chan)
 {
 	struct pa_packet *p_info;
 
@@ -736,8 +737,7 @@ static struct pa_packet *pa_alloc_packet(struct pa_device *pa_dev,
 	p_info->priv = pa_dev;
 	p_info->data = p_info + 1;
 	p_info->direction = direction;
-	p_info->chan = (direction == DMA_MEM_TO_DEV) ? pa_dev->tx_channel :
-		pa_dev->rx_channel;
+	p_info->chan = dma_chan;
 
 	sg_init_table(p_info->sg, PA_SGLIST_SIZE);
 	sg_set_buf(&p_info->sg[0], p_info->epib, sizeof(p_info->epib));
@@ -751,6 +751,10 @@ static void pa_tx_dma_callback(void *data)
 {
 	struct pa_packet *p_info = data;
 	struct pa_device *pa_dev = p_info->priv;
+
+	p_info->status = dma_async_is_tx_complete(p_info->chan,
+						  p_info->cookie, NULL, NULL);
+	WARN_ON(p_info->status != DMA_SUCCESS);
 
 	dma_unmap_sg(pa_dev->dev, &p_info->sg[2], 1, p_info->direction);
 
@@ -882,7 +886,7 @@ static void tstamp_complete(u32 context, struct pa_packet *p_info)
 	
 	skb = pend->skb;
 	if (!p_info) {
-		printk("%s(%p,NULL): timeout\n", __func__, pend);
+		dev_warn(p_info->priv->dev, "Timestamp completion timeout\n");
 		kfree_skb(skb);
 	} else {
 		tx_timestamp = p_info->epib[0];
@@ -994,7 +998,7 @@ static struct dma_async_tx_descriptor *pa_rxpool_alloc(void *arg,
 
 	struct pa_packet *rx;
 
-	rx = pa_alloc_packet(pa_dev, bufsize, DMA_DEV_TO_MEM);
+	rx = pa_alloc_packet(pa_dev, bufsize, DMA_DEV_TO_MEM, pa_dev->rx_channel);
 	if (!rx) {
 		dev_err(pa_dev->dev, "could not allocate cmd rx packet\n");
 		kfree(rx);
@@ -1073,7 +1077,7 @@ static int keystone_pa_add_mac(struct pa_device *priv, const u8 *mac,
 
 	size = (sizeof(struct pa_frm_command) +
 		sizeof(struct pa_frm_cmd_add_lut1) + 4);
-	tx = pa_alloc_packet(priv, size, DMA_MEM_TO_DEV);
+	tx = pa_alloc_packet(priv, size, DMA_MEM_TO_DEV, priv->tx_channel);
 	if (!tx) {
 		dev_err(priv->dev, "could not allocate cmd tx packet\n");
 		return -ENOMEM;
@@ -1140,6 +1144,136 @@ static int keystone_pa_add_mac(struct pa_device *priv, const u8 *mac,
 
 	return 0;
 }
+
+static void pa_init_crc_table4(u32 polynomial, u32 *crc_table4)
+{
+	int i, bit;
+
+	/* 16 values representing all possible 4-bit values */
+	for(i = 0; i < PARAM_CRC_TABLE_SIZE; i++) {
+		crc_table4[i] = i << 28;
+		for (bit = 0; bit < 4; bit++) {
+			/* If shifting out a zero, then just shift */
+			if (!(crc_table4[i] & 0x80000000))
+				crc_table4[i] = (crc_table4[i] << 1);
+			/* Else add in the polynomial as well */
+			else
+				crc_table4[i] = (crc_table4[i] << 1) ^ polynomial;
+		}
+		crc_table4[i] = cpu_to_be32(crc_table4[i]);
+	}
+}
+
+#define	CRC32C_POLYNOMIAL	0x1EDC6F41
+#define	SCTP_CRC_INITVAL	0xFFFFFFFF
+static int pa_config_crc_engine(struct pa_device *priv)
+{
+	struct pa_frm_command *fcmd;
+	struct pa_frm_config_crc *ccrc;
+	struct pa_packet *tx;
+	int size;
+
+	/* Verify that there is enough room to create the command */
+	size = sizeof(*fcmd) + sizeof(*ccrc) - sizeof(u32);
+	tx = pa_alloc_packet(priv, size, DMA_MEM_TO_DEV, priv->tx_pipe.dma_channel);
+	if (!tx) {
+		dev_err(priv->dev, "could not allocate cmd tx packet\n");
+		return -ENOMEM;
+	}
+
+	/* Create the command */
+	fcmd = tx->data;
+	fcmd->command_result	= 0;
+	fcmd->command		= PAFRM_CONFIG_COMMAND_CRC_ENGINE;
+	fcmd->magic		= PAFRM_CONFIG_COMMAND_SEC_BYTE;
+	fcmd->com_id		= 0;
+	fcmd->ret_context	= PA_CONTEXT_CONFIG;
+	fcmd->flow_id		= priv->cmd_flow_num;
+	fcmd->reply_queue	= priv->cmd_queue_num;
+	fcmd->reply_dest	= PAFRM_DEST_PKTDMA;
+	swizFcmd(fcmd);
+
+	ccrc = (struct pa_frm_config_crc *)&(fcmd->cmd);
+	ccrc->ctrl_bitmap  = PARAM_CRC_SIZE_32;
+	ccrc->ctrl_bitmap |= PARAM_CRC_CTRL_RIGHT_SHIFT;
+	ccrc->ctrl_bitmap |= PARAM_CRC_CTRL_INV_RESULT;
+	ccrc->init_val = cpu_to_be32(SCTP_CRC_INITVAL);
+
+	/* Magic polynomial value is CRC32c defined by RFC4960 */
+	pa_init_crc_table4(CRC32C_POLYNOMIAL, ccrc->crc_tbl);
+
+	tx->psdata[0] = ((u32)(4 << 5) << 24);
+
+	tx->epib[1] = 0x11112222;
+	tx->epib[2] = 0x33334444;
+	tx->epib[3] = 0;
+
+	pa_submit_tx_packet(tx);
+	dev_dbg(priv->dev, "waiting for command transmit complete\n");
+
+	return 0;
+}
+
+
+static int pa_fmtcmd_tx_csum(struct netcp_packet *p_info)
+{
+	struct sk_buff *skb = p_info->skb;
+	struct pasaho_com_chk_crc *ptx;
+	int start, len;
+	int size;
+
+	size = sizeof(*ptx);
+	ptx = (struct pasaho_com_chk_crc *)netcp_push_psdata(p_info, size);
+
+	start = skb_checksum_start_offset(skb);
+	len = skb->len - start;
+	if (len & 0x01) {
+		int err = skb_pad(skb, 1);
+		if (err < 0) {
+			if (unlikely(net_ratelimit())) {
+				dev_warn(p_info->netcp->dev,
+					"padding failed (%d), packet discarded\n",
+					err);
+			}
+			p_info->skb = NULL;
+			return err;
+		}
+		dev_dbg(p_info->netcp->dev, "padded packet to even length");
+		++len;
+	}
+
+	PASAHO_SET_CMDID(ptx, PASAHO_PAMOD_CMPT_CHKSUM);
+	PASAHO_CHKCRC_SET_START(ptx, start);
+	PASAHO_CHKCRC_SET_LEN(ptx, len);
+	PASAHO_CHKCRC_SET_RESULT_OFF(ptx, skb->csum_offset);
+	PASAHO_CHKCRC_SET_INITVAL(ptx, 0);
+	PASAHO_CHKCRC_SET_NEG0(ptx, 0);
+
+	return size;
+} 
+
+#include <net/sctp/checksum.h>		/* FIXME */
+static int pa_fmtcmd_tx_crc32c(struct netcp_packet *p_info)
+{
+	struct sk_buff *skb = p_info->skb;
+	struct pasaho_com_chk_crc *ptx;
+	int start, len;
+	int size;
+
+	size = sizeof(*ptx);
+	ptx = (struct pasaho_com_chk_crc *)netcp_push_psdata(p_info, size);
+
+	start = skb_checksum_start_offset(skb);
+	len = skb->len - start;
+
+	PASAHO_SET_CMDID             (ptx, PASAHO_PAMOD_CMPT_CRC);
+	PASAHO_CHKCRC_SET_START      (ptx, start);
+	PASAHO_CHKCRC_SET_LEN        (ptx, len);
+	PASAHO_CHKCRC_SET_CTRL       (ptx, PAFRM_CRC_FLAG_CRC_OFFSET_VALID);
+	PASAHO_CHKCRC_SET_RESULT_OFF (ptx, skb->csum_offset);
+
+	return size;
+} 
 
 static int pa_fmtcmd_next_route(struct netcp_packet *p_info, const struct pa_cmd_next_route *route)
 {
@@ -1233,6 +1367,7 @@ static int pa_fmtcmd_align(struct netcp_packet *p_info, const unsigned bytes)
 static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 {
 	struct pa_device *pa_dev = data;
+	struct sk_buff *skb = p_info->skb;
 	static const struct pa_cmd_next_route route_cmd = {
 					0,		/*  ctrlBitfield */
 					PA_DEST_EMAC,	/* Route - host */
@@ -1244,10 +1379,15 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 					0,
 					};
 	struct pa_cmd_tx_timestamp tx_ts;
-	int align, total = 0;
+	int size, total = 0;
 
-	total += pa_fmtcmd_next_route(p_info, &route_cmd);
+	/* Generate the next route command */
+	size = pa_fmtcmd_next_route(p_info, &route_cmd);
+	if (unlikely(size < 0))
+		return size;
+	total += size;
 
+	/* If TX Timestamp required, request it */
 	if ((skb_shinfo(p_info->skb)->tx_flags & SKBTX_HW_TSTAMP) && p_info->skb->sk) {
 		struct tstamp_pending	*pend;
 		
@@ -1268,14 +1408,66 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 				tx_ts.flow_id    = pa_dev->cmd_flow_num;
 				tx_ts.sw_info0   = pend->context;
 
-				total += pa_fmtcmd_tx_timestamp(p_info, &tx_ts);
+				size = pa_fmtcmd_tx_timestamp(p_info, &tx_ts);
+				if (unlikely(size < 0))
+					return size;
+				total += size;
 			}
 		}
 	}
 
-	align = netcp_align_psdata(p_info, 8);
-	if (align)
-		total += pa_fmtcmd_align(p_info, align);
+	/* If checksum offload required, request it */
+	if (skb->ip_summed == CHECKSUM_PARTIAL) {
+		u8 l4_proto = 0;
+		switch (skb->protocol) {
+		case __constant_htons(ETH_P_IP):
+			l4_proto = ip_hdr(skb)->protocol;
+			break;
+		case __constant_htons(ETH_P_IPV6):
+			l4_proto = ipv6_hdr(skb)->nexthdr;
+			break;
+		default:
+			if (unlikely(net_ratelimit())) {
+				dev_warn(p_info->netcp->dev,
+					 "partial checksum but L3 proto=%x!\n",
+					 skb->protocol);
+			}
+			break;
+		}
+
+		switch (l4_proto) {
+		case IPPROTO_TCP:
+		case IPPROTO_UDP:
+			size = pa_fmtcmd_tx_csum(p_info);
+			break;
+		case IPPROTO_SCTP:
+			size = pa_fmtcmd_tx_crc32c(p_info);
+			break;
+		default:
+			if (unlikely(net_ratelimit())) {
+				dev_warn(p_info->netcp->dev,
+					 "partial checksum but L4 proto=%x!\n",
+					 l4_proto);
+			}
+			size = 0;
+			break;
+		}
+		
+		if (unlikely(size < 0))
+			return size;
+		total += size;
+	}
+
+	/* The next hook may require the command stack to be 8-byte aligned */
+	size = netcp_align_psdata(p_info, 8);
+	if (unlikely(size < 0))
+		return size;
+	if (size > 0) {
+		size = pa_fmtcmd_align(p_info, size);
+		if (unlikely(size < 0))
+			return size;
+		total += size;
+	}
 
 	p_info->tx_pipe = &pa_dev->tx_pipe;
 	return 0;
@@ -1504,6 +1696,10 @@ static int pa_open(void *intf_priv, struct net_device *ndev)
 
 	dma_rxfree_refill(pa_dev->rx_channel);
 
+	ret = pa_config_crc_engine(pa_dev);
+	if (ret < 0)
+		goto fail;
+
 	ret = keystone_pa_add_mac(pa_dev, NULL,       PACKET_HST,  0,      63);
 	ret = keystone_pa_add_mac(pa_dev, bcast_addr, PACKET_HST,  0,      62);
 	ret = keystone_pa_add_mac(pa_dev, ndev->dev_addr,   PACKET_HST,  0,      61);
@@ -1528,18 +1724,29 @@ static int pa_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 {
 	struct pa_device *pa_dev = inst_priv;
 
-	printk("%s() called for interface %s\n", __func__, ndev->name);
-
 	pa_dev->net_device = ndev;
 	*intf_priv = pa_dev;
+
+	rtnl_lock();
+	ndev->features    |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | NETIF_F_SCTP_CSUM;
+	ndev->hw_features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | NETIF_F_SCTP_CSUM;
+	netdev_update_features(ndev);
+	rtnl_unlock();
+
 	return 0;
 }
 
 static int pa_release(void *inst_priv)
 {
 	struct pa_device *pa_dev = inst_priv;
+	struct net_device *ndev = pa_dev->net_device;
 
-	printk("%s() called for interface %s\n", __func__, pa_dev->net_device->name);
+	rtnl_lock();
+	ndev->features    &= ~(NETIF_F_ALL_CSUM | NETIF_F_SCTP_CSUM);
+	ndev->hw_features &= ~(NETIF_F_ALL_CSUM | NETIF_F_SCTP_CSUM);
+	netdev_update_features(ndev);
+	rtnl_unlock();
+
 	pa_dev->net_device = NULL;
 	return 0;
 }
