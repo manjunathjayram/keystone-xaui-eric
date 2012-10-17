@@ -408,7 +408,7 @@ int netcp_align_psdata(struct netcp_packet *p_info, unsigned byte_align)
 
 	switch (byte_align) {
 	case 0:
-		padding = -1;
+		padding = -EINVAL;
 		break;
 	case 1:
 		padding = 0;
@@ -791,7 +791,7 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	int real_sg_ents;
 	int ret = 0;
 
-		ndev->stats.tx_packets++;
+	ndev->stats.tx_packets++;
 	ndev->stats.tx_bytes += skb->len;
 
 	p_info = kzalloc(sizeof(*p_info), GFP_ATOMIC);
@@ -807,24 +807,14 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	p_info->tx_pipe = NULL;
 	p_info->psdata_len = 0;
 
-	if (unlikely(skb->len < NETCP_MIN_PACKET_SIZE)) {
-		ret = skb_padto(skb, NETCP_MIN_PACKET_SIZE);
-		if (ret < 0) {
-			dev_warn(netcp->dev, "padding failed, ignoring\n");
-			return ret;
-		}
-		skb->len = NETCP_MIN_PACKET_SIZE;
-	}
-
-	netcp_dump_packet(p_info, "txs");
-
 	/* Find out where to inject the packet for transmission */
 	list_for_each_entry(tx_hook, &netcp->txhook_list_head, list) {
 		ret = tx_hook->hook_rtn(tx_hook->order, tx_hook->hook_data,
 					p_info);
 		if (ret) {
-			dev_err(netcp->dev, "TX hook %d rejected"
-				" the packet: %d\n", tx_hook->order, ret);
+			dev_err(netcp->dev, "TX hook %d "
+				"rejected the packet: %d\n",
+				tx_hook->order, ret);
 			dev_kfree_skb_any(skb);
 			kfree(p_info);
 			return ret;
@@ -840,15 +830,23 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 		return -ENXIO;
 	}
 
+	if (unlikely(skb->len < NETCP_MIN_PACKET_SIZE)) {
+		ret = skb_padto(skb, NETCP_MIN_PACKET_SIZE);
+		if (ret < 0) {
+			dev_warn(netcp->dev, "padding failed (%d), "
+				 "packet dropped\n", ret);
+			kfree(p_info);
+			return ret;
+		}
+		skb->len = NETCP_MIN_PACKET_SIZE;
+	}
+
+	netcp_dump_packet(p_info, "txs");
+
 	sg_init_table(p_info->sg, NETCP_SGLIST_SIZE);
 	sg_set_buf(&p_info->sg[0], p_info->epib, sizeof(p_info->epib));
-#if 1
 	sg_set_buf(&p_info->sg[1], &p_info->psdata[NETCP_PSDATA_LEN - p_info->psdata_len],
 			p_info->psdata_len * sizeof(u32));
-#else
-	sg_set_buf(&p_info->sg[1], &p_info->psdata[0],
-			p_info->psdata_len * sizeof(u32));
-#endif
 
 	/* Map all the packet fragments	into the scatterlist */
 	real_sg_ents = skb_to_sgvec(skb, &p_info->sg[2], 0, skb->len);
@@ -1411,6 +1409,7 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 	ndev->features |= NETIF_F_FRAGLIST;
 
 	ndev->features |= NETIF_F_HW_VLAN_FILTER;
+	ndev->hw_features = ndev->features;
 
 	ndev->vlan_features |= NETIF_F_TSO |
 				NETIF_F_TSO6 |
@@ -1665,7 +1664,6 @@ static int netcp_remove(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, NULL);
 	kfree(netcp_device);
-	printk("%s() done\n", __func__);
 	return 0;
 }
 
