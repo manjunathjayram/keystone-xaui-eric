@@ -772,8 +772,6 @@ static void cpsw_timer(unsigned long arg)
 	struct cpsw_priv *cpsw_dev = (struct cpsw_priv *)arg;
 	uint64_t data[128];
 	
-//	printk("in cpsw_timer()\n");
-
 	cpsw_dev->sgmii_link = keystone_sgmii_link_status(cpsw_dev->sgmii_port_regs,
 						cpsw_dev->num_slaves);
 	for_each_slave(cpsw_dev, cpsw_slave_link, cpsw_dev);
@@ -1184,17 +1182,12 @@ static int cpsw_attach(void *inst_priv, struct net_device *ndev, void **intf_pri
 {
 	struct cpsw_priv *cpsw_dev = inst_priv;
 
-	printk("%s() called for interface %s\n", __func__, cpsw_dev->ndev->name);
-
 	*intf_priv = cpsw_dev;
 	return 0;
 }
 
 static int cpsw_release(void *inst_priv)
 {
-	struct cpsw_priv *cpsw_dev = inst_priv;
-
-	printk("%s() called for interface %s\n", __func__, cpsw_dev->ndev->name);
 	return 0;
 }
 
