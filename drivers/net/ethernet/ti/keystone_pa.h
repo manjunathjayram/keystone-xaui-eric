@@ -547,6 +547,27 @@ struct pa_frm_cmd_add_lut1 {
 	struct	pa_frm_forward next_fail;
 };
 
+/* CRC Engine Configuration */
+#define PARAM_CRC_TABLE_SIZE    16
+
+struct pa_frm_config_crc {
+	u8	ctrl_bitmap;			/* Control bit maps as defined below */
+#define PARAM_CRC_SIZE_8         0
+#define PARAM_CRC_SIZE_16        1
+#define PARAM_CRC_SIZE_24        2
+#define PARAM_CRC_SIZE_32        3
+
+#define PARAM_CRC_CTRL_CRC_SIZE_MASK    0x3
+#define PARAM_CRC_CTRL_LEFT_SHIFT       0x0
+#define PARAM_CRC_CTRL_RIGHT_SHIFT      0x4
+#define PARAM_CRC_CTRL_INV_RESULT       0x8
+
+	u8	rsvd1;				/* reserved for alignment */
+	u16	rsvd2;				/* reserved for alignment */
+	u32	init_val;			/* Initial value to use in the CRC calcualtion */
+	u32	crc_tbl[PARAM_CRC_TABLE_SIZE];	/* CRC table */
+};
+
 /* Commands to PA */
 struct pa_frm_command {
 
