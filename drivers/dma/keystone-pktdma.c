@@ -1484,6 +1484,7 @@ chan_prep_slave_sg(struct dma_chan *achan, struct scatterlist *_sg,
 	struct scatterlist *sg = _sg;
 	unsigned num_sg = _num_sg;
 	unsigned nsg;
+	unsigned packet_len;
 	u32 packet_info, psflags;
 	u32 next_desc;
 	unsigned q_num = (options >> DMA_QNUM_SHIFT) & DMA_QNUM_MASK;
@@ -1543,6 +1544,7 @@ chan_prep_slave_sg(struct dma_chan *achan, struct scatterlist *_sg,
 
 	/* Walk backwards through the scatterlist */
 	next_desc = 0;
+	packet_len = 0;
 	for (sg += num_sg - 1, nsg = num_sg; nsg > 0; --sg, --nsg) {
 		struct keystone_dma_desc *desc;
 		u32 buflen, orig_len;
@@ -1589,8 +1591,9 @@ chan_prep_slave_sg(struct dma_chan *achan, struct scatterlist *_sg,
 
 		buflen = sg_dma_len(sg) & BITS(22);
 		orig_len = (q_num << 28) | buflen;
+		packet_len += buflen;
 		desc_fill(chan, hwdesc,
-			  buflen,		/* desc_info	*/
+			  packet_len,		/* desc_info	*/
 			  chan->tag_info,	/* tag_info	*/
 			  packet_info,		/* packet_info	*/
 			  buflen,		/* buff_len	*/
