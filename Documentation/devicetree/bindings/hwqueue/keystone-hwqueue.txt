@@ -1,0 +1,197 @@
+* Texas Instruments Keystone hwqueue driver
+
+Required properties:
+- compatible : Should be  "ti,keystone-hwqueue";
+- reg : Address and length of the register set for the device for peek,
+	push/pop etc.
+- range		: <start number> total range of hwqueue numbers for the device
+- region	: <start number> of memory regions to use
+- linkram0	: <start number> of total link ram indices available
+- linkram1	: <start number> of total external linking ram indices
+		  available
+- link-index	: <start number> of link ram indices to use
+- queues	: number of queues to use per queue range name (see example below)
+- descriptors	: number and size of descriptors to use per hwqueue instance
+		   name (see example below)
+
+- qmgrs         : the number of individual queue managers in the device. On
+                  keystone 1 range of devices there should be only one node.
+		  On keystone 2 devices there can be more than 1 node
+  -- managed-queues : the actual queues managed by each queue manager instance
+
+Optional properties:
+- pdsps - PDSP configuration, if any.
+- qos-inputs - quality of service configuration
+
+The following explains the various attributes
+
+- values = <start number> : number of queues staring at queue number start are
+			    reserved for QoS
+- pdsp-id = <x>           : the qmss pdsp that has the QoS firmware
+- ticks-per-sec = <ticks> : the ticks per sec
+- sched-port-configs = <start count size> : scheduler port start index,
+					    number of scheduler ports,
+					    size of address space for
+					    scheduler port
+- drop-out-profiles = <start count size>  : output profile start index,
+					    number of output profiles,
+					    size of address space for
+					    output profile
+- drop-cfg-profiles = <start count size>  : config profile start index,
+					    number of config profiles,
+					    size of address space for
+					    config profile
+- drop-queue-configs = <start count size> : drop queue config start index,
+					    number of drop queue configs,
+					    size of queue config address space
+- statistic-profiles = <start count>      : statistics profile start index,
+					    number of statistics profiles
+- drop-policies = <&droppolicies>         : phandle for drop policies
+- qos-tree = <&qostree>                   : phandle for the qos tree
+					    configuration
+
+Example:
+
+hwqueue0: hwqueue@2a00000 {
+		compatible = "ti,keystone-hwqueue";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+		reg		= <0x2a00000 0xc0000>;
+		range		= <0 0x2000>;
+		linkram0	= <0x80000 0x4000>;
+		linkram1	= <0x0 0x10000>;
+
+		qmgrs {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges;
+			qmgr0 {
+				managed-queues = <0 0x2000>;	/* managed queues */
+				reg = <0x2a00000 0x20000	/* 0 - peek	*/
+				       0x2a62000 0x6000		/* 1 - status	*/
+				       0x2a68000 0x2000		/* 2 - config	*/
+				       0x2a6a000 0x4000		/* 3 - region	*/
+				       0x2a40000 0x20000	/* 4 - push	*/
+				       0x2a20000 0x20000>;	/* 5 - pop	*/
+			};
+		};
+
+		queues {
+			qpend-arm {
+				values = <650 8>;
+				irq-base= <41>;
+				reserved;
+			};
+			general {
+				values = <4000 64>;
+			};
+			pa {
+				values = <640 9>;
+				reserved;
+			};
+			infradma {
+				values = <800 12>;
+				reserved;
+			};
+			accumulator-low-0 {
+				values = <0 32>;
+				// pdsp-id, channel, entries, pacing mode, latency
+				accumulator = <0 32 8 2 0>;
+				irq-base = <363>;
+				multi-queue;
+				reserved;
+			};
+			accumulator-low-1 {
+				values = <32 32>;
+				// pdsp-id, channel, entries, pacing mode, latency
+				accumulator = <0 33 8 2 0>;
+				irq-base = <364>;
+				multi-queue;
+			};
+			accumulator-low-2 {
+				values = <64 32>;
+				// pdsp-id, channel, entries, pacing mode, latency
+				accumulator = <0 34 8 2 0>;
+				irq-base = <365>;
+				multi-queue;
+			};
+			accumulator-low-3 {
+				values = <96 32>;
+				// pdsp-id, channel, entries, pacing mode, latency
+				accumulator = <0 35 8 2 0>;
+				irq-base = <366>;
+				multi-queue;
+			};
+			accumulator-high {
+				values = <728 8>;
+				// pdsp-id, channel, entries, pacing mode, latency
+				accumulator = <0 20 8 2 0>;
+				irq-base = <150>;
+				reserved;
+			};
+			qos-inputs {
+				values			= <8000 192>;
+				pdsp-id			= <1>;
+				ticks-per-sec		= <10000>;
+				qos-cfg			= <4 50 1 1 0xf00 0 0>;
+				sched-port-configs	= <0 20 0x1c8>;
+				drop-out-profiles	= <0 36 0xc>;
+				drop-cfg-profiles	= <0 8 0x14>;
+				drop-queue-configs	= <0 80 0x4>;
+				statistics-profiles	= <0 48>;
+				drop-policies		= <&droppolicies>;
+				qos-tree		= <&qostree>;
+				reserved;
+			};
+			riotx {
+				values = <672 1>;
+				reserved;
+			};
+		};
+		regions {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges;
+			region-12 {
+				id = <12>;
+				values	= <4096 128>;	/* num_desc desc_size */
+				link-index = <0x4000>;
+			};
+		};
+		descriptors {
+			pool-net {
+				values = <2048 128>;	/* num_desc desc_size */
+				region-id = <12>;
+			};
+			pool-udma {
+				values = <1152 128>;	/* num_desc desc_size */
+				region-id = <12>;
+			};
+			pool-rio {
+				values = <128 128>;
+				region-id = <12>;
+			};
+		};
+		pdsps {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges;
+			pdsp0@0x2a60000 {
+				firmware = "keystone/qmss_pdsp_acc48_le_1_0_3_12.fw";
+				reg = <0x2a60000 0x1000    /*iram */
+				       0x2a6e000 0x1000    /*reg*/
+				       0x2aa0000 0x3c8	   /*intd */
+				       0x2ab8000 0x4000>;  /*cmd*/
+				id = <0>;
+			};
+			pdsp1@0x2a61000 {
+				firmware = "keystone/qmss_qos.fw";
+				reg = <0x2a61000 0x1000    /*iram */
+				       0x2a6f000 0x1000    /*reg*/
+				       0x2aa0000 0x3c8	   /*intd */
+				       0x2abc000 0x4000>;  /*cmd*/
+				id = <1>;
+			};
+		};
+	};
