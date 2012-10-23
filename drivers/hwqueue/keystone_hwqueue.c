@@ -34,6 +34,27 @@
 #include "hwqueue_internal.h"
 #include "keystone_hwqueue.h"
 
+static inline int khwq_pdsp_wait(u32 * __iomem addr, unsigned timeout,
+				 u32 flags)
+{
+	unsigned long end_time;
+	u32 val = 0;
+	int ret;
+
+	end_time = jiffies + msecs_to_jiffies(timeout);
+	while (jiffies < end_time) {
+		val = __raw_readl(addr);
+		if (flags)
+			val &= flags;
+		if (!val)
+			break;
+		cpu_relax();
+	}
+	ret = val ? -ETIMEDOUT : 0;
+
+	return ret;
+}
+
 static int khwq_match(struct hwqueue_instance *inst, unsigned flags)
 {
 	struct khwq_instance *kq = hwqueue_inst_to_priv(inst);
@@ -827,6 +848,172 @@ static int khwq_init_qmgrs(struct khwq_device *kdev, struct device_node *qmgrs)
 	return 0;
 }
 
+static int khwq_init_pdsps(struct khwq_device *kdev, struct device_node *pdsps)
+{
+	struct device *dev = kdev->dev;
+	struct khwq_pdsp_info *pdsp;
+	struct device_node *child;
+	int ret;
+
+	for_each_child_of_node(pdsps, child) {
+
+		pdsp = devm_kzalloc(dev, sizeof(*pdsp), GFP_KERNEL);
+		if (!pdsp) {
+			dev_err(dev, "out of memory allocating pdsp\n");
+			return -ENOMEM;
+		}
+
+		pdsp->name = khwq_find_name(child);
+
+		ret = of_property_read_string(child, "firmware",
+					      &pdsp->firmware);
+		if (ret < 0 || !pdsp->firmware) {
+			dev_err(dev, "unknown firmware for pdsp %s\n",
+				pdsp->name);
+			kfree(pdsp);
+			continue;
+		}
+		dev_dbg(dev, "pdsp name %s fw name :%s\n",
+			pdsp->name, pdsp->firmware);
+
+		pdsp->iram	= of_iomap(child, 0);
+		pdsp->regs	= of_iomap(child, 1);
+		pdsp->intd	= of_iomap(child, 2);
+		pdsp->command	= of_iomap(child, 3);
+		if (!pdsp->command || !pdsp->iram || !pdsp->regs || !pdsp->intd) {
+			dev_err(dev, "failed to map pdsp %s regs\n",
+				pdsp->name);
+			if (pdsp->command)
+				devm_iounmap(dev, pdsp->command);
+			if (pdsp->iram)
+				devm_iounmap(dev, pdsp->iram);
+			if (pdsp->regs)
+				devm_iounmap(dev, pdsp->regs);
+			if (pdsp->intd)
+				devm_iounmap(dev, pdsp->intd);
+			kfree(pdsp);
+			continue;
+		}
+		of_property_read_u32(child, "id", &pdsp->id);
+
+		list_add_tail(&pdsp->list, &kdev->pdsps);
+
+		dev_dbg(dev, "added pdsp %s: command %p, iram %p, "
+			"regs %p, intd %p, firmware %s\n",
+			pdsp->name, pdsp->command, pdsp->iram, pdsp->regs,
+			pdsp->intd, pdsp->firmware);
+	}
+
+	return 0;
+}
+
+
+static int khwq_stop_pdsp(struct khwq_device *kdev,
+			  struct khwq_pdsp_info *pdsp)
+{
+	u32 val, timeout = 1000;
+	int ret;
+
+	val = __raw_readl(&pdsp->regs->control) & ~PDSP_CTRL_ENABLE;
+	__raw_writel(val, &pdsp->regs->control);
+
+	ret = khwq_pdsp_wait(&pdsp->regs->control, timeout, PDSP_CTRL_RUNNING);
+
+	if (ret < 0) {
+		dev_err(kdev->dev, "timed out on pdsp %s stop\n", pdsp->name);
+		return ret;
+	}
+	return 0;
+}
+
+static int khwq_load_pdsp(struct khwq_device *kdev,
+			  struct khwq_pdsp_info *pdsp)
+{
+	int i, ret, fwlen;
+	const struct firmware *fw;
+	u32 *fwdata;
+
+	ret = request_firmware(&fw, pdsp->firmware, kdev->dev);
+	if (ret) {
+		dev_err(kdev->dev, "failed to get firmware %s for pdsp %s\n",
+			pdsp->firmware, pdsp->name);
+		return ret;
+	}
+
+	/* download the firmware */
+	fwdata = (u32 *)fw->data;
+	fwlen = (fw->size + sizeof(u32) - 1) / sizeof(u32);
+
+	for (i = 0; i < fwlen; i++)
+		__raw_writel(be32_to_cpu(fwdata[i]), pdsp->iram + i);
+
+	release_firmware(fw);
+
+	return 0;
+}
+
+static int khwq_start_pdsp(struct khwq_device *kdev,
+			   struct khwq_pdsp_info *pdsp)
+{
+	u32 val, timeout = 1000;
+	int ret;
+
+	/* write a command for sync */
+	__raw_writel(0xffffffff, pdsp->command);
+	while (__raw_readl(pdsp->command) != 0xffffffff)
+		cpu_relax();
+
+	/* soft reset the PDSP */
+	val  = __raw_readl(&pdsp->regs->control);
+	val &= ~(PDSP_CTRL_PC_MASK | PDSP_CTRL_SOFT_RESET);
+	__raw_writel(val, &pdsp->regs->control);
+
+	/* enable pdsp */
+	val = __raw_readl(&pdsp->regs->control) | PDSP_CTRL_ENABLE;
+	__raw_writel(val, &pdsp->regs->control);
+
+	/* wait for command register to clear */
+	ret = khwq_pdsp_wait(pdsp->command, timeout, 0);
+
+	if (ret < 0) {
+		dev_err(kdev->dev, "timed out on pdsp %s command register wait\n",
+			pdsp->name);
+		return ret;
+	}
+	return 0;
+}
+
+static void khwq_stop_pdsps(struct khwq_device *kdev)
+{
+	struct khwq_pdsp_info *pdsp;
+
+	/* disable all pdsps */
+	for_each_pdsp(kdev, pdsp)
+		khwq_stop_pdsp(kdev, pdsp);
+}
+
+static int khwq_start_pdsps(struct khwq_device *kdev)
+{
+	struct khwq_pdsp_info *pdsp;
+	int ret;
+
+	khwq_stop_pdsps(kdev);
+
+	/* now load them all */
+	for_each_pdsp(kdev, pdsp) {
+		ret = khwq_load_pdsp(kdev, pdsp);
+		if (ret < 0)
+			return ret;
+	}
+
+	for_each_pdsp(kdev, pdsp) {
+		ret = khwq_start_pdsp(kdev, pdsp);
+		WARN_ON(ret);
+	}
+
+	return 0;
+}
+
 static int khwq_init_queue(struct khwq_device *kdev,
 			   struct khwq_range_info *range,
 			   struct hwqueue_instance *inst)
@@ -870,7 +1057,7 @@ static int khwq_init_queues(struct khwq_device *kdev)
 static int khwq_probe(struct platform_device *pdev)
 {
 	struct device_node *node = pdev->dev.of_node;
-	struct device_node *qmgrs, *descs, *queues, *regions;
+	struct device_node *qmgrs, *descs, *queues, *regions, *pdsps;
 	struct device *dev = &pdev->dev;
 	struct hwqueue_device *hdev;
 	struct khwq_device *kdev;
@@ -894,7 +1081,12 @@ static int khwq_probe(struct platform_device *pdev)
 		dev_err(dev, "queues not specified\n");
 		return -ENODEV;
 	}
-
+	pdsps =  of_find_child_by_name(node, "pdsps");
+	BUG_ON(!pdsps);
+	if (!pdsps) {
+		dev_err(dev, "pdsp info not specified\n");
+		return -ENODEV;
+	}
 	descs =  of_find_child_by_name(node, "descriptors");
 	if (!descs) {
 		dev_err(dev, "descriptor pools not specified\n");
@@ -919,6 +1111,7 @@ static int khwq_probe(struct platform_device *pdev)
 	INIT_LIST_HEAD(&kdev->qmgrs);
 	INIT_LIST_HEAD(&kdev->pools);
 	INIT_LIST_HEAD(&kdev->regions);
+	INIT_LIST_HEAD(&kdev->pdsps);
 
 	if (of_property_read_u32_array(node, "range", temp, 2)) {
 		dev_err(dev, "hardware queue range not specified\n");
@@ -937,6 +1130,17 @@ static int khwq_probe(struct platform_device *pdev)
 	 * and non-existant - needs to be fixed
 	 */
 
+	/* get pdsp configuration values from device tree */
+	if (pdsps) {
+		ret = khwq_init_pdsps(kdev, pdsps);
+		if (ret)
+			return ret;
+
+		ret = khwq_start_pdsps(kdev);
+		if (ret)
+			return ret;
+	}
+
 	/* get usable queue range values from device tree */
 	ret = khwq_setup_queue_ranges(kdev, queues);
 	if (ret)
@@ -946,6 +1150,7 @@ static int khwq_probe(struct platform_device *pdev)
 	ret = khwq_setup_pools(kdev, descs);
 	if (ret) {
 		khwq_free_queue_ranges(kdev);
+		khwq_stop_pdsps(kdev);
 		return ret;
 	}
 

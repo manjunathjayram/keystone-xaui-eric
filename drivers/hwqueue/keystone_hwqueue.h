@@ -24,6 +24,11 @@
 #define THRESH_GTE	BIT(7)
 #define THRESH_LT	0
 
+#define PDSP_CTRL_PC_MASK	0xffff0000
+#define PDSP_CTRL_SOFT_RESET	BIT(0)
+#define PDSP_CTRL_ENABLE	BIT(1)
+#define PDSP_CTRL_RUNNING	BIT(15)
+
 struct khwq_reg_config {
 	u32		revision;
 	u32		__pad1;
@@ -47,6 +52,13 @@ struct khwq_reg_queue {
 	u32		byte_count;
 	u32		packet_size;
 	u32		ptr_size_thresh;
+};
+
+struct khwq_reg_pdsp_regs {
+	u32		control;
+	u32		status;
+	u32		cycle_count;
+	u32		stall_count;
 };
 
 struct khwq_region {
@@ -78,6 +90,19 @@ struct khwq_link_ram_block {
 	dma_addr_t	 phys;
 	void		*virt;
 	size_t		 size;
+};
+
+struct khwq_pdsp_info {
+	const char				*name;
+	struct khwq_reg_pdsp_regs  __iomem	*regs;
+	union {
+		void __iomem				*command;
+	};
+	void __iomem				*intd;
+	u32 __iomem				*iram;
+	const char				*firmware;
+	u32					 id;
+	struct list_head			 list;
 };
 
 struct khwq_range_ops;
@@ -128,6 +153,7 @@ struct khwq_device {
 	unsigned			 base_id;
 	struct list_head		 queue_ranges;
 	struct list_head		 pools;
+	struct list_head		 pdsps;
 	struct list_head		 qmgrs;
 };
 
@@ -155,8 +181,22 @@ struct khwq_instance {
 #define for_each_pool(kdev, pool)				\
 	list_for_each_entry(pool, &kdev->pools, list)
 
+#define for_each_pdsp(kdev, pdsp)				\
+	list_for_each_entry(pdsp, &kdev->pdsps, list)
+
 #define for_each_qmgr(kdev, qmgr)				\
 	list_for_each_entry(qmgr, &kdev->qmgrs, list)
+
+static inline struct khwq_pdsp_info *
+khwq_find_pdsp(struct khwq_device *kdev, unsigned pdsp_id)
+{
+	struct khwq_pdsp_info *pdsp;
+
+	for_each_pdsp(kdev, pdsp)
+		if (pdsp_id == pdsp->id)
+			return pdsp;
+	return NULL;
+}
 
 static inline struct khwq_qmgr_info *
 khwq_find_qmgr(struct hwqueue_instance *inst)
