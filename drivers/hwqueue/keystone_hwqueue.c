@@ -513,11 +513,12 @@ static int khwq_setup_regions(struct khwq_device *kdev,
 			continue;
 		}
 
-		if (!of_property_read_u32(child, "link-id", &region->link_index)) {
-			dev_err(dev, "invalid link info %s\n", region->name);
+		if (!of_get_property(child, "link-index", NULL)) {
+			dev_err(dev, "No link info for %s\n", region->name);
 			devm_kfree(dev, region);
 			continue;
 		}
+		of_property_read_u32(child, "link-index", &region->link_index);
 
 		list_add_tail(&region->list, &kdev->regions);
 	}
