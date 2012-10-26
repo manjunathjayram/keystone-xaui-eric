@@ -240,6 +240,8 @@ struct cpsw_priv {
 
 	struct timer_list		 timer;
 
+	u32				 intf_tx_queues;
+
 	u32				 tx_queue_depth;
 	struct netcp_tx_pipe		 tx_pipe;
 };
@@ -1134,6 +1136,12 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 		cpsw_dev->ale_ports = 2;
 	}
 
+	ret = of_property_read_u32(node, "intf_tx_queues", &cpsw_dev->intf_tx_queues);
+	if (ret < 0) {
+		dev_err(dev, "missing intf_tx_queues parameter, err %d\n", ret);
+		cpsw_dev->intf_tx_queues = 1;
+	}
+
 	cpsw_dev->ss_regs = regs;
 	cpsw_dev->sgmii_port_regs	= regs + cpsw_dev->sgmii_module_ofs;
 	cpsw_dev->regs = regs + cpsw_dev->switch_module_ofs;
@@ -1169,7 +1177,8 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	netcp_set_streaming_switch(netcp_device, 0, PSTREAM_ROUTE_DMA);
 
 	/* Create the interface */
-	netcp_create_interface(netcp_device, &cpsw_dev->ndev, NULL);
+	netcp_create_interface(netcp_device, &cpsw_dev->ndev, NULL,
+			cpsw_dev->intf_tx_queues, 1);
 	SET_ETHTOOL_OPS(cpsw_dev->ndev, &keystone_ethtool_ops);
 
 	return 0;
