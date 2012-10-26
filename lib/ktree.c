@@ -124,7 +124,8 @@ static void ktree_node_destroy(struct ktree_node *node)
 	struct ktree *ktree = node->ktree;
 
 	WARN_ON(!ktree_is_leaf(node));
-	ktree->put(node);
+	if (ktree->put)
+		ktree->put(node);
 	ktree_put_node(parent);
 }
 
