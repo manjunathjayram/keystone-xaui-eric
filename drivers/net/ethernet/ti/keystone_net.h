@@ -152,7 +152,8 @@ u32 netcp_set_streaming_switch(struct netcp_device *netcp_device,
 
 int netcp_create_interface(struct netcp_device *netcp_device,
 			   struct net_device **ndev_p,
-			   const char *ifname_proto);
+			   const char *ifname_proto,
+			   int tx_queues, int rx_queues);
 void netcp_delete_interface(struct netcp_device *netcp_device,
 			    struct net_device *ndev);
 

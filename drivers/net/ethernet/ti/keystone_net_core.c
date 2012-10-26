@@ -604,11 +604,12 @@ static void netcp_tx_complete(void *data)
 	if (p_info->status != DMA_SUCCESS)
 		netcp->ndev->stats.tx_errors++;
 
+	if (netif_subqueue_stopped(netcp->ndev, skb) &&
+	    netcp_is_alive(netcp))
+		netif_wake_subqueue(netcp->ndev, skb_get_queue_mapping(skb));
+
 	dev_kfree_skb_any(skb);
 	kfree(p_info);
-
-	if (netif_queue_stopped(netcp->ndev) && netcp_is_alive(netcp))
-		netif_wake_queue(netcp->ndev);
 }
 
 /* Release a free receive buffer */
@@ -869,10 +870,10 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 		ndev->stats.tx_dropped++;
 		dma_unmap_sg(netcp->dev, &p_info->sg[2], real_sg_ents,
 			     DMA_TO_DEVICE);
+		netif_stop_subqueue(ndev, skb_get_queue_mapping(skb));
 		dev_kfree_skb_any(skb);
 		kfree(p_info);
-		dev_warn(netcp->dev, "failed to prep slave dma\n");
-		netif_stop_queue(ndev);
+		dev_dbg(netcp->dev, "failed to prep slave dma\n");
 		ret = -ENOBUFS;
 		goto out;
 	}
@@ -1101,8 +1102,9 @@ static int netcp_ndo_open(struct net_device *ndev)
 		}
 	}
 
-	napi_enable(&netcp->napi);
 	dma_rxfree_refill(netcp->rx_channel);
+	napi_enable(&netcp->napi);
+	netif_tx_wake_all_queues(ndev);
 
 	dev_info(netcp->dev, "netcp device %s opened\n", ndev->name);
 
@@ -1126,7 +1128,7 @@ static int netcp_ndo_stop(struct net_device *ndev)
 
 	spin_lock_irqsave(&netcp->lock, flags);
 
-	netif_stop_queue(ndev);
+	netif_tx_stop_all_queues(ndev);
 	netif_carrier_off(ndev);
 
 	BUG_ON(!netcp_is_alive(netcp));
@@ -1220,7 +1222,7 @@ static int netcp_ndo_change_mtu(struct net_device *ndev, int new_mtu)
 
 	spin_lock_irqsave(&netcp->lock, flags);
 
-	netif_stop_queue(ndev);
+	netif_tx_stop_all_queues(ndev);
 	netif_carrier_off(ndev);
 
 	BUG_ON(!netcp_is_alive(netcp));
@@ -1259,7 +1261,7 @@ out_change_mtu:
 
 	napi_enable(&netcp->napi);
 
-	netif_start_queue(ndev);
+	netif_tx_start_all_queues(ndev);
 	netif_carrier_on(ndev);
 
 	return ret;
@@ -1270,8 +1272,8 @@ static void netcp_ndo_tx_timeout(struct net_device *ndev)
 	struct netcp_priv *netcp = netdev_priv(ndev);
 
 	dev_err(netcp->dev, "transmit timed out\n");
-	if (netif_queue_stopped(ndev))
-		netif_wake_queue(ndev);
+	/* FIXME: Need to unstall the DMAs */
+	netif_tx_wake_all_queues(ndev);
 }
 
 static int netcp_rx_add_vid(struct net_device *ndev, u16 vid)
@@ -1331,6 +1333,11 @@ static int netcp_rx_kill_vid(struct net_device *ndev, u16 vid)
 	return 0;
 }
 
+static u16 netcp_select_queue(struct net_device *dev, struct sk_buff *skb)
+{
+	return 0;
+}
+
 u32 netcp_get_streaming_switch(struct netcp_device *netcp_device, int port)
 {
 	u32	reg;
@@ -1376,11 +1383,13 @@ static const struct net_device_ops netcp_netdev_ops = {
 	.ndo_vlan_rx_add_vid	= netcp_rx_add_vid,
 	.ndo_vlan_rx_kill_vid	= netcp_rx_kill_vid,
 	.ndo_tx_timeout		= netcp_ndo_tx_timeout,
+	.ndo_select_queue	= netcp_select_queue,
 };
 
 int netcp_create_interface(struct netcp_device *netcp_device,
 			   struct net_device **ndev_p,
-			   const char *ifname_proto)
+			   const char *ifname_proto,
+			   int tx_queues, int rx_queues)
 {
 	struct platform_device *pdev = netcp_device->platform_device;
 	struct device_node *node = pdev->dev.of_node;
@@ -1395,9 +1404,9 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 	u8 efuse_mac_addr[6];
 	int ret = 0;
 
-	ndev = alloc_netdev(sizeof(struct netcp_priv),
+	ndev = alloc_netdev_mqs(sizeof(struct netcp_priv),
 			(ifname_proto ? ifname_proto : "eth%d"),
-			ether_setup);
+			ether_setup, tx_queues, rx_queues);
 	*ndev_p = ndev;
 	if (!ndev) {
 		dev_err(&pdev->dev, "Error allocating net_device\n");
