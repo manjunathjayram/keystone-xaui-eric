@@ -119,4 +119,9 @@ int ktree_for_each_child(struct ktree_node *parent,
 			 int (*visitor)(struct ktree_node *child, void *arg),
 			 void *arg);
 
+void ktree_sort_children(struct ktree_node *parent,
+			 int (*cmp)(struct ktree_node *a, struct ktree_node *b,
+				    void *arg),
+			 void *arg);
+
 #endif
