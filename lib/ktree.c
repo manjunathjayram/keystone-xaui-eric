@@ -26,9 +26,9 @@
  * the next ktree_node. It then drops the lock and returns.
  *
  * There are primitives for adding and removing nodes to/from a ktree.
- * When deleting, ktree_del() will simply decrement the reference count.
+ * When deleting, ktree_del_node() will simply decrement the reference count.
  * Only when the count goes to 0 is the node removed from the list.
- * ktree_remove() will try to delete the node from the list and block until
+ * ktree_remove_node() will try to delete the node from the list and block until
  * it is actually removed. This is useful for objects (like devices) that
  * have been removed from the system and must be freed (but must wait until
  * all accessors have finished).
@@ -83,7 +83,7 @@ static void ktree_node_init(struct ktree *ktree, struct ktree_node *parent,
 void ktree_set_root(struct ktree *ktree, struct ktree_node *root)
 {
 	ktree_node_init(ktree, NULL, root);
-	ktree_del(ktree->root);
+	ktree_del_node(ktree->root);
 	ktree->root = root;
 }
 EXPORT_SYMBOL_GPL(ktree_set_root);
@@ -202,22 +202,22 @@ static void __ktree_put_node(struct ktree_node *node, bool kill)
 		ktree_node_destroy(node);
 }
 
-int __ktree_del(struct ktree_node *child, void *arg)
+int __ktree_del_node(struct ktree_node *child, void *arg)
 {
-	ktree_del(child);
+	ktree_del_node(child);
 	return 0;
 }
 
-void ktree_del(struct ktree_node *node)
+void ktree_del_node(struct ktree_node *node)
 {
 	if (node) {
-		ktree_for_each_child(node, __ktree_del, NULL);
+		ktree_for_each_child(node, __ktree_del_node, NULL);
 		__ktree_put_node(node, true);
 	}
 }
-EXPORT_SYMBOL_GPL(ktree_del);
+EXPORT_SYMBOL_GPL(ktree_del_node);
 
-void ktree_remove(struct ktree_node *node)
+void ktree_remove_node(struct ktree_node *node)
 {
 	struct ktree_waiter waiter;
 
@@ -229,7 +229,7 @@ void ktree_remove(struct ktree_node *node)
 	list_add(&waiter.list, &ktree_remove_waiters);
 	spin_unlock(&ktree_remove_lock);
 
-	ktree_del(node);
+	ktree_del_node(node);
 
 	for (;;) {
 		set_current_state(TASK_UNINTERRUPTIBLE);
@@ -239,7 +239,7 @@ void ktree_remove(struct ktree_node *node)
 	}
 	__set_current_state(TASK_RUNNING);
 }
-EXPORT_SYMBOL_GPL(ktree_remove);
+EXPORT_SYMBOL_GPL(ktree_remove_node);
 
 static struct ktree_node *ktree_get_pos(struct ktree_node *parent,
 					struct list_head *pos)
