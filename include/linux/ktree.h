@@ -95,8 +95,20 @@ static inline void ktree_add_sibling_before(struct ktree_node *child,
 	ktree_add_child_before(pos->parent, child, pos);
 }
 
-extern void ktree_del(struct ktree_node *node);
-extern void ktree_remove(struct ktree_node *node);
+extern void ktree_del_node(struct ktree_node *node);
+extern void ktree_remove_node(struct ktree_node *node);
+
+static inline void ktree_del_tree(struct ktree *ktree)
+{
+	if (ktree->root)
+		ktree_del_node(ktree->root);
+}
+
+static inline void ktree_remove_tree(struct ktree *ktree)
+{
+	if (ktree->root)
+		ktree_remove_node(ktree->root);
+}
 
 static inline bool ktree_is_leaf(struct ktree_node *node)
 {
