@@ -37,6 +37,7 @@
 #include <linux/export.h>
 #include <linux/sched.h>
 #include <linux/ktree.h>
+#include <linux/list_sort.h>
 
 static void knode_release(struct kref *kref);
 static void __ktree_put_node(struct ktree_node *node, bool kill);
@@ -354,3 +355,31 @@ int ktree_for_each_child(struct ktree_node *parent,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(ktree_for_each_child);
+
+struct ktree_sort_params
+{
+	int	(*cmp)(struct ktree_node *a, struct ktree_node *b,
+		       void *arg);
+	void	*arg;
+};
+
+static int __ktree_cmp(void *arg, struct list_head *_a, struct list_head *_b)
+{
+	struct ktree_node *a = container_of(_a, struct ktree_node, siblings);
+	struct ktree_node *b = container_of(_b, struct ktree_node, siblings);
+	struct ktree_sort_params *params = arg;
+
+	return params->cmp(a, b, params->arg);
+}
+
+void ktree_sort_children(struct ktree_node *parent,
+			 int (*cmp)(struct ktree_node *a, struct ktree_node *b,
+				    void *arg),
+			 void *arg)
+{
+	struct ktree_sort_params params = { .cmp = cmp, .arg = arg };
+	spin_lock(&parent->ktree->lock);
+	list_sort(&params, &parent->children, __ktree_cmp);
+	spin_unlock(&parent->ktree->lock);
+}
+EXPORT_SYMBOL_GPL(ktree_sort_children);
