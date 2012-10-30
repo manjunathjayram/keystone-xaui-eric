@@ -74,6 +74,7 @@ static const struct snmp_mib sctp_snmp_list[] = {
 	SNMP_MIB_ITEM("SctpInPktBacklog", SCTP_MIB_IN_PKT_BACKLOG),
 	SNMP_MIB_ITEM("SctpInPktDiscards", SCTP_MIB_IN_PKT_DISCARDS),
 	SNMP_MIB_ITEM("SctpInDataChunkDiscards", SCTP_MIB_IN_DATA_CHUNK_DISCARDS),
+	SNMP_MIB_ITEM("SctpOutDataChunkDiscards", SCTP_MIB_OUT_DATA_CHUNK_DISCARDS),
 	SNMP_MIB_SENTINEL
 };
 
