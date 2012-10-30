@@ -332,6 +332,7 @@ int sctp_outq_tail(struct sctp_outq *q, struct sctp_chunk *chunk)
 		case SCTP_STATE_SHUTDOWN_RECEIVED:
 		case SCTP_STATE_SHUTDOWN_ACK_SENT:
 			/* Cannot send after transport endpoint shutdown */
+			SCTP_INC_STATS(net, SCTP_MIB_OUT_DATA_CHUNK_DISCARDS);
 			error = -ESHUTDOWN;
 			break;
 
