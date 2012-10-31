@@ -215,24 +215,35 @@ khwq_find_region_by_dma(struct khwq_device *kdev, struct khwq_instance *kq,
 }
 
 static int khwq_push(struct hwqueue_instance *inst, dma_addr_t dma,
-		     unsigned size)
+		     unsigned size, unsigned flags)
 {
+	struct khwq_device *kdev = from_hdev(inst->hdev);
 	unsigned id = hwqueue_inst_to_id(inst);
 	struct khwq_qmgr_info *qmgr;
+	unsigned long irq_flags;
 	u32 val;
 
 	qmgr = khwq_find_qmgr(inst);
 	if (!qmgr)
 		return -ENODEV;
 
+	spin_lock_irqsave(&kdev->lock, irq_flags);
+
+	if (flags & HWQUEUE_HAS_PACKET_SIZE)
+		__raw_writel((flags & BITS(17)),
+			     &qmgr->reg_push[id].packet_size);
+
 	val = (u32)dma | ((size / 16) - 1);
 
 	__raw_writel(val, &qmgr->reg_push[id].ptr_size_thresh);
 
+	spin_unlock_irqrestore(&kdev->lock, irq_flags);
+
 	return 0;
 }
 
-static dma_addr_t khwq_pop(struct hwqueue_instance *inst, unsigned *size)
+static dma_addr_t khwq_pop(struct hwqueue_instance *inst, unsigned *size,
+			   unsigned flags)
 {
 	struct khwq_instance *kq = hwqueue_inst_to_priv(inst);
 	struct khwq_device *kdev = from_hdev(inst->hdev);
@@ -577,7 +588,7 @@ static void khwq_fill_pools(struct khwq_device *kdev)
 					  pool->name);
 				continue;
 			}
-			ret = hwqueue_push(pool->queue, dma_addr, dma_size);
+			ret = hwqueue_push(pool->queue, dma_addr, dma_size, 0);
 			WARN_ONCE(ret, "failed push to pool queue %s\n",
 				  pool->name);
 		}
@@ -1147,6 +1158,7 @@ static int khwq_probe(struct platform_device *pdev)
 	INIT_LIST_HEAD(&kdev->pools);
 	INIT_LIST_HEAD(&kdev->regions);
 	INIT_LIST_HEAD(&kdev->pdsps);
+	spin_lock_init(&kdev->lock);
 
 	if (of_property_read_u32_array(node, "range", temp, 2)) {
 		dev_err(dev, "hardware queue range not specified\n");
