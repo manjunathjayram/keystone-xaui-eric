@@ -47,8 +47,9 @@ struct hwqueue_instance;
 
 struct hwqueue {
 	int		 (*push)(struct hwqueue_instance *inst, dma_addr_t dma,
-				 unsigned size);
-	dma_addr_t	 (*pop)(struct hwqueue_instance *inst, unsigned *size);
+				 unsigned size, unsigned flags);
+	dma_addr_t	 (*pop)(struct hwqueue_instance *inst, unsigned *size,
+				unsigned flags);
 	int		 (*flush)(struct hwqueue_instance *inst);
 	int		 (*get_count)(struct hwqueue_instance *inst);
 	int		 (*map)(struct hwqueue_instance *inst, void *data,
@@ -85,7 +86,7 @@ int hwqueue_enable_notifier(struct hwqueue *queue);
 int hwqueue_disable_notifier(struct hwqueue *queue);
 
 dma_addr_t __hwqueue_pop_slow(struct hwqueue_instance *inst, unsigned *size,
-			 struct timeval *timeout);
+			 struct timeval *timeout, unsigned flags);
 
 /**
  * hwqueue_get_count() - poll a hardware queue and check if empty
@@ -120,10 +121,12 @@ static inline int hwqueue_flush(struct hwqueue *qh)
  * @qh	- hardware queue handle
  * @data	- data to push
  * @size	- size of data to push
+ * @flags	- can be used to pass additional information
  *
  * Returns 0 on success, errno otherwise.
  */
-static inline int hwqueue_push(struct hwqueue *qh, dma_addr_t dma, unsigned size)
+static inline int hwqueue_push(struct hwqueue *qh, dma_addr_t dma,
+			       unsigned size, unsigned flags)
 {
 	int ret = 0;
 
@@ -133,7 +136,7 @@ static inline int hwqueue_push(struct hwqueue *qh, dma_addr_t dma, unsigned size
 			break;
 		}
 
-		ret = qh->push(qh->inst, dma, size);
+		ret = qh->push(qh->inst, dma, size, flags);
 	} while (0);
 
 	if (unlikely(ret < 0))
@@ -152,7 +155,7 @@ static inline int hwqueue_push(struct hwqueue *qh, dma_addr_t dma, unsigned size
  * Returns a DMA address on success, 0 on failure.
  */
 static inline dma_addr_t hwqueue_pop(struct hwqueue *qh, unsigned *size,
-				struct timeval *timeout)
+				struct timeval *timeout , unsigned flags)
 {
 	dma_addr_t ret = 0;
 
@@ -162,7 +165,7 @@ static inline dma_addr_t hwqueue_pop(struct hwqueue *qh, unsigned *size,
 			break;
 		}
 
-		ret = qh->pop(qh->inst, size);
+		ret = qh->pop(qh->inst, size, flags);
 		if (likely(ret))
 			break;
 
@@ -170,7 +173,7 @@ static inline dma_addr_t hwqueue_pop(struct hwqueue *qh, unsigned *size,
 			   (timeout && !timeout->tv_sec && !timeout->tv_usec)))
 			break;
 
-		ret = __hwqueue_pop_slow(qh->inst, size, timeout);
+		ret = __hwqueue_pop_slow(qh->inst, size, timeout, flags);
 	} while (0);
 
 	if (likely(ret)) {
