@@ -60,7 +60,7 @@ static int qos_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	dev_dbg(qos_dev->dev,
 		"priority: %u, queue_mapping: %04x\n",
 		skb->priority, skb_get_queue_mapping(skb));
-	
+
 	if (skb->queue_mapping < qos_dev->num_channels)
 		p_info->tx_pipe = &qos_dev->channels[skb->queue_mapping].tx_pipe;
 	else {
@@ -131,6 +131,7 @@ static int qos_open(void *intf_priv, struct net_device *ndev)
 				qchan->tx_pipe.dma_chan_name);
 			goto fail;
 		}
+		qchan->tx_pipe.dma_queue = dma_get_tx_queue(qchan->tx_pipe.dma_channel);
 	}
 
 	netcp_register_txhook(netcp_priv, QOS_TXHOOK_ORDER, qos_tx_hook, intf_priv);
@@ -156,21 +157,15 @@ static int qos_attach(void *inst_priv, struct net_device *ndev, void **intf_priv
 static int qos_release(void *inst_priv)
 {
 	struct qos_device *qos_dev = inst_priv;
-	struct net_device *ndev = qos_dev->net_device;
 
 	qos_dev->net_device = NULL;
 	return 0;
 }
 
 
-
-
-	
 static int qos_remove(struct netcp_device *netcp_device, void *inst_priv)
 {
 	struct qos_device *qos_dev = inst_priv;
-	struct device *dev = qos_dev->dev;
-
 
 	kfree(qos_dev);
 
