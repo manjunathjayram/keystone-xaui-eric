@@ -61,6 +61,8 @@
 #define DMA_DEFAULT_PRIORITY	DMA_PRIO_MED_L
 #define DMA_DEFAULT_FLOWTAG	0
 
+#define HWQUEUE_HAS_PACKET_SIZE	BIT(31)
+
 enum keystone_dma_tx_priority {
 	DMA_PRIO_HIGH	= 0,
 	DMA_PRIO_MED_H,
@@ -561,7 +563,7 @@ static int chan_complete(struct keystone_dma_chan *chan, struct hwqueue *queue,
 		if (!chan_should_process(chan, in_poll))
 			break;
 
-		dma = hwqueue_pop(queue, &size, NULL);
+		dma = hwqueue_pop(queue, &size, NULL, 0);
 		if (!dma) {
 			chan_dbg(chan, "processing stopped, no desc\n");
 			break;
@@ -723,7 +725,10 @@ dma_cookie_t chan_submit(struct dma_async_tx_descriptor *adesc)
 	chan_vdbg(chan, "pushing desc %p to queue %d\n",
 		  hwdesc, hwqueue_get_id(chan->q_submit[0]));
 
-	ret = hwqueue_push(chan->q_submit[0], desc->hwdesc_dma_addr, desc->hwdesc_dma_size);
+	ret = hwqueue_push(chan->q_submit[0], desc->hwdesc_dma_addr,
+			   desc->hwdesc_dma_size,
+			   ((hwdesc->desc_info & BITS(17)) |
+			    HWQUEUE_HAS_PACKET_SIZE));
 	if (unlikely(ret < 0))
 		return ret;
 	else
@@ -976,7 +981,7 @@ static void chan_purge_rxfree(struct keystone_dma_chan *chan, int index,
 	unsigned size;
 
 	for (;;) {
-		dma = hwqueue_pop(q, &size, NULL);
+		dma = hwqueue_pop(q, &size, NULL, 0);
 		if (!dma) {
 			chan_dbg(chan, "processing stopped, no desc\n");
 			break;
@@ -1072,7 +1077,7 @@ static int chan_setup_descs(struct keystone_dma_chan *chan)
 		adesc->tx_submit = chan_submit;
 
 		hwdesc = NULL;
-		dma_addr = hwqueue_pop(chan->q_pool, &desc->orig_size, NULL);
+		dma_addr = hwqueue_pop(chan->q_pool, &desc->orig_size, NULL, 0);
 		if (dma_addr)
 			hwdesc = hwqueue_unmap(chan->q_pool, dma_addr, desc->orig_size);
 		if (IS_ERR_OR_NULL(hwdesc))
@@ -1085,7 +1090,8 @@ static int chan_setup_descs(struct keystone_dma_chan *chan)
 			ret = hwqueue_map(chan->q_pool, hwdesc, desc->orig_size,
 					&dma_addr, &dma_size);
 			if (likely(ret == 0))
-				hwqueue_push(chan->q_pool, dma_addr, dma_size);
+				hwqueue_push(chan->q_pool, dma_addr,
+					     dma_size, 0);
 			continue;
 		}
 
@@ -1125,7 +1131,7 @@ static void chan_destroy_descs(struct keystone_dma_chan *chan)
 		ret = hwqueue_map(chan->q_pool, desc->hwdesc, desc->orig_size,
 				&dma_addr, &dma_size);
 		if (likely(ret == 0))
-			hwqueue_push(chan->q_pool, dma_addr, dma_size);
+			hwqueue_push(chan->q_pool, dma_addr, dma_size, 0);
 		desc->hwdesc = NULL;
 	}
 
@@ -1294,7 +1300,9 @@ static int chan_rxfree_refill(struct keystone_dma_chan *chan)
 			desc->status = DMA_IN_PROGRESS;
 			ret = hwqueue_push(chan->q_submit[i],
 					desc->hwdesc_dma_addr,
-					desc->hwdesc_dma_size);
+					desc->hwdesc_dma_size,
+					((hwdesc->desc_info & BITS(17)) |
+					 HWQUEUE_HAS_PACKET_SIZE));
 			if (unlikely(ret < 0)) {
 				dev_warn(chan_dev(chan), "push error %d in %s\n",
 						ret, __func__);
