@@ -55,10 +55,11 @@ struct hwqueue_device_ops {
 
 	/* Push something into the queue */
 	int	 (*push)(struct hwqueue_instance *inst, dma_addr_t dma,
-			 unsigned size);
+			 unsigned size, unsigned flags);
 
 	/* Pop something from the queue */
-	dma_addr_t (*pop)(struct hwqueue_instance *inst, unsigned *size);
+	dma_addr_t (*pop)(struct hwqueue_instance *inst, unsigned *size,
+			  unsigned flags);
 
 	/* Flush a queue */
 	int	 (*flush)(struct hwqueue_instance *inst);
