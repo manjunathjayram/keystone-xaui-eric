@@ -32,6 +32,10 @@
 #include <linux/platform_device.h>
 #include <linux/keystone-dma.h>
 #include <linux/errqueue.h>
+#include <net/sctp/checksum.h>
+
+/* Need this for kmap_skb_frag() and kunmap_skb_frag() */
+#include "../../../../net/core/kmap_skb.h"
 
 #include "keystone_net.h"
 #include "keystone_pa.h"
@@ -202,6 +206,13 @@ struct pa_statistics_regs {
 	u32 stats_red[32];
 };
 
+#define	CSUM_OFFLOAD_NONE	0
+#define	CSUM_OFFLOAD_HARD	1
+#define	CSUM_OFFLOAD_SOFT	2
+
+#define	PA_TXHOOK_ORDER	10
+#define	PA_RXHOOK_ORDER	10
+
 struct pa_intf {
 	struct pa_device		*pa_device;
 	struct net_device		*net_device;
@@ -244,6 +255,10 @@ struct pa_device {
 	u32				 tx_data_queue_depth;
 	u32				 rx_pool_depth;
 	u32				 rx_buffer_size;
+	u32				 csum_offload;
+	u32				 txhook_order;
+	u32				 txhook_softcsum;
+	u32				 rxhook_order;
 };
 
 #define pa_from_module(data)	container_of(data, struct pa_device, module)
@@ -1252,7 +1267,6 @@ static int pa_fmtcmd_tx_csum(struct netcp_packet *p_info)
 	return size;
 } 
 
-#include <net/sctp/checksum.h>		/* FIXME */
 static int pa_fmtcmd_tx_crc32c(struct netcp_packet *p_info)
 {
 	struct sk_buff *skb = p_info->skb;
@@ -1361,9 +1375,6 @@ static int pa_fmtcmd_align(struct netcp_packet *p_info, const unsigned bytes)
 	return bytes;
 }
 
-#define	PA_TXHOOK_ORDER	10
-#define	PA_RXHOOK_ORDER	10
-
 static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 {
 	struct pa_device *pa_dev = data;
@@ -1417,7 +1428,8 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	}
 
 	/* If checksum offload required, request it */
-	if (skb->ip_summed == CHECKSUM_PARTIAL) {
+	if ((skb->ip_summed == CHECKSUM_PARTIAL) &&
+	    (pa_dev->csum_offload == CSUM_OFFLOAD_HARD)) {
 		u8 l4_proto = 0;
 		switch (skb->protocol) {
 		case __constant_htons(ETH_P_IP):
@@ -1473,6 +1485,131 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	return 0;
 }
 
+
+static __wsum crc32c_partial(const void *buff, int len, __wsum wsum)
+{
+	return (__wsum)sctp_crc32c(wsum, (u8 *)buff, (u16)len);
+}
+
+/* This code adapted from net/core/skbuff.c:skb_checksum() */
+static __wsum checksum_fragments(struct sk_buff *skb,
+		__wsum (*calculate)(const void *buff, int len, __wsum wsum),
+		int offset, int len, __wsum wsum)
+{
+	int start = skb_headlen(skb);
+	int i, copy = start - offset;
+	struct sk_buff *frag_iter;
+
+	/* Checksum header. */
+	if (copy > 0) {
+		if (copy > len)
+			copy = len;
+		wsum = calculate(skb->data + offset, copy, wsum);
+		if ((len -= copy) == 0)
+			return wsum;
+		offset += copy;
+	}
+
+	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
+		int end;
+
+		WARN_ON(start > offset + len);
+
+		end = start + skb_frag_size(&skb_shinfo(skb)->frags[i]);
+		if ((copy = end - offset) > 0) {
+			u8 *vaddr;
+			skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+
+			if (copy > len)
+				copy = len;
+			vaddr = kmap_skb_frag(frag);
+			wsum = calculate(vaddr + frag->page_offset +
+					 offset - start, copy, wsum);
+			kunmap_skb_frag(vaddr);
+			if (!(len -= copy))
+				return wsum;
+			offset += copy;
+		}
+		start = end;
+	}
+
+	skb_walk_frags(skb, frag_iter) {
+		int end;
+
+		WARN_ON(start > offset + len);
+
+		end = start + frag_iter->len;
+		if ((copy = end - offset) > 0) {
+			if (copy > len)
+				copy = len;
+			wsum = checksum_fragments(frag_iter, calculate,
+						offset - start, copy, wsum);
+			if ((len -= copy) == 0)
+				return wsum;
+			offset += copy;
+		}
+		start = end;
+	}
+
+	return wsum;
+}
+
+static int pa_txhook_softcsum(int order, void *data, struct netcp_packet *p_info)
+{
+	struct pa_device *pa_dev = data;
+	struct sk_buff *skb = p_info->skb;
+	int csum_start, csum_length, csum_offset;
+	u8 l4_proto = 0;
+	__wsum wsum;
+
+	if ((skb->ip_summed != CHECKSUM_PARTIAL) ||
+	    (pa_dev->csum_offload != CSUM_OFFLOAD_SOFT))
+		return 0;
+
+	switch (skb->protocol) {
+	case __constant_htons(ETH_P_IP):
+		l4_proto = ip_hdr(skb)->protocol;
+		break;
+	case __constant_htons(ETH_P_IPV6):
+		l4_proto = ipv6_hdr(skb)->nexthdr;
+		break;
+	default:
+		if (unlikely(net_ratelimit())) {
+			dev_warn(p_info->netcp->dev,
+				 "partial checksum but L3 proto=%x!\n",
+				 skb->protocol);
+		}
+		return 0;
+	}
+
+	csum_start = skb_checksum_start_offset(skb);
+	csum_length = skb->len - csum_start;
+	csum_offset = csum_start + skb->csum_offset;
+
+	switch (l4_proto) {
+	case IPPROTO_TCP:
+	case IPPROTO_UDP:
+		wsum = checksum_fragments(skb, csum_partial, csum_start, csum_length, 0);
+		*(u16 *)(skb->data + csum_offset) = csum_fold(wsum);
+		break;
+	case IPPROTO_SCTP:
+		wsum = checksum_fragments(skb, crc32c_partial, csum_start, csum_length, ~0);
+		*(u32 *)(skb->data + csum_offset) = sctp_end_cksum(wsum);
+		break;
+	default:
+		if (unlikely(net_ratelimit())) {
+			dev_warn(p_info->netcp->dev,
+				 "partial checksum but L4 proto=%x!\n",
+				 l4_proto);
+		}
+		return 0;
+	}
+
+	skb->ip_summed = CHECKSUM_NONE;
+	return 0;
+}
+
+
 static int pa_rx_timestamp(int order, void *data, struct netcp_packet *p_info)
 {
 	struct pa_device *pa_dev = data;
@@ -1506,8 +1643,10 @@ static int pa_close(void *intf_priv, struct net_device *ndev)
 	/* De-Configure the streaming switch */
 	netcp_set_streaming_switch(pa_dev->netcp_device, 0, pa_dev->saved_ss_state);
 
-	netcp_unregister_txhook(netcp_priv, PA_TXHOOK_ORDER, pa_tx_hook, pa_dev);
-	netcp_unregister_rxhook(netcp_priv, PA_RXHOOK_ORDER, pa_rx_timestamp, pa_dev);
+	netcp_unregister_txhook(netcp_priv, pa_dev->txhook_order, pa_tx_hook, pa_dev);
+	if (pa_dev->csum_offload == CSUM_OFFLOAD_SOFT)
+		netcp_unregister_txhook(netcp_priv, pa_dev->txhook_softcsum, pa_txhook_softcsum, pa_dev);
+	netcp_unregister_rxhook(netcp_priv, pa_dev->rxhook_order, pa_rx_timestamp, pa_dev);
 
 	tasklet_disable(&pa_dev->task);
 	
@@ -1707,8 +1846,10 @@ static int pa_open(void *intf_priv, struct net_device *ndev)
 	ret = keystone_pa_add_mac(pa_dev, ndev->dev_addr,   PACKET_PARSE, 0x86dd, 59);
 	pa_dev->addr_count = 5;
 
-	netcp_register_txhook(netcp_priv, PA_TXHOOK_ORDER, pa_tx_hook, intf_priv);
-	netcp_register_rxhook(netcp_priv, PA_RXHOOK_ORDER, pa_rx_timestamp, intf_priv);
+	netcp_register_txhook(netcp_priv, pa_dev->txhook_order, pa_tx_hook, intf_priv);
+	if (pa_dev->csum_offload == CSUM_OFFLOAD_SOFT)
+		netcp_register_txhook(netcp_priv, pa_dev->txhook_softcsum, pa_txhook_softcsum, intf_priv);
+	netcp_register_rxhook(netcp_priv, pa_dev->rxhook_order, pa_rx_timestamp, intf_priv);
 
 	/* Configure the streaming switch */
 	netcp_set_streaming_switch(pa_dev->netcp_device, 0, PSTREAM_ROUTE_PDSP0);
@@ -1727,12 +1868,13 @@ static int pa_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 	pa_dev->net_device = ndev;
 	*intf_priv = pa_dev;
 
-	rtnl_lock();
-	ndev->features    |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | NETIF_F_SCTP_CSUM;
-	ndev->hw_features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | NETIF_F_SCTP_CSUM;
-	netdev_update_features(ndev);
-	rtnl_unlock();
-
+	if (pa_dev->csum_offload) {
+		rtnl_lock();
+		ndev->features    |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | NETIF_F_SCTP_CSUM;
+		ndev->hw_features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | NETIF_F_SCTP_CSUM;
+		netdev_update_features(ndev);
+		rtnl_unlock();
+	}
 	return 0;
 }
 
@@ -1741,11 +1883,13 @@ static int pa_release(void *inst_priv)
 	struct pa_device *pa_dev = inst_priv;
 	struct net_device *ndev = pa_dev->net_device;
 
-	rtnl_lock();
-	ndev->features    &= ~(NETIF_F_ALL_CSUM | NETIF_F_SCTP_CSUM);
-	ndev->hw_features &= ~(NETIF_F_ALL_CSUM | NETIF_F_SCTP_CSUM);
-	netdev_update_features(ndev);
-	rtnl_unlock();
+	if (pa_dev->csum_offload) {
+		rtnl_lock();
+		ndev->features    &= ~(NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | NETIF_F_SCTP_CSUM);
+		ndev->hw_features &= ~(NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | NETIF_F_SCTP_CSUM);
+		netdev_update_features(ndev);
+		rtnl_unlock();
+	}
 
 	pa_dev->net_device = NULL;
 	return 0;
@@ -1854,6 +1998,50 @@ static int pa_probe(struct netcp_device *netcp_device,
 		ret = -ENOMEM;
 		goto exit;
 	}
+
+	ret = of_property_read_u32(node, "checksum-offload",
+				   &pa_dev->csum_offload);
+	if (ret < 0) {
+		dev_warn(dev, "missing checksum-offload parameter, err %d\n",
+			ret);
+		pa_dev->csum_offload = CSUM_OFFLOAD_NONE;
+	}
+	if (pa_dev->csum_offload > CSUM_OFFLOAD_SOFT) {
+		dev_err(dev, "invalid checksum-offload parameter %d, err %d\n",
+			ret, pa_dev->csum_offload);
+		pa_dev->csum_offload = CSUM_OFFLOAD_NONE;
+	}
+	dev_dbg(dev, "checksum-offload %u\n", pa_dev->csum_offload);
+
+	ret = of_property_read_u32(node, "txhook-order",
+				   &pa_dev->txhook_order);
+	if (ret < 0) {
+		dev_err(dev, "missing txhook-order parameter, err %d\n",
+			ret);
+		pa_dev->txhook_order = PA_TXHOOK_ORDER;
+	}
+	dev_dbg(dev, "txhook-order %u\n", pa_dev->txhook_order);
+
+	if (pa_dev->csum_offload == CSUM_OFFLOAD_SOFT) {
+		ret = of_property_read_u32(node, "txhook-softcsum",
+					   &pa_dev->txhook_softcsum);
+		if (ret < 0) {
+			dev_err(dev, "missing txhook-softcsum parameter, err %d\n",
+				ret);
+			pa_dev->csum_offload = CSUM_OFFLOAD_NONE;
+			pa_dev->txhook_order = ~0;
+		}
+		dev_dbg(dev, "txhook-softcsum %u\n", pa_dev->txhook_softcsum);
+	}
+
+	ret = of_property_read_u32(node, "rxhook-order",
+				   &pa_dev->rxhook_order);
+	if (ret < 0) {
+		dev_err(dev, "missing rxhook-order parameter, err %d\n",
+			ret);
+		pa_dev->rxhook_order = PA_RXHOOK_ORDER;
+	}
+	dev_dbg(dev, "rxhook-order %u\n", pa_dev->rxhook_order);
 
 	spin_lock_init(&pa_dev->lock);
 	spin_lock_init(&tstamp_lock);
