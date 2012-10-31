@@ -578,7 +578,7 @@ int hwqueue_set_notifier(struct hwqueue *qh, hwqueue_notify_fn fn,
 EXPORT_SYMBOL(hwqueue_set_notifier);
 
 dma_addr_t __hwqueue_pop_slow(struct hwqueue_instance *inst, unsigned *size,
-			 struct timeval *timeout)
+			 struct timeval *timeout, unsigned flags)
 {
 	struct hwqueue_device *hdev = inst->hdev;
 	dma_addr_t dma_addr = 0;
@@ -588,7 +588,7 @@ dma_addr_t __hwqueue_pop_slow(struct hwqueue_instance *inst, unsigned *size,
 		unsigned long expires = timeval_to_jiffies(timeout);
 
 		ret = wait_event_interruptible_timeout(inst->wait,
-				(dma_addr = hdev->ops->pop(inst, size)),
+				(dma_addr = hdev->ops->pop(inst, size, flags)),
 				expires);
 		if (ret < 0)
 			return 0;
@@ -597,7 +597,7 @@ dma_addr_t __hwqueue_pop_slow(struct hwqueue_instance *inst, unsigned *size,
 		jiffies_to_timeval(ret, timeout);
 	} else {
 		ret = wait_event_interruptible(inst->wait,
-				(dma_addr = hdev->ops->pop(inst, size)));
+				(dma_addr = hdev->ops->pop(inst, size, flags)));
 		if (ret < 0)
 			return 0;
 		if (WARN_ON(!ret && !dma_addr))
