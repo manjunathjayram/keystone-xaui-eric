@@ -132,6 +132,8 @@ static int qos_open(void *intf_priv, struct net_device *ndev)
 			goto fail;
 		}
 		qchan->tx_pipe.dma_queue = dma_get_tx_queue(qchan->tx_pipe.dma_channel);
+		qchan->tx_pipe.dma_poll_threshold = config.tx_queue_depth / 4;
+		atomic_set(&qchan->tx_pipe.dma_poll_count, qchan->tx_pipe.dma_poll_threshold);
 	}
 
 	netcp_register_txhook(netcp_priv, QOS_TXHOOK_ORDER, qos_tx_hook, intf_priv);
@@ -192,6 +194,8 @@ static int init_channel(struct qos_device *qos_dev,
 		qchan->tx_queue_depth = 16;
 	}
 	dev_dbg(qos_dev->dev, "tx_queue_depth %u\n", qchan->tx_queue_depth);
+
+	spin_lock_init(&qchan->tx_pipe.dma_poll_lock);
 
 	return 0;
 }

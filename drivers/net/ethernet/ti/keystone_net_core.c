@@ -608,6 +608,7 @@ static void netcp_tx_complete(void *data)
 	    netcp_is_alive(netcp))
 		netif_wake_subqueue(netcp->ndev, skb_get_queue_mapping(skb));
 
+	atomic_inc(&p_info->tx_pipe->dma_poll_count);
 	dev_kfree_skb_any(skb);
 	kfree(p_info);
 }
@@ -887,17 +888,18 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	ret = NETDEV_TX_OK;
 
 out:
-	if (atomic_dec_and_test(&tx_pipe->dma_poll_count)) {
+	if (atomic_dec_return(&tx_pipe->dma_poll_count) <= 0) {
 		dev_dbg(netcp->dev, "transmit poll threshold reached\n");
 		need_poll = true;
-		atomic_add(tx_pipe->dma_poll_threshold,
-			   &tx_pipe->dma_poll_count);
 	}
 
 	if (need_poll || ret < 0) {
 		dev_dbg(netcp->dev, "polling transmit channel %d\n",
 			tx_pipe->dma_queue);
-		dma_poll(tx_pipe->dma_channel, -1);
+		if (spin_trylock(&tx_pipe->dma_poll_lock)) {
+			dma_poll(tx_pipe->dma_channel, -1);
+			spin_unlock(&tx_pipe->dma_poll_lock);
+		}
 	}
 
 	return ret;
