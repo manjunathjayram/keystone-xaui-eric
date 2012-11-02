@@ -186,6 +186,8 @@ static int sa_probe(struct netcp_device *netcp_device,
 	*inst_priv = sa_dev;
 	sa_dev->dev = dev;
 
+	spin_lock_init(&sa_dev->tx_pipe.dma_poll_lock);
+
 	ret = of_property_read_u32(node, "tx_queue_depth",
 				   &sa_dev->tx_queue_depth);
 	if (ret < 0) {

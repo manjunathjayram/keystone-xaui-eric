@@ -51,6 +51,7 @@ struct netcp_tx_pipe {
 	u16				 dma_queue;
 	int				 dma_poll_threshold;
 	atomic_t			 dma_poll_count;
+	spinlock_t			 dma_poll_lock;
 };
 
 struct netcp_priv {
