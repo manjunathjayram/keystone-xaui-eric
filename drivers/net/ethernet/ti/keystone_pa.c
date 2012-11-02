@@ -1945,6 +1945,8 @@ static int pa_probe(struct netcp_device *netcp_device,
 	pa_dev->netcp_device = netcp_device;
 	pa_dev->dev = dev;
 
+	spin_lock_init(&pa_dev->tx_pipe.dma_poll_lock);
+
 	ret = of_property_read_u32(node, "tx_cmd_queue_depth",
 				   &pa_dev->tx_cmd_queue_depth);
 	if (ret < 0) {

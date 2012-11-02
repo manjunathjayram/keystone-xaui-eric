@@ -1057,6 +1057,7 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 
 	cpsw_dev->dev = dev;
 	cpsw_dev->netcp_device = netcp_device;
+	spin_lock_init(&cpsw_dev->tx_pipe.dma_poll_lock);
 	
 	priv = cpsw_dev;	/* FIXME: Remove this!! */
 
