@@ -38,10 +38,22 @@ struct sa_device {
 	u32				 tx_queue_depth;
 };
 
-struct ipsecmgr_mod_sa_swinfo {
+struct ipsecmgr_mod_sa_ctx_info {
 	u32 word0;
 	u32 word1;
+	u16 flow_id;
 };
+
+/**
+ * Used to update the destination information within swInfo[2]
+ */
+
+#define SA_SWINFO_UPDATE_DEST_INFO(info, queueID, flowID) \
+{ \
+	(info[0]) |= 0x40000000L; \
+	(info[2]) = ((queueID)) | (((flowID) & 0xFF) << 16) | \
+	((info[2]) & 0xFF000000L); \
+}
 
 #define	SA_TXHOOK_ORDER	30
 
@@ -49,12 +61,12 @@ static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 {
 	struct sa_device *sa_dev = data;
 	u16 offset, len, ihl;
-	u32 *psdata;
+	u32 *psdata, *swinfo;
 	const struct iphdr *iph;
-	struct ipsecmgr_mod_sa_swinfo *swinfo =
-			(struct ipsecmgr_mod_sa_swinfo *)p_info->skb->sp;
+	struct ipsecmgr_mod_sa_ctx_info *ctx_info =
+			(struct ipsecmgr_mod_sa_ctx_info *)p_info->skb->sp;
 
-	if (!swinfo)
+	if (!ctx_info)
 		return 0;
 
 	psdata = netcp_push_psdata(p_info, (2 * sizeof(u32)));
@@ -69,11 +81,14 @@ static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 
 	psdata[0] = PASAHO_SINFO_FORMAT_CMD(offset, len);
 	psdata[1] = 0;
-	p_info->epib[1] = swinfo->word0;
-	p_info->epib[2] = swinfo->word1;
+	swinfo = &p_info->epib[1];
+	swinfo[0] = ctx_info->word0;
+	swinfo[1] = ctx_info->word1;
+	SA_SWINFO_UPDATE_DEST_INFO(swinfo, p_info->tx_pipe->dma_queue,
+			ctx_info->flow_id);
 
 	p_info->tx_pipe = &sa_dev->tx_pipe;
-	kfree(swinfo);
+	kfree(ctx_info);
 	p_info->skb->sp = NULL;
 	return 0;
 }
