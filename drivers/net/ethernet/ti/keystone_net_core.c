@@ -1340,6 +1340,14 @@ static u16 netcp_select_queue(struct net_device *dev, struct sk_buff *skb)
 	return 0;
 }
 
+static int netcp_setup_tc(struct net_device *dev, u8 tc)
+{
+	if ((dev->real_num_tx_queues <= 1) || (dev->real_num_tx_queues < tc))
+		return -EINVAL;
+
+	return 0;
+}
+
 u32 netcp_get_streaming_switch(struct netcp_device *netcp_device, int port)
 {
 	u32	reg;
@@ -1386,6 +1394,7 @@ static const struct net_device_ops netcp_netdev_ops = {
 	.ndo_vlan_rx_kill_vid	= netcp_rx_kill_vid,
 	.ndo_tx_timeout		= netcp_ndo_tx_timeout,
 	.ndo_select_queue	= netcp_select_queue,
+	.ndo_setup_tc		= netcp_setup_tc,
 };
 
 int netcp_create_interface(struct netcp_device *netcp_device,
