@@ -766,10 +766,16 @@ static void pa_tx_dma_callback(void *data)
 {
 	struct pa_packet *p_info = data;
 	struct pa_device *pa_dev = p_info->priv;
+	enum dma_status status;
 
-	p_info->status = dma_async_is_tx_complete(p_info->chan,
+	if (unlikely(p_info->cookie <= 0))
+		WARN(1, "invalid dma cookie == %d", p_info->cookie);
+	else {
+		status = dma_async_is_tx_complete(p_info->chan,
 						  p_info->cookie, NULL, NULL);
-	WARN_ON(p_info->status != DMA_SUCCESS);
+		WARN((p_info->status != DMA_SUCCESS),
+				"dma completion failure, status == %d", status);
+	}
 
 	dma_unmap_sg(pa_dev->dev, &p_info->sg[2], 1, p_info->direction);
 
@@ -797,9 +803,12 @@ static int pa_submit_tx_packet(struct pa_packet *p_info)
 
 	p_info->desc->callback = pa_tx_dma_callback;
 	p_info->desc->callback_param = p_info;
-	p_info->cookie = dmaengine_submit(p_info->desc);
 
-	return 0;
+	tasklet_disable(&pa_dev->task);
+	p_info->cookie = dmaengine_submit(p_info->desc);
+	tasklet_enable(&pa_dev->task);
+
+	return dma_submit_error(p_info->cookie) ? p_info->cookie : 0;
 }
 
 #define	PA_CONTEXT_MASK		0xffff0000
