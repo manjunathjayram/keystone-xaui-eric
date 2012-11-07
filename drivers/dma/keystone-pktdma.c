@@ -878,7 +878,7 @@ static int chan_start(struct keystone_dma_chan *chan)
 {
 	u32 v;
 
-	if (chan->reg_chan && !chan->dma->enable_all) {
+	if (chan->reg_chan) {
 		__raw_writel(0, &chan->reg_chan->mode);
 		__raw_writel(DMA_ENABLE, &chan->reg_chan->control);
 	}
