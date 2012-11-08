@@ -1072,7 +1072,7 @@ static int chan_setup_descs(struct keystone_dma_chan *chan)
 		desc = desc_from_index(chan, i);
 
 		adesc = desc_to_adesc(desc);
-		adesc->cookie = desc_to_index(chan, desc);
+		adesc->cookie = DMA_MIN_COOKIE + desc_to_index(chan, desc);
 		adesc->chan = to_achan(chan);
 		adesc->tx_submit = chan_submit;
 
@@ -1469,9 +1469,10 @@ static enum dma_status chan_xfer_status(struct dma_chan *achan,
 				      struct dma_tx_state *txstate)
 {
 	struct keystone_dma_chan *chan = from_achan(achan);
-	struct keystone_dma_desc *desc = desc_from_index(chan, cookie);
+	struct keystone_dma_desc *desc;
 	enum dma_status status;
 
+	desc = desc_from_index(chan, cookie - DMA_MIN_COOKIE);
 	status = desc ? desc->status : DMA_ERROR;
 	chan_vdbg(chan, "returning status %d for desc %p\n", status, desc);
 
