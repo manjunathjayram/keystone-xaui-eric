@@ -13,7 +13,7 @@
 	};
 
 	chosen {
-		bootargs = "console=ttyS0,115200n8 debug earlyprintk lpj=50000 rdinit=/bin/ash rw root=/dev/ram0 initrd=0x805000000,2M";
+		bootargs = "console=ttyS0,115200n8 debug earlyprintk rdinit=/bin/ash rw root=/dev/ram0 initrd=0x805000000,2M";
 	};
 
 	memory {
@@ -98,7 +98,7 @@
 		timer {
 			compatible = "arm,armv7-timer";
 			interrupts = <1 13 0xf08 1 14 0xf08>;
-			clock-frequency = <200000000>; /* Freq in Hz - optional */
+			clock-frequency = <5000000>; /* Freq in Hz - optional */
 		};
 
 		uart0:	serial@02530c00 {
