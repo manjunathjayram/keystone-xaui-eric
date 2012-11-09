@@ -767,12 +767,18 @@ static void pa_tx_dma_callback(void *data)
 	struct pa_packet *p_info = data;
 	struct pa_device *pa_dev = p_info->priv;
 	enum dma_status status;
+	unsigned long irqsave;
+	dma_cookie_t cookie;
 
-	if (unlikely(p_info->cookie <= 0))
-		WARN(1, "invalid dma cookie == %d", p_info->cookie);
+	spin_lock_irqsave(&pa_dev->lock, irqsave);
+	cookie = p_info->cookie;
+	spin_unlock_irqrestore(&pa_dev->lock, irqsave);
+
+	if (unlikely(cookie <= 0))
+		WARN(1, "invalid dma cookie == %d", cookie);
 	else {
 		status = dma_async_is_tx_complete(p_info->chan,
-						  p_info->cookie, NULL, NULL);
+						  cookie, NULL, NULL);
 		WARN((p_info->status != DMA_SUCCESS),
 				"dma completion failure, status == %d", status);
 	}
@@ -788,6 +794,7 @@ static int pa_submit_tx_packet(struct pa_packet *p_info)
 {
 	unsigned flags = DMA_HAS_EPIB | DMA_HAS_PSINFO;
 	struct pa_device *pa_dev = p_info->priv;
+	unsigned long irqsave;
 	int ret;
 
 	ret = dma_map_sg(pa_dev->dev, &p_info->sg[2], 1, p_info->direction);
@@ -804,9 +811,9 @@ static int pa_submit_tx_packet(struct pa_packet *p_info)
 	p_info->desc->callback = pa_tx_dma_callback;
 	p_info->desc->callback_param = p_info;
 
-	tasklet_disable(&pa_dev->task);
+	spin_lock_irqsave(&pa_dev->lock, irqsave);
 	p_info->cookie = dmaengine_submit(p_info->desc);
-	tasklet_enable(&pa_dev->task);
+	spin_unlock_irqrestore(&pa_dev->lock, irqsave);
 
 	return dma_submit_error(p_info->cookie) ? p_info->cookie : 0;
 }
