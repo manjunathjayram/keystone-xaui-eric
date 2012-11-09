@@ -865,5 +865,49 @@
 			clocks		= <&clkuart0>;
 			interrupts	= <0 277 0xf01>;
 		};
+
+		aemif@30000000 {
+			compatible = "ti,davinci-aemif";
+			#address-cells = <2>;
+			#size-cells = <1>;
+			reg = <0x21000A00 0x100>;
+			ranges = <2 0 0x30000000 0x08000000
+				3 0 0x34000000 0x04000000
+				4 0 0x38000000 0x04000000
+				5 0 0x3C000000 0x04000000
+				6 0 0x21000A00 0x100>;
+
+			nand@2,0 {
+				compatible = "ti,davinci-nand";
+				reg = <2 0x0 0x8000000
+					6 0x0 0x100>;
+				#address-cells = <1>;
+				#size-cells = <1>;
+				ti,davinci-chipselect = <0>;
+				ti,davinci-mask-ale = <0x2000>;
+				ti,davinci-mask-cle = <0x4000>;
+				ti,davinci-mask-chipsel = <0>;
+				ti,davinci-ecc-mode = "hw";
+				ti,davinci-ecc-bits = <4>;
+				ti,davinci-nand-use-bbt;
+
+				partition@0 {
+					label = "u-boot";
+					reg = <0x0 0x100000>;
+					read-only;
+				};
+
+				partition@100000 {
+					label = "params";
+					reg = <0x100000 0x80000>;
+					read-only;
+				};
+
+				partition@180000 {
+					label = "ubifs";
+					reg = <0x180000 0x7e80000>;
+				};
+			};
+		};
 	};
 };
