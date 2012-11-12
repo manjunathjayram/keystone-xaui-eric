@@ -28,6 +28,9 @@
 #include <linux/dmaengine.h>
 #include <linux/dma-mapping.h>
 #include <linux/edma.h>
+#include <linux/of.h>
+#include <linux/of_device.h>
+#include <linux/of_irq.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/spi_bitbang.h>
 #include <linux/slab.h>
@@ -758,6 +761,69 @@ rx_dma_failed:
 	return r;
 }
 
+#if defined(CONFIG_OF)
+static const struct of_device_id davinci_spi_of_match[] = {
+	{
+		.compatible = "ti,davinci-spi",
+	},
+	{ },
+};
+MODULE_DEVICE_TABLE(of, davini_spi_of_match);
+
+/**
+ * spi_davinci_get_pdata - Get platform_data from DTS binding
+ * @pdev: ptr to platform data
+ *
+ * Parses and populate platform_data from device tree bindings.
+ *
+ * NOTE: Not all platform_data params are supported currently.
+ */
+static struct davinci_spi_platform_data
+	*spi_davinci_get_pdata(struct platform_device *pdev)
+{
+	struct device_node *node = pdev->dev.of_node;
+	struct davinci_spi_platform_data *pdata;
+	unsigned int num_cs, intr_line = 0;
+	const char *version;
+
+	if (pdev->dev.platform_data)
+		return pdev->dev.platform_data;
+
+	if (!pdev->dev.of_node)
+		return NULL;
+
+	pdata = devm_kzalloc(&pdev->dev, sizeof(*pdata), GFP_KERNEL);
+	pdev->dev.platform_data = pdata;
+	if (!pdata)
+		return NULL;
+
+	/* default version is 1.0 */
+	pdata->version = SPI_VERSION_1;
+	of_property_read_string(node, "ti,davinci-spi-version", &version);
+	if (!strcmp(version, "2.0"))
+		pdata->version = SPI_VERSION_2;
+
+	/*
+	 * default num_cs is 1 and all chipsel are internal to the chip
+	 * indicated by chip_sel being NULL. GPIO based CS is not
+	 * supported yet in DT bindings.
+	 */
+	num_cs = 1;
+	of_property_read_u32(node, "ti,davinci-spi-num-cs", &num_cs);
+	pdata->num_chipselect = num_cs;
+	of_property_read_u32(node, "ti,davinci-spi-intr-line", &intr_line);
+	pdata->intr_line = intr_line;
+	return pdev->dev.platform_data;
+}
+#else
+#define davinci_spi_of_match NULL
+static struct davinci_spi_platform_data
+	*spi_davinci_get_pdata(struct platform_device *pdev)
+{
+	return pdev->dev.platform_data;
+}
+#endif
+
 /**
  * davinci_spi_probe - probe function for SPI Master Controller
  * @pdev: platform_device structure which contains plateform specific data
@@ -771,16 +837,16 @@ rx_dma_failed:
  */
 static int davinci_spi_probe(struct platform_device *pdev)
 {
-	struct spi_master *master;
-	struct davinci_spi *dspi;
-	struct davinci_spi_platform_data *pdata;
-	struct resource *r, *mem;
 	resource_size_t dma_rx_chan = SPI_NO_RESOURCE;
 	resource_size_t	dma_tx_chan = SPI_NO_RESOURCE;
+	struct davinci_spi_platform_data *pdata;
+	struct spi_master *master;
+	struct davinci_spi *dspi;
+	struct resource *r, *mem;
 	int i = 0, ret = 0;
 	u32 spipc0;
 
-	pdata = pdev->dev.platform_data;
+	pdata = spi_davinci_get_pdata(pdev);
 	if (pdata == NULL) {
 		ret = -ENODEV;
 		goto err;
@@ -821,7 +887,11 @@ static int davinci_spi_probe(struct platform_device *pdev)
 		goto release_region;
 	}
 
+	/* first get irq through resource table, else try of irq method */
 	dspi->irq = platform_get_irq(pdev, 0);
+	if (dspi->irq <= 0)
+		dspi->irq = irq_of_parse_and_map(pdev->dev.of_node, 0);
+
 	if (dspi->irq <= 0) {
 		ret = -EINVAL;
 		goto unmap_io;
@@ -845,6 +915,7 @@ static int davinci_spi_probe(struct platform_device *pdev)
 	}
 	clk_prepare_enable(dspi->clk);
 
+	master->dev.of_node = pdev->dev.of_node;
 	master->bus_num = pdev->id;
 	master->num_chipselect = pdata->num_chipselect;
 	master->setup = davinci_spi_setup;
@@ -978,6 +1049,7 @@ static struct platform_driver davinci_spi_driver = {
 	.driver = {
 		.name = "spi_davinci",
 		.owner = THIS_MODULE,
+		.of_match_table = davinci_spi_of_match,
 	},
 	.probe = davinci_spi_probe,
 	.remove = davinci_spi_remove,
