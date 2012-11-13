@@ -876,6 +876,8 @@
 				4 0 0x38000000 0x04000000
 				5 0 0x3C000000 0x04000000
 				6 0 0x21000A00 0x100>;
+			clocks = <&clkaemif>;
+			clock-names = "aemif";
 
 			nand@2,0 {
 				compatible = "ti,davinci-nand";
@@ -890,6 +892,8 @@
 				ti,davinci-ecc-mode = "hw";
 				ti,davinci-ecc-bits = <4>;
 				ti,davinci-nand-use-bbt;
+				clocks = <&clkaemif>;
+				clock-names = "aemif";
 
 				partition@0 {
 					label = "u-boot";
