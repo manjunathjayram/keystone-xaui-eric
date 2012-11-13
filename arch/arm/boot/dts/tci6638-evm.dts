@@ -913,5 +913,36 @@
 				};
 			};
 		};
+
+		spi:spi0@21000400 {
+			#address-cells			= <1>;
+			#size-cells			= <0>;
+			compatible			= "ti,davinci-spi";
+			reg				= <0x21000400 0x200>;
+			ti,davinci-spi-version		= "1.0";
+			ti,davinci-spi-num-cs		= <4>;
+			ti,davinci-spi-intr-line	= <0>;
+			interrupts			= <0 292 0xf01>;
+			clocks				= <&clkspi>;
+
+			flash: n25q032@0 {
+				#address-cells = <1>;
+				#size-cells = <1>;
+				compatible = "st,m25p32";
+				spi-max-frequency = <25000000>;
+				reg = <0>;
+
+				partition@0 {
+					label = "u-boot-spl";
+					reg = <0x0 0x80000>;
+					read-only;
+				};
+
+				partition@1 {
+					label = "test";
+					reg = <0x80000 0x380000>;
+				};
+			};
+		};
 	};
 };
