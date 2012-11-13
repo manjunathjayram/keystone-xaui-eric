@@ -708,6 +708,14 @@ static int khwq_setup_queue_range(struct khwq_device *kdev,
 		}
 	}
 
+	if (of_get_property(node, "qos-cfg", NULL)) {
+		ret = khwq_init_qos_range(kdev, node, range);
+		if (ret < 0) {
+			devm_kfree(dev, range);
+			return ret;
+		}
+	}
+
 	/* set threshold to 1, and flush out the queues */
 	for_each_qmgr(kdev, qmgr) {
 		start = max(qmgr->start_queue, range->queue_base);
