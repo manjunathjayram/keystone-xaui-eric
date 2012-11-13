@@ -1824,6 +1824,7 @@ static int khwq_qos_tree_map_nodes(struct ktree_node *node, void *arg)
 		/* where do we plugin into our parent? */
 		qnode->parent_input = parent->child_count;
 
+		parent->child_weight[parent->child_count] = qnode->weight;
 		/* provide our parent with info */
 		parent->child_count ++;
 		parent->child_weight_sum += qnode->weight;
@@ -1936,6 +1937,7 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 	struct khwq_device *kdev = info->kdev;
 	bool sync = false;
 	int inputs, i;
+	u64 scale, tmp;
 
 	if (!qnode->has_sched_port)
 		return 0;
@@ -2007,20 +2009,28 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 
 		val = 0;
 		if (qnode->type == QOS_NODE_WRR) {
+			tmp = 0;
+			tmp = (qnode->child_weight[i] * inputs * 10) /
+				qnode->child_weight_sum;
+
 			if (qnode->acct == QOS_BYTE_ACCT) {
-				val = (QOS_BYTE_NORMALIZATION_FACTOR /
-					qnode->child_weight_sum);
-				val *= (inputs);
-				val <<= 6;
+				scale = QOS_BYTE_NORMALIZATION_FACTOR;
+				scale <<= 48;
+				tmp *= scale;
+				tmp += 1ll << (47- QOS_CREDITS_BYTE_SHIFT);
+				tmp >>= (48 - QOS_CREDITS_BYTE_SHIFT);
 			} else {
-				val = (inputs *
-				       QOS_PACKET_NORMALIZATION_FACTOR);
-				val <<= 3;
-				val *= (((qnode->child_weight_max +
-					 qnode->child_weight_min) / 2) *
-					inputs);
-				val /= qnode->child_weight_sum;
+				scale = QOS_PACKET_NORMALIZATION_FACTOR;
+				scale <<= 48;
+				tmp *= scale;
+				tmp += 1ll << (47 - QOS_CREDITS_PACKET_SHIFT);
+				tmp >>= (48 - QOS_CREDITS_PACKET_SHIFT);
 			}
+			val = (u32)(tmp);
+			val /= 10;
+
+			dev_dbg(kdev->dev, "node weight = %d, weight "
+				 "credits = %d\n", qnode->child_weight[i], val);
 		}
 
 		error = khwq_qos_set_sched_wrr_credit(kdev, idx, i, val, sync);
