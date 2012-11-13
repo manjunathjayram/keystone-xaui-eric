@@ -2524,6 +2524,44 @@ static int khwq_qos_close_queue(struct khwq_range_info *range,
 
 static int khwq_qos_free_range(struct khwq_range_info *range)
 {
+	struct khwq_qos_info *info;
+	struct khwq_qos_shadow *shadow;
+	struct khwq_device *kdev;
+	struct khwq_pdsp_info *pdsp;
+	int i, idx;
+
+	info = range->qos_info;
+	pdsp = info->pdsp;
+	kdev = info->kdev;
+
+	shadow = &info->shadows[QOS_SCHED_PORT_CFG];
+	for (i = shadow->start; i < (shadow->start + shadow->count); i++)
+		if (!test_bit(i, shadow->avail)) {
+			idx = khwq_qos_make_id(pdsp->id, i);
+			khwq_qos_free_sched_port(kdev, idx);
+		}
+
+	shadow = &info->shadows[QOS_DROP_OUT_PROF];
+	for (i = shadow->start; i < (shadow->start + shadow->count); i++)
+		if (!test_bit(i, shadow->avail)) {
+			idx = khwq_qos_make_id(pdsp->id, i);
+			khwq_qos_free_drop_out(kdev, idx);
+		}
+
+	shadow = &info->shadows[QOS_DROP_QUEUE_CFG];
+	for (i = shadow->start; i < (shadow->start + shadow->count); i++)
+		if (!test_bit(i, shadow->avail)) {
+			idx = khwq_qos_make_id(pdsp->id, i);
+			khwq_qos_free_drop_queue(kdev, idx);
+		}
+
+	shadow = &info->shadows[QOS_DROP_CFG_PROF];
+	for (i = shadow->start; i < (shadow->start + shadow->count); i++)
+		if (!test_bit(i, shadow->avail)) {
+			idx = khwq_qos_make_id(pdsp->id, i);
+			khwq_qos_free_drop_cfg(kdev, idx);
+		}
+
 	return 0;
 }
 
