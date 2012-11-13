@@ -135,20 +135,6 @@ struct khwq_link_ram_block {
 	size_t		 size;
 };
 
-struct khwq_pdsp_info {
-	const char				*name;
-	struct khwq_reg_pdsp_regs  __iomem	*regs;
-	union {
-		void __iomem				*command;
-		struct khwq_reg_acc_command __iomem	*acc_command;
-	};
-	void __iomem				*intd;
-	u32 __iomem				*iram;
-	const char				*firmware;
-	u32					 id;
-	struct list_head			 list;
-};
-
 struct khwq_acc_info {
 	u32			 pdsp_id;
 	u32			 start_channel;
@@ -170,6 +156,22 @@ struct khwq_acc_channel {
 	atomic_t		 retrigger_count;
 };
 
+struct khwq_pdsp_info {
+	const char				*name;
+	struct khwq_reg_pdsp_regs  __iomem	*regs;
+	union {
+		void __iomem				*command;
+		struct khwq_reg_acc_command __iomem	*acc_command;
+		u32 __iomem				*qos_command;
+	};
+	void __iomem				*intd;
+	u32 __iomem				*iram;
+	const char				*firmware;
+	u32					 id;
+	struct list_head			 list;
+	struct khwq_qos_info			*qos_info;
+};
+
 struct khwq_range_ops;
 
 struct khwq_range_info {
@@ -183,6 +185,7 @@ struct khwq_range_info {
 	struct khwq_range_ops	*ops;
 	struct khwq_acc_info	 acc_info;
 	struct khwq_acc_channel	*acc;
+	struct khwq_qos_info	*qos_info;
 };
 
 struct khwq_range_ops {
@@ -267,6 +270,9 @@ struct khwq_instance {
 #define for_each_qmgr(kdev, qmgr)				\
 	list_for_each_entry(qmgr, &kdev->qmgrs, list)
 
+#define for_each_policy(info, policy)				\
+	list_for_each_entry(policy, &info->drop_policies, list)
+
 static inline struct khwq_pdsp_info *
 khwq_find_pdsp(struct khwq_device *kdev, unsigned pdsp_id)
 {
@@ -295,6 +301,9 @@ khwq_find_qmgr(struct hwqueue_instance *inst)
 }
 
 int khwq_init_acc_range(struct khwq_device *kdev, struct device_node *node,
+			struct khwq_range_info *range);
+
+int khwq_init_qos_range(struct khwq_device *kdev, struct device_node *node,
 			struct khwq_range_info *range);
 
 #endif /* __KEYSTONE_HWQUEUE_H__ */
