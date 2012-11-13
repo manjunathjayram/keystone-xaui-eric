@@ -1639,7 +1639,7 @@ static int pa_rx_timestamp(int order, void *data, struct netcp_packet *p_info)
 		return 0;
 
 	rx_timestamp = p_info->epib[0];
-	rx_timestamp |= ((u64)(p_info->psdata[4] & 0x0000ffff)) << 32;
+	rx_timestamp |= ((u64)(p_info->psdata[5] & 0x0000ffff)) << 32;
 
 	sys_time = pa_to_sys_time(pa_dev->pa2system_offset, rx_timestamp);
 
