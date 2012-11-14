@@ -24,6 +24,7 @@
 #include <linux/of_address.h>
 #include <linux/firmware.h>
 #include <linux/spinlock.h>
+#include <linux/highmem.h>
 #include <linux/interrupt.h>
 #include <linux/dmaengine.h>
 #include <linux/dma-mapping.h>
@@ -33,9 +34,6 @@
 #include <linux/keystone-dma.h>
 #include <linux/errqueue.h>
 #include <net/sctp/checksum.h>
-
-/* Need this for kmap_skb_frag() and kunmap_skb_frag() */
-#include "../../../../net/core/kmap_skb.h"
 
 #include "keystone_net.h"
 #include "keystone_pa.h"
@@ -1528,20 +1526,21 @@ static __wsum checksum_fragments(struct sk_buff *skb,
 
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
 		int end;
+		skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 
 		WARN_ON(start > offset + len);
 
-		end = start + skb_frag_size(&skb_shinfo(skb)->frags[i]);
+		end = start + skb_frag_size(frag);
 		if ((copy = end - offset) > 0) {
 			u8 *vaddr;
 			skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 
 			if (copy > len)
 				copy = len;
-			vaddr = kmap_skb_frag(frag);
+			vaddr = kmap_atomic(skb_frag_page(frag));
 			wsum = calculate(vaddr + frag->page_offset +
 					 offset - start, copy, wsum);
-			kunmap_skb_frag(vaddr);
+			kunmap_atomic(vaddr);
 			if (!(len -= copy))
 				return wsum;
 			offset += copy;
