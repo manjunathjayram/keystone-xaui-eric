@@ -1710,12 +1710,12 @@ static int pa_open(void *intf_priv, struct net_device *ndev)
 
 	pa_dev->clk = clk_get(pa_dev->dev, "clk_pa");
 	if (IS_ERR_OR_NULL(pa_dev->clk)) {
-		dev_err(pa_dev->dev, "unable to get Packet Accelerator clock\n");
+		dev_warn(pa_dev->dev, "unable to get Packet Accelerator clock\n");
 		pa_dev->clk = NULL;
-		return -EBUSY;
 	}
 
-	clk_prepare_enable(pa_dev->clk);
+	if (pa_dev->clk)
+		clk_prepare_enable(pa_dev->clk);
 
 	keystone_pa_reset(pa_dev);
 
