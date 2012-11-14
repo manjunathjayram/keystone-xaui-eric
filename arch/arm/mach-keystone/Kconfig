@@ -1,5 +1,8 @@
 if ARCH_KEYSTONE
 
+config TI_KEYSTONE
+	bool
+
 menu "TI KeyStone Implementations"
 
 endmenu
