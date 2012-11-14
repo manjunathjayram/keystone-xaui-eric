@@ -879,11 +879,12 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 	u32 reg;
 
 	cpsw_dev->cpgmac = clk_get(cpsw_dev->dev, "clk_cpgmac");
-	if (IS_ERR(cpsw_dev->cpgmac)) {
-		dev_err(cpsw_dev->dev, "unable to get Keystone CPGMAC clock\n");
-		return -EBUSY;
+	if (IS_ERR_OR_NULL(cpsw_dev->cpgmac)) {
+		dev_warn(cpsw_dev->dev, "unable to get Keystone CPGMAC clock\n");
+		cpsw_dev->cpgmac = NULL;
 	}
-	else
+
+	if (cpsw_dev->cpgmac)
 		clk_prepare_enable(cpsw_dev->cpgmac);
 
 	reg = __raw_readl(&cpsw_dev->regs->id_ver);
