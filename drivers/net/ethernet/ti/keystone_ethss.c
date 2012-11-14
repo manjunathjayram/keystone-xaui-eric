@@ -52,6 +52,7 @@
 #define SOFT_RESET_MASK				BIT(0)
 #define SOFT_RESET				BIT(0)
 
+#define MACSL_RX_ENABLE_CSF			BIT(23)
 #define MACSL_RX_ENABLE_EXT_CTL			BIT(18)
 #define MACSL_ENABLE				BIT(5)
 #define GMACSL_RET_WARN_RESET_INCOMPLETE	-2
@@ -477,7 +478,8 @@ static void _cpsw_adjust_link(struct cpsw_slave *slave, bool *link)
 
 	if (phy->link) {
 		mac_control = slave->mac_control;
-		mac_control |= MACSL_ENABLE | MACSL_RX_ENABLE_EXT_CTL;
+		mac_control |= MACSL_ENABLE | MACSL_RX_ENABLE_EXT_CTL |
+				MACSL_RX_ENABLE_CSF;
 		/* enable forwarding */
 		cpsw_ale_control_set(slave->ale, slave_port,
 				     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
@@ -551,8 +553,8 @@ static void cpsw_port_config(struct cpsw_slave *slave, int max_rx_len)
 
 	__raw_writel(max_rx_len, &slave->sliver->rx_maxlen);
 	
-	__raw_writel(MACSL_ENABLE | MACSL_RX_ENABLE_EXT_CTL,
-			&slave->sliver->mac_control);
+	__raw_writel(MACSL_ENABLE | MACSL_RX_ENABLE_EXT_CTL |
+		     MACSL_RX_ENABLE_CSF, &slave->sliver->mac_control);
 }
 
 static void cpsw_slave_stop(struct cpsw_slave *slave, struct cpsw_priv *priv)
@@ -607,7 +609,8 @@ static void cpsw_slave_open(struct cpsw_slave *slave, struct cpsw_priv *priv)
 
 	cpsw_set_slave_mac(slave, priv);
 
-	slave->mac_control = MACSL_ENABLE | MACSL_RX_ENABLE_EXT_CTL;
+	slave->mac_control = MACSL_ENABLE | MACSL_RX_ENABLE_EXT_CTL |
+				MACSL_RX_ENABLE_CSF;
 
 	slave_port = cpsw_get_slave_port(priv, slave->slave_num);
 
