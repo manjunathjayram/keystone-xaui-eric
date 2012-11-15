@@ -34,8 +34,9 @@ struct sa_device {
 	struct netcp_device		*netcp_device;
 	struct net_device		*net_device;		/* FIXME */
 	struct device			*dev;
-	struct netcp_tx_pipe		 tx_pipe;
+	const char			*tx_chan_name;
 	u32				 tx_queue_depth;
+	struct netcp_tx_pipe		 tx_pipe;
 };
 
 struct ipsecmgr_mod_sa_ctx_info {
@@ -100,11 +101,8 @@ static int sa_close(void *intf_priv, struct net_device *ndev)
 
 	netcp_unregister_txhook(netcp_priv, SA_TXHOOK_ORDER, sa_tx_hook, sa_dev);
 
-	if (sa_dev->tx_pipe.dma_channel) {
-		dmaengine_pause(sa_dev->tx_pipe.dma_channel);
-		dma_release_channel(sa_dev->tx_pipe.dma_channel);
-		sa_dev->tx_pipe.dma_channel = NULL;
-	}
+	netcp_txpipe_close(&sa_dev->tx_pipe);
+
 	return 0;
 }
 
@@ -112,38 +110,12 @@ static int sa_open(void *intf_priv, struct net_device *ndev)
 {
 	struct sa_device *sa_dev = intf_priv;
 	struct netcp_priv *netcp_priv = netdev_priv(ndev);
-	struct dma_keystone_info config;
-	dma_cap_mask_t mask;
-	int ret, err;
-
-	dma_cap_zero(mask);
-	dma_cap_set(DMA_SLAVE, mask);
+	int ret;
 
 	/* Open the SA IPSec data transmit channel */
-	sa_dev->tx_pipe.dma_chan_name = "satx";
-	sa_dev->tx_pipe.dma_channel = dma_request_channel_by_name(mask,
-					sa_dev->tx_pipe.dma_chan_name);
-	if (IS_ERR_OR_NULL(sa_dev->tx_pipe.dma_channel)) {
-		dev_err(sa_dev->dev, "Could not get SA TX IPSec data channel\n");
-		sa_dev->tx_pipe.dma_channel = NULL;
-		ret = -ENODEV;
+	ret = netcp_txpipe_open(&sa_dev->tx_pipe);
+	if (ret)
 		goto fail;
-	}
-
-	memset(&config, 0, sizeof(config));
-	config.direction = DMA_MEM_TO_DEV;
-	config.tx_queue_depth = sa_dev->tx_queue_depth;
-
-	err = dma_keystone_config(sa_dev->tx_pipe.dma_channel, &config);
-	if (err) {
-		ret = -ENODEV;
-		goto fail;
-	}
-
-	sa_dev->tx_pipe.dma_queue = dma_get_tx_queue(sa_dev->tx_pipe.dma_channel);
-	sa_dev->tx_pipe.dma_poll_threshold = config.tx_queue_depth / 2;
-	atomic_set(&sa_dev->tx_pipe.dma_poll_count,
-			sa_dev->tx_pipe.dma_poll_threshold);
 
 	netcp_register_txhook(netcp_priv, SA_TXHOOK_ORDER, sa_tx_hook, sa_dev);
 	return 0;
@@ -157,10 +129,12 @@ static int sa_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 {
 	struct sa_device *sa_dev = inst_priv;
 
-	printk("%s() called for interface %s\n", __func__, ndev->name);
-
 	sa_dev->net_device = ndev;
 	*intf_priv = sa_dev;
+
+	netcp_txpipe_init(&sa_dev->tx_pipe, netdev_priv(ndev),
+			  sa_dev->tx_chan_name, sa_dev->tx_queue_depth);
+
 	return 0;
 }
 
@@ -201,7 +175,12 @@ static int sa_probe(struct netcp_device *netcp_device,
 	*inst_priv = sa_dev;
 	sa_dev->dev = dev;
 
-	spin_lock_init(&sa_dev->tx_pipe.dma_poll_lock);
+	ret = of_property_read_string(node, "tx-channel", &sa_dev->tx_chan_name);
+	if (ret < 0) {
+		dev_err(dev, "missing \"tx-channel\" parameter, err %d\n", ret);
+		sa_dev->tx_chan_name = "satx";
+	}
+	dev_dbg(dev, "tx-channel \"%s\"\n", sa_dev->tx_chan_name);
 
 	ret = of_property_read_u32(node, "tx_queue_depth",
 				   &sa_dev->tx_queue_depth);
