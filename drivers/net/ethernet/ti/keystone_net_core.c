@@ -754,33 +754,105 @@ static int netcp_poll(struct napi_struct *napi, int budget)
 	return packets;
 }
 
+static const char *netcp_tx_state_str(enum netcp_tx_state tx_state)
+{
+	static const char * const state_str[] = {
+		[TX_STATE_INTERRUPT]	= "interrupt",
+		[TX_STATE_POLL]		= "poll",
+		[TX_STATE_SCHEDULED]	= "scheduled",
+		[TX_STATE_INVALID]	= "invalid",
+	};
+
+	if (tx_state < 0 || tx_state >= ARRAY_SIZE(state_str))
+		return state_str[TX_STATE_INVALID];
+	else
+		return state_str[tx_state];
+}
+
+static inline void netcp_set_txpipe_state(struct netcp_tx_pipe *tx_pipe,
+					  enum netcp_tx_state new_state)
+{
+	dev_dbg(tx_pipe->netcp_priv->dev, "txpipe %s: %s -> %s\n",
+		tx_pipe->dma_chan_name,
+		netcp_tx_state_str(tx_pipe->dma_poll_state),
+		netcp_tx_state_str(new_state));
+
+	tx_pipe->dma_poll_state = new_state;
+	cpu_relax();
+}
+
 static void netcp_tx_complete(void *data)
 {
 	struct netcp_packet *p_info = data;
 	struct netcp_priv *netcp = p_info->netcp;
+	struct netcp_tx_pipe *tx_pipe = p_info->tx_pipe;
 	struct sk_buff *skb = p_info->skb;
 	enum dma_status status;
 	unsigned int sg_ents;
+	int poll_count;
 
-	status = dma_async_is_tx_complete(p_info->tx_pipe->dma_channel,
+	if (unlikely(p_info->cookie <= 0))
+		WARN(1, "invalid dma cookie == %d", p_info->cookie);
+	else {
+		status = dma_async_is_tx_complete(p_info->tx_pipe->dma_channel,
 						  p_info->cookie, NULL, NULL);
-	WARN_ON(status != DMA_SUCCESS && status != DMA_ERROR);
+		WARN((status != DMA_SUCCESS && status != DMA_ERROR),
+				"invalid dma status %d", status);
+		if (status != DMA_SUCCESS)
+			netcp->ndev->stats.tx_errors++;
+	}
 
 	sg_ents = sg_count(&p_info->sg[2], p_info->sg_ents);
 	dma_unmap_sg(netcp->dev, &p_info->sg[2], sg_ents, DMA_TO_DEVICE);
 
 	netcp_dump_packet(p_info, "txc");
 
-	if (status != DMA_SUCCESS)
-		netcp->ndev->stats.tx_errors++;
+	poll_count = atomic_add_return(sg_ents, &tx_pipe->dma_poll_count);
+	if ((poll_count >= tx_pipe->dma_resume_threshold) &&
+	    netif_subqueue_stopped(netcp->ndev, skb)) {
+		u16 subqueue = skb_get_queue_mapping(skb);
+		dev_dbg(netcp->dev, "waking subqueue %hu\n", subqueue);
+		netif_wake_subqueue(netcp->ndev, subqueue);
+	}
 
-	if (netif_subqueue_stopped(netcp->ndev, skb) &&
-	    netcp_is_alive(netcp))
-		netif_wake_subqueue(netcp->ndev, skb_get_queue_mapping(skb));
-
-	atomic_inc(&p_info->tx_pipe->dma_poll_count);
 	dev_kfree_skb_any(skb);
 	kfree(p_info);
+}
+
+static void netcp_tx_tasklet(unsigned long data)
+{
+	struct netcp_tx_pipe *tx_pipe = (void *)data;
+	int poll_count, packets;
+
+	if (unlikely(tx_pipe->dma_poll_state != TX_STATE_SCHEDULED)) {
+		WARN(1, "spurious tasklet activation, txpipe %s state %d",
+			tx_pipe->dma_chan_name, tx_pipe->dma_poll_state);
+		return;
+	}
+
+	packets = dma_poll(tx_pipe->dma_channel, -1);
+
+	poll_count = atomic_read(&tx_pipe->dma_poll_count);
+	if (poll_count >= tx_pipe->dma_resume_threshold)
+		netcp_set_txpipe_state(tx_pipe, TX_STATE_POLL);
+	else {
+		netcp_set_txpipe_state(tx_pipe, TX_STATE_INTERRUPT);
+		dmaengine_resume(tx_pipe->dma_channel);
+	}
+
+	dev_dbg(tx_pipe->netcp_priv->dev,
+		"txpipe %s poll count %d, packets %d\n",
+		tx_pipe->dma_chan_name, poll_count, packets);
+}
+
+static void netcp_tx_notify(struct dma_chan *chan, void *arg)
+{
+	struct netcp_tx_pipe *tx_pipe = arg;
+
+	BUG_ON(tx_pipe->dma_poll_state != TX_STATE_INTERRUPT);
+	dmaengine_pause(tx_pipe->dma_channel);
+	netcp_set_txpipe_state(tx_pipe, TX_STATE_SCHEDULED);
+	tasklet_schedule(&tx_pipe->dma_poll_tasklet);
 }
 
 /* Push an outcoming packet */
@@ -791,8 +863,9 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	struct netcp_tx_pipe *tx_pipe = NULL;
 	struct netcp_hook_list *tx_hook;
 	struct netcp_packet *p_info;
-	bool need_poll = 0;
-	int real_sg_ents;
+	int subqueue = skb_get_queue_mapping(skb);
+	int real_sg_ents = 0;
+	int poll_count;
 	int ret = 0;
 
 	ndev->stats.tx_packets++;
@@ -860,6 +933,7 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 		ndev->stats.tx_dropped++;
 		dev_kfree_skb_any(skb);
 		kfree(p_info);
+		real_sg_ents = 0;
 		dev_warn(netcp->dev, "failed to map transmit packet\n");
 		ret = -ENXIO;
 		goto out;
@@ -873,9 +947,9 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 		ndev->stats.tx_dropped++;
 		dma_unmap_sg(netcp->dev, &p_info->sg[2], real_sg_ents,
 			     DMA_TO_DEVICE);
-		netif_stop_subqueue(ndev, skb_get_queue_mapping(skb));
 		dev_kfree_skb_any(skb);
 		kfree(p_info);
+		real_sg_ents = 0;
 		dev_dbg(netcp->dev, "failed to prep slave dma\n");
 		ret = -ENOBUFS;
 		goto out;
@@ -890,17 +964,27 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	ret = NETDEV_TX_OK;
 
 out:
-	if (atomic_dec_return(&tx_pipe->dma_poll_count) <= 0) {
-		dev_dbg(netcp->dev, "transmit poll threshold reached\n");
-		need_poll = true;
+	poll_count = atomic_sub_return(real_sg_ents, &tx_pipe->dma_poll_count);
+	if ((poll_count < tx_pipe->dma_poll_threshold) || (ret < 0)) {
+		dev_dbg(netcp->dev, "polling %s, poll count %d\n",
+			tx_pipe->dma_chan_name, poll_count);
+
+		tasklet_disable(&tx_pipe->dma_poll_tasklet);
+		if (unlikely(tx_pipe->dma_poll_state == TX_STATE_INTERRUPT)) {
+			dmaengine_pause(tx_pipe->dma_channel);
+			netcp_set_txpipe_state(tx_pipe, TX_STATE_POLL);
+		}
+		dma_poll(tx_pipe->dma_channel, -1);
+		tasklet_enable(&tx_pipe->dma_poll_tasklet);
 	}
 
-	if (need_poll || ret < 0) {
-		dev_dbg(netcp->dev, "polling transmit channel %d\n",
-			tx_pipe->dma_queue);
-		if (spin_trylock(&tx_pipe->dma_poll_lock)) {
-			dma_poll(tx_pipe->dma_channel, -1);
-			spin_unlock(&tx_pipe->dma_poll_lock);
+	if (atomic_read(&tx_pipe->dma_poll_count) < tx_pipe->dma_pause_threshold) {
+		dev_dbg(netcp->dev, "pausing subqueue %d, %s poll count %d\n",
+			subqueue, tx_pipe->dma_chan_name, poll_count);
+		netif_stop_subqueue(ndev, subqueue);
+		if (likely(tx_pipe->dma_poll_state == TX_STATE_POLL)) {
+			netcp_set_txpipe_state(tx_pipe, TX_STATE_INTERRUPT);
+			dmaengine_resume(tx_pipe->dma_channel);
 		}
 	}
 
@@ -911,10 +995,12 @@ out:
 int netcp_txpipe_close(struct netcp_tx_pipe *tx_pipe)
 {
 	if (tx_pipe->dma_channel) {
+		tasklet_disable(&tx_pipe->dma_poll_tasklet);
 		dmaengine_pause(tx_pipe->dma_channel);
 		dma_poll(tx_pipe->dma_channel, -1);
 		dma_release_channel(tx_pipe->dma_channel);
 		tx_pipe->dma_channel = NULL;
+		netcp_set_txpipe_state(tx_pipe, TX_STATE_INVALID);
 
 		dev_dbg(tx_pipe->netcp_priv->dev, "closed tx pipe %s\n",
 			tx_pipe->dma_chan_name);
@@ -955,11 +1041,15 @@ int netcp_txpipe_open(struct netcp_tx_pipe *tx_pipe)
 		return ret;
 	}
 
+	dma_set_notify(tx_pipe->dma_channel, netcp_tx_notify, tx_pipe);
 	dmaengine_pause(tx_pipe->dma_channel);
+	netcp_set_txpipe_state(tx_pipe, TX_STATE_POLL);
 
 	tx_pipe->dma_flow = 0;
 	tx_pipe->dma_queue = dma_get_tx_queue(tx_pipe->dma_channel);
-	atomic_set(&tx_pipe->dma_poll_count, tx_pipe->dma_poll_threshold);
+	atomic_set(&tx_pipe->dma_poll_count, tx_pipe->dma_queue_depth);
+	tasklet_enable(&tx_pipe->dma_poll_tasklet);
+
 
 	dev_dbg(tx_pipe->netcp_priv->dev, "opened tx pipe %s\n",
 		tx_pipe->dma_chan_name);
@@ -975,10 +1065,19 @@ int netcp_txpipe_init(struct netcp_tx_pipe *tx_pipe,
 	tx_pipe->netcp_priv = netcp_priv;
 	tx_pipe->dma_chan_name = chan_name;
 	tx_pipe->dma_queue_depth = queue_depth;
-	tx_pipe->dma_poll_threshold = queue_depth / 2;
 
-	dev_dbg(tx_pipe->netcp_priv->dev, "initialized tx pipe %s, %d\n",
-		tx_pipe->dma_chan_name, tx_pipe->dma_poll_threshold);
+	tx_pipe->dma_poll_threshold = queue_depth / 2;
+	tx_pipe->dma_pause_threshold = (MAX_SKB_FRAGS < (queue_depth / 4)) ?
+					MAX_SKB_FRAGS : (queue_depth / 4);
+	tx_pipe->dma_resume_threshold = tx_pipe->dma_pause_threshold;
+
+	tasklet_init(&tx_pipe->dma_poll_tasklet, netcp_tx_tasklet, (unsigned long)tx_pipe);
+	tasklet_disable_nosync(&tx_pipe->dma_poll_tasklet);
+	netcp_set_txpipe_state(tx_pipe, TX_STATE_INVALID);
+
+	dev_dbg(tx_pipe->netcp_priv->dev, "initialized tx pipe %s, %d/%d/%d\n",
+		tx_pipe->dma_chan_name, tx_pipe->dma_poll_threshold,
+		tx_pipe->dma_pause_threshold, tx_pipe->dma_resume_threshold);
 	return 0;
 }
 EXPORT_SYMBOL(netcp_txpipe_init);
