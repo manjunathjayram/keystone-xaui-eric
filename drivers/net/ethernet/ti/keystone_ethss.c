@@ -243,6 +243,7 @@ struct cpsw_priv {
 
 	u32				 intf_tx_queues;
 
+	const char			*tx_chan_name;
 	u32				 tx_queue_depth;
 	struct netcp_tx_pipe		 tx_pipe;
 };
@@ -818,65 +819,10 @@ static int cpsw_tx_hook(int order, void *data, struct netcp_packet *p_info)
 
 #define	CPSW_TXHOOK_ORDER	0
 
-static int cpsw_open_txchan(struct cpsw_priv *cpsw_dev)
-{
-	struct netcp_priv *netcp = netdev_priv(cpsw_dev->ndev);
-	struct dma_keystone_info config;
-	dma_cap_mask_t mask;
-	const char *name;
-	int err;
-
-	dma_cap_zero(mask);
-	dma_cap_set(DMA_SLAVE, mask);
-
-	name = cpsw_dev->tx_pipe.dma_chan_name;
-	cpsw_dev->tx_pipe.dma_channel = dma_request_channel_by_name(mask, name);
-	if (IS_ERR_OR_NULL(cpsw_dev->tx_pipe.dma_channel))
-		return PTR_ERR(cpsw_dev->tx_pipe.dma_channel);
-
-	memset(&config, 0, sizeof(config));
-	config.direction	= DMA_MEM_TO_DEV;
-	config.tx_queue_depth	= cpsw_dev->tx_queue_depth;
-	err = dma_keystone_config(cpsw_dev->tx_pipe.dma_channel, &config);
-	if (err) {
-		dev_err(cpsw_dev->dev, "%d error configuring TX channel\n",
-			err);
-		return err;
-	}
-
-	dmaengine_pause(cpsw_dev->tx_pipe.dma_channel);
-	cpsw_dev->tx_pipe.dma_flow = 0;
-	cpsw_dev->tx_pipe.dma_queue = dma_get_tx_queue(cpsw_dev->tx_pipe.dma_channel);
-	cpsw_dev->tx_pipe.dma_poll_threshold = cpsw_dev->tx_queue_depth / 2;
-	atomic_set(&cpsw_dev->tx_pipe.dma_poll_count,
-		   cpsw_dev->tx_pipe.dma_poll_threshold);
-
-	netcp_register_txhook(netcp, CPSW_TXHOOK_ORDER, cpsw_tx_hook, cpsw_dev);
-
-	dev_dbg(cpsw_dev->dev, "opened TX channel: %p\n",
-		cpsw_dev->tx_pipe.dma_channel);
-
-	return 0;
-}
-
-static void cpsw_close_txchan(struct cpsw_priv *cpsw_dev)
-{
-	struct netcp_priv *netcp = netdev_priv(cpsw_dev->ndev);
-	struct netcp_tx_pipe *tx_pipe = &cpsw_dev->tx_pipe;
-
-	dmaengine_pause(tx_pipe->dma_channel);
-
-	netcp_unregister_txhook(netcp, CPSW_TXHOOK_ORDER, cpsw_tx_hook, cpsw_dev);
-
-	if (tx_pipe->dma_channel) {
-		dma_release_channel(tx_pipe->dma_channel);
-		tx_pipe->dma_channel = NULL;
-	}
-}
-
 static int cpsw_open(void *intf_priv, struct net_device *ndev)
 {
 	struct cpsw_priv *cpsw_dev = intf_priv;
+	struct netcp_priv *netcp = netdev_priv(ndev);
 	struct cpsw_ale_params ale_params;
 	int i, ret = 0;
 	u32 reg;
@@ -899,9 +845,13 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 
 	cpsw_dev->ndev = ndev;
 
-	ret = cpsw_open_txchan(cpsw_dev);
+	ret = netcp_txpipe_open(&cpsw_dev->tx_pipe);
 	if (ret)
 		return ret;
+
+	dev_dbg(cpsw_dev->dev, "opened TX channel %s: %p\n",
+		cpsw_dev->tx_pipe.dma_chan_name,
+		cpsw_dev->tx_pipe.dma_channel);
 
 	memset(&ale_params, 0, sizeof(ale_params));
 
@@ -962,8 +912,9 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 	cpsw_dev->timer.function	= cpsw_timer;
 	cpsw_dev->timer.expires		= jiffies + CPSW_TIMER_INTERVAL;
 	add_timer(&cpsw_dev->timer);
-
 	dev_dbg(cpsw_dev->dev, "%s(): cpsw_timer = %p\n", __func__, cpsw_timer );
+
+	netcp_register_txhook(netcp, CPSW_TXHOOK_ORDER, cpsw_tx_hook, cpsw_dev);
 	
 	/* Configure the streaming switch */
 #define	PSTREAM_ROUTE_DMA	6
@@ -974,13 +925,14 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 clean_ale:
 	cpsw_ale_destroy(cpsw_dev->ale);
 out:
-	cpsw_close_txchan(cpsw_dev);
+	netcp_txpipe_close(&cpsw_dev->tx_pipe);
 	return ret;
 }
 
 static int cpsw_close(void *intf_priv, struct net_device *ndev)
 {
 	struct cpsw_priv *cpsw_dev = intf_priv;
+	struct netcp_priv *netcp = netdev_priv(ndev);
 
 	del_timer_sync(&cpsw_dev->timer);
 
@@ -994,7 +946,9 @@ static int cpsw_close(void *intf_priv, struct net_device *ndev)
 	}
 
 	cpsw_ale_destroy(cpsw_dev->ale);
-	cpsw_close_txchan(cpsw_dev);
+
+	netcp_unregister_txhook(netcp, CPSW_TXHOOK_ORDER, cpsw_tx_hook, cpsw_dev);
+	netcp_txpipe_close(&cpsw_dev->tx_pipe);
 
 	kfree(cpsw_dev->slaves);
 	cpsw_dev->cpgmac = NULL;
@@ -1061,18 +1015,19 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 
 	cpsw_dev->dev = dev;
 	cpsw_dev->netcp_device = netcp_device;
-	spin_lock_init(&cpsw_dev->tx_pipe.dma_poll_lock);
 	
 	priv = cpsw_dev;	/* FIXME: Remove this!! */
 
 	regs = ioremap(TCI6614_SS_BASE, 0xf00);
 	BUG_ON(!regs);
 
-	ret = of_property_read_string(node, "tx-channel", &cpsw_dev->tx_pipe.dma_chan_name);
+	/* Parameters related to the tx_pipe */
+	ret = of_property_read_string(node, "tx-channel", &cpsw_dev->tx_chan_name);
 	if (ret < 0) {
 		dev_err(dev, "missing \"tx-channel\" parameter, err %d\n", ret);
-		cpsw_dev->tx_pipe.dma_chan_name = "nettx";
+		cpsw_dev->tx_chan_name = "nettx";
 	}
+	dev_dbg(dev, "dma_chan_name %s\n", cpsw_dev->tx_chan_name);
 
 	ret = of_property_read_u32(node, "tx_queue_depth", &cpsw_dev->tx_queue_depth);
 	if (ret < 0) {
@@ -1195,6 +1150,9 @@ exit:
 static int cpsw_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 {
 	struct cpsw_priv *cpsw_dev = inst_priv;
+
+	netcp_txpipe_init(&cpsw_dev->tx_pipe, netdev_priv(ndev),
+			  cpsw_dev->tx_chan_name, cpsw_dev->tx_queue_depth);
 
 	*intf_priv = cpsw_dev;
 	return 0;
