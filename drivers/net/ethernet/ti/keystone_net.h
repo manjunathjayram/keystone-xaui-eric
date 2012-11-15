@@ -45,11 +45,13 @@ enum netcp_rx_state {
 };
 
 struct netcp_tx_pipe {
+	struct netcp_priv		*netcp_priv;
 	struct dma_chan			*dma_channel;
 	const char			*dma_chan_name;
 	u16				 dma_flow;
 	u16				 dma_queue;
-	int				 dma_poll_threshold;
+	unsigned int			 dma_queue_depth;
+	unsigned int			 dma_poll_threshold;
 	atomic_t			 dma_poll_count;
 	spinlock_t			 dma_poll_lock;
 };
@@ -157,6 +159,13 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 			   int tx_queues, int rx_queues);
 void netcp_delete_interface(struct netcp_device *netcp_device,
 			    struct net_device *ndev);
+
+int netcp_txpipe_init(struct netcp_tx_pipe *tx_pipe,
+		struct netcp_priv *netcp_priv,
+		const char *chan_name,
+		int queue_depth);
+int netcp_txpipe_open(struct netcp_tx_pipe *tx_pipe);
+int netcp_txpipe_close(struct netcp_tx_pipe *tx_pipe);
 
 struct dma_chan *netcp_get_rx_chan(struct netcp_priv *priv);
 struct dma_chan *netcp_get_tx_chan(struct netcp_priv *priv);
