@@ -225,7 +225,7 @@ static struct reg_psc psc_addr[NUM_GPSC];
  */
 void __init of_davinci_psc_clk_init(struct device_node *node, spinlock_t *lock)
 {
-	const char *parent_name, *status, *base_flags;
+	const char *parent_name, *status = NULL, *base_flags = NULL;
 	struct clk_davinci_psc_data *data;
 	const char *clk_name = node->name;
 	u32 gpsc = 0, lpsc = 0, pd = 0;
