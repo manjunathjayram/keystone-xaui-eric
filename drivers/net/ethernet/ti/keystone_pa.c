@@ -265,8 +265,6 @@ struct pa_device {
 struct pa_packet {
 	struct scatterlist		 sg[PA_SGLIST_SIZE];
 	int				 sg_ents;
-	enum dma_status			 status;
-	enum dma_transfer_direction	 direction;
 	struct pa_device		*priv;
 	struct dma_chan			*chan;
 	struct dma_async_tx_descriptor	*desc;
@@ -738,7 +736,6 @@ static int keystone_pa_set_firmware(struct pa_device *pa_dev,
 
 static struct pa_packet *pa_alloc_packet(struct pa_device *pa_dev,
 					 unsigned cmd_size,
-					 enum dma_transfer_direction direction,
 					 struct dma_chan *dma_chan)
 {
 	struct pa_packet *p_info;
@@ -749,7 +746,6 @@ static struct pa_packet *pa_alloc_packet(struct pa_device *pa_dev,
 
 	p_info->priv = pa_dev;
 	p_info->data = p_info + 1;
-	p_info->direction = direction;
 	p_info->chan = dma_chan;
 
 	sg_init_table(p_info->sg, PA_SGLIST_SIZE);
@@ -777,11 +773,11 @@ static void pa_tx_dma_callback(void *data)
 	else {
 		status = dma_async_is_tx_complete(p_info->chan,
 						  cookie, NULL, NULL);
-		WARN((p_info->status != DMA_SUCCESS),
+		WARN((status != DMA_SUCCESS),
 				"dma completion failure, status == %d", status);
 	}
 
-	dma_unmap_sg(pa_dev->dev, &p_info->sg[2], 1, p_info->direction);
+	dma_unmap_sg(pa_dev->dev, &p_info->sg[2], 1, DMA_TO_DEVICE);
 
 	p_info->desc = NULL;
 
@@ -795,14 +791,14 @@ static int pa_submit_tx_packet(struct pa_packet *p_info)
 	unsigned long irqsave;
 	int ret;
 
-	ret = dma_map_sg(pa_dev->dev, &p_info->sg[2], 1, p_info->direction);
+	ret = dma_map_sg(pa_dev->dev, &p_info->sg[2], 1, DMA_TO_DEVICE);
 	if (ret < 0)
 		return ret;
 
 	p_info->desc = dmaengine_prep_slave_sg(p_info->chan, p_info->sg, 3,
-					       p_info->direction, flags);
+					       DMA_TO_DEVICE, flags);
 	if (IS_ERR_OR_NULL(p_info->desc)) {
-		dma_unmap_sg(pa_dev->dev, &p_info->sg[2], 1, p_info->direction);
+		dma_unmap_sg(pa_dev->dev, &p_info->sg[2], 1, DMA_TO_DEVICE);
 		return PTR_ERR(p_info->desc);
 	}
 
@@ -1027,7 +1023,7 @@ static struct dma_async_tx_descriptor *pa_rxpool_alloc(void *arg,
 
 	struct pa_packet *rx;
 
-	rx = pa_alloc_packet(pa_dev, bufsize, DMA_DEV_TO_MEM, pa_dev->rx_channel);
+	rx = pa_alloc_packet(pa_dev, bufsize, pa_dev->rx_channel);
 	if (!rx) {
 		dev_err(pa_dev->dev, "could not allocate cmd rx packet\n");
 		kfree(rx);
@@ -1106,7 +1102,7 @@ static int keystone_pa_add_mac(struct pa_device *priv, const u8 *mac,
 
 	size = (sizeof(struct pa_frm_command) +
 		sizeof(struct pa_frm_cmd_add_lut1) + 4);
-	tx = pa_alloc_packet(priv, size, DMA_MEM_TO_DEV, priv->tx_channel);
+	tx = pa_alloc_packet(priv, size, priv->tx_channel);
 	if (!tx) {
 		dev_err(priv->dev, "could not allocate cmd tx packet\n");
 		return -ENOMEM;
@@ -1204,7 +1200,7 @@ static int pa_config_crc_engine(struct pa_device *priv)
 
 	/* Verify that there is enough room to create the command */
 	size = sizeof(*fcmd) + sizeof(*ccrc) - sizeof(u32);
-	tx = pa_alloc_packet(priv, size, DMA_MEM_TO_DEV, priv->tx_pipe.dma_channel);
+	tx = pa_alloc_packet(priv, size, priv->tx_pipe.dma_channel);
 	if (!tx) {
 		dev_err(priv->dev, "could not allocate cmd tx packet\n");
 		return -ENOMEM;
@@ -1673,11 +1669,7 @@ static int pa_close(void *intf_priv, struct net_device *ndev)
 		pa_dev->tx_channel = NULL;
 	}
 
-	if (pa_dev->tx_pipe.dma_channel) {
-		dmaengine_pause(pa_dev->tx_pipe.dma_channel);
-		dma_release_channel(pa_dev->tx_pipe.dma_channel);
-		pa_dev->tx_pipe.dma_channel = NULL;
-	}
+	netcp_txpipe_close(&pa_dev->tx_pipe);
 
 	if (pa_dev->rx_channel) {
 		dmaengine_pause(pa_dev->rx_channel);
@@ -1774,7 +1766,6 @@ static int pa_open(void *intf_priv, struct net_device *ndev)
 	}
 
 	memset(&config, 0, sizeof(config));
-
 	config.direction	= DMA_MEM_TO_DEV;
 	config.tx_queue_depth	= pa_dev->tx_cmd_queue_depth;
 
@@ -1783,28 +1774,9 @@ static int pa_open(void *intf_priv, struct net_device *ndev)
 		goto fail;
 
 	/* Open the PA Data transmit channel */
-	pa_dev->tx_pipe.dma_chan_name = "patx-dat";
-	pa_dev->tx_pipe.dma_channel = dma_request_channel_by_name(mask, pa_dev->tx_pipe.dma_chan_name);
-	if (IS_ERR_OR_NULL(pa_dev->tx_pipe.dma_channel)) {
-		dev_err(pa_dev->dev, "Could not get PA TX data channel\n");
-		pa_dev->tx_pipe.dma_channel = NULL;
-		ret = -ENODEV;
+	ret = netcp_txpipe_open(&pa_dev->tx_pipe);
+	if (ret)
 		goto fail;
-	}
-
-	memset(&config, 0, sizeof(config));
-
-	config.direction	= DMA_MEM_TO_DEV;
-	config.tx_queue_depth	= pa_dev->tx_data_queue_depth;
-
-	err = dma_keystone_config(pa_dev->tx_pipe.dma_channel, &config);
-	if (err)
-		goto fail;
-
-	pa_dev->tx_pipe.dma_queue = dma_get_tx_queue(pa_dev->tx_pipe.dma_channel);
-	pa_dev->tx_pipe.dma_poll_threshold = config.tx_queue_depth / 2;
-	atomic_set(&pa_dev->tx_pipe.dma_poll_count, pa_dev->tx_pipe.dma_poll_threshold);
-
 
 	/* Open the PA common response channel */
 	pa_dev->rx_channel = dma_request_channel_by_name(mask, "parx");
@@ -1883,6 +1855,9 @@ static int pa_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 	pa_dev->net_device = ndev;
 	*intf_priv = pa_dev;
 
+	netcp_txpipe_init(&pa_dev->tx_pipe, netdev_priv(ndev),
+			  pa_dev->tx_chan_name, pa_dev->tx_data_queue_depth);
+
 	if (pa_dev->csum_offload) {
 		rtnl_lock();
 		ndev->features    |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | NETIF_F_SCTP_CSUM;
@@ -1960,8 +1935,7 @@ static int pa_probe(struct netcp_device *netcp_device,
 	pa_dev->netcp_device = netcp_device;
 	pa_dev->dev = dev;
 
-	spin_lock_init(&pa_dev->tx_pipe.dma_poll_lock);
-
+	pa_dev->tx_chan_name = "patx-dat";
 	ret = of_property_read_u32(node, "tx_cmd_queue_depth",
 				   &pa_dev->tx_cmd_queue_depth);
 	if (ret < 0) {
