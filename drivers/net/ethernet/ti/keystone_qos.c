@@ -40,6 +40,7 @@
 #define	MAX_CHANNELS	8
 
 struct qos_channel {
+	const char		*tx_chan_name;
 	u32			 tx_queue_depth;
 	struct netcp_tx_pipe	 tx_pipe;
 };
@@ -85,11 +86,7 @@ static int qos_close(void *intf_priv, struct net_device *ndev)
 	for (i = 0; i < qos_dev->num_channels; ++i) {
 		struct qos_channel *qchan = &qos_dev->channels[i];
 
-		if (qchan->tx_pipe.dma_channel) {
-			dmaengine_pause(qchan->tx_pipe.dma_channel);
-			dma_release_channel(qchan->tx_pipe.dma_channel);
-			qchan->tx_pipe.dma_channel = NULL;
-		}
+		netcp_txpipe_close(&qchan->tx_pipe);
 	}
 
 	return 0;
@@ -99,41 +96,16 @@ static int qos_open(void *intf_priv, struct net_device *ndev)
 {
 	struct qos_device *qos_dev = intf_priv;
 	struct netcp_priv *netcp_priv = netdev_priv(ndev);
-	struct dma_keystone_info config;
-	dma_cap_mask_t mask;
 	int ret;
 	int i;
-
-	dma_cap_zero(mask);
-	dma_cap_set(DMA_SLAVE, mask);
-	memset(&config, 0, sizeof(config));
-	config.direction = DMA_MEM_TO_DEV;
 
 	/* Open the QoS input queues */
 	for (i = 0; i < qos_dev->num_channels; ++i) {
 		struct qos_channel *qchan = &qos_dev->channels[i];
 
-		qchan->tx_pipe.dma_channel = dma_request_channel_by_name(mask, qchan->tx_pipe.dma_chan_name);
-		if (IS_ERR_OR_NULL(qchan->tx_pipe.dma_channel)) {
-			dev_err(qos_dev->dev,
-				"Could not get DMA channel \"%s\"\n",
-				qchan->tx_pipe.dma_chan_name);
-			qchan->tx_pipe.dma_channel = NULL;
-			ret = -ENODEV;
+		ret = netcp_txpipe_open(&qchan->tx_pipe);
+		if (ret)
 			goto fail;
-		}
-
-		config.tx_queue_depth = qchan->tx_queue_depth;
-		ret = dma_keystone_config(qchan->tx_pipe.dma_channel, &config);
-		if (ret) {
-			dev_err(qos_dev->dev,
-				"Could not configure DMA channel \"%s\"\n",
-				qchan->tx_pipe.dma_chan_name);
-			goto fail;
-		}
-		qchan->tx_pipe.dma_queue = dma_get_tx_queue(qchan->tx_pipe.dma_channel);
-		qchan->tx_pipe.dma_poll_threshold = config.tx_queue_depth / 4;
-		atomic_set(&qchan->tx_pipe.dma_poll_count, qchan->tx_pipe.dma_poll_threshold);
 	}
 
 	netcp_register_txhook(netcp_priv, QOS_TXHOOK_ORDER, qos_tx_hook, intf_priv);
@@ -149,9 +121,18 @@ fail:
 static int qos_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 {
 	struct qos_device *qos_dev = inst_priv;
+	int i;
 
 	qos_dev->net_device = ndev;
 	*intf_priv = qos_dev;
+
+	/* Initialize the QoS input queues */
+	for (i = 0; i < qos_dev->num_channels; ++i) {
+		struct qos_channel *qchan = &qos_dev->channels[i];
+
+		netcp_txpipe_init(&qchan->tx_pipe, netdev_priv(ndev),
+				  qchan->tx_chan_name, qchan->tx_queue_depth);
+	}
 
 	return 0;
 }
@@ -181,12 +162,12 @@ static int init_channel(struct qos_device *qos_dev,
 	struct qos_channel *qchan = &qos_dev->channels[index];
 	int ret;
 
-	ret = of_property_read_string(node, "tx-channel", &qchan->tx_pipe.dma_chan_name);
+	ret = of_property_read_string(node, "tx-channel", &qchan->tx_chan_name);
 	if (ret < 0) {
 		dev_err(qos_dev->dev, "missing \"tx-channel\" parameter, err %d\n", ret);
-		qchan->tx_pipe.dma_chan_name = "qos";
+		qchan->tx_chan_name = "qos";
 	}
-	dev_dbg(qos_dev->dev, "tx-channel \"%s\"\n", qchan->tx_pipe.dma_chan_name);
+	dev_dbg(qos_dev->dev, "tx-channel \"%s\"\n", qchan->tx_chan_name);
 
 	ret = of_property_read_u32(node, "tx_queue_depth", &qchan->tx_queue_depth);
 	if (ret < 0) {
@@ -194,8 +175,6 @@ static int init_channel(struct qos_device *qos_dev,
 		qchan->tx_queue_depth = 16;
 	}
 	dev_dbg(qos_dev->dev, "tx_queue_depth %u\n", qchan->tx_queue_depth);
-
-	spin_lock_init(&qchan->tx_pipe.dma_poll_lock);
 
 	return 0;
 }
