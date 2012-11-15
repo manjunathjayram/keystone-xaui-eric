@@ -502,12 +502,13 @@ static void netcp_rx_complete(void *data)
 	struct netcp_priv *netcp = p_info->netcp;
 	struct sk_buff *skb = p_info->skb;
 	struct scatterlist *sg;
+	enum dma_status status;
 	unsigned int frags;
 	struct netcp_hook_list *rx_hook;
 
-	p_info->status = dma_async_is_tx_complete(netcp->rx_channel,
-						  p_info->cookie, NULL, NULL);
-	WARN_ON(p_info->status != DMA_SUCCESS && p_info->status != DMA_ERROR);
+	status = dma_async_is_tx_complete(netcp->rx_channel,
+					  p_info->cookie, NULL, NULL);
+	WARN_ON(status != DMA_SUCCESS && status != DMA_ERROR);
 	WARN_ON(netcp->rx_state != RX_STATE_INTERRUPT	&&
 		netcp->rx_state != RX_STATE_POLL	&&
 		netcp->rx_state != RX_STATE_TEARDOWN);
@@ -528,17 +529,17 @@ static void netcp_rx_complete(void *data)
 	if (unlikely(netcp->rx_state == RX_STATE_TEARDOWN)) {
 		dev_dbg(netcp->dev,
 			"receive: reclaimed packet %p, status %d, state %s\n",
-			p_info, p_info->status, netcp_rx_state_str(netcp));
+			p_info, status, netcp_rx_state_str(netcp));
 		dev_kfree_skb_any(skb);
 		kfree(p_info);
 		netcp->ndev->stats.rx_dropped++;
 		return;
 	}
 
-	if (unlikely(p_info->status != DMA_SUCCESS)) {
+	if (unlikely(status != DMA_SUCCESS)) {
 		dev_warn(netcp->dev,
 			 "receive: reclaimed packet %p, status %d, state %s\n",
-			 p_info, p_info->status, netcp_rx_state_str(netcp));
+			 p_info, status, netcp_rx_state_str(netcp));
 		dev_kfree_skb_any(skb);
 		kfree(p_info);
 		netcp->ndev->stats.rx_errors++;
@@ -590,18 +591,19 @@ static void netcp_tx_complete(void *data)
 	struct netcp_packet *p_info = data;
 	struct netcp_priv *netcp = p_info->netcp;
 	struct sk_buff *skb = p_info->skb;
+	enum dma_status status;
 	unsigned int sg_ents;
 
-	p_info->status = dma_async_is_tx_complete(p_info->tx_pipe->dma_channel,
+	status = dma_async_is_tx_complete(p_info->tx_pipe->dma_channel,
 						  p_info->cookie, NULL, NULL);
-	WARN_ON(p_info->status != DMA_SUCCESS && p_info->status != DMA_ERROR);
+	WARN_ON(status != DMA_SUCCESS && status != DMA_ERROR);
 
 	sg_ents = sg_count(&p_info->sg[2], p_info->sg_ents);
 	dma_unmap_sg(netcp->dev, &p_info->sg[2], sg_ents, DMA_TO_DEVICE);
 
 	netcp_dump_packet(p_info, "txc");
 
-	if (p_info->status != DMA_SUCCESS)
+	if (status != DMA_SUCCESS)
 		netcp->ndev->stats.tx_errors++;
 
 	if (netif_subqueue_stopped(netcp->ndev, skb) &&
@@ -904,6 +906,83 @@ out:
 
 	return ret;
 }
+
+
+int netcp_txpipe_close(struct netcp_tx_pipe *tx_pipe)
+{
+	if (tx_pipe->dma_channel) {
+		dmaengine_pause(tx_pipe->dma_channel);
+		dma_poll(tx_pipe->dma_channel, -1);
+		dma_release_channel(tx_pipe->dma_channel);
+		tx_pipe->dma_channel = NULL;
+
+		dev_dbg(tx_pipe->netcp_priv->dev, "closed tx pipe %s\n",
+			tx_pipe->dma_chan_name);
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(netcp_txpipe_close);
+
+int netcp_txpipe_open(struct netcp_tx_pipe *tx_pipe)
+{
+	struct dma_keystone_info config;
+	dma_cap_mask_t mask;
+	int ret;
+
+	dma_cap_zero(mask);
+	dma_cap_set(DMA_SLAVE, mask);
+
+	tx_pipe->dma_channel = dma_request_channel_by_name(mask, tx_pipe->dma_chan_name);
+	if (IS_ERR_OR_NULL(tx_pipe->dma_channel)) {
+		dev_err(tx_pipe->netcp_priv->dev,
+			"Could not get DMA channel \"%s\"\n",
+			tx_pipe->dma_chan_name);
+		tx_pipe->dma_channel = NULL;
+		return -ENODEV;
+	}
+
+	memset(&config, 0, sizeof(config));
+	config.direction = DMA_MEM_TO_DEV;
+	config.tx_queue_depth = tx_pipe->dma_queue_depth;
+	ret = dma_keystone_config(tx_pipe->dma_channel, &config);
+	if (ret) {
+		dev_err(tx_pipe->netcp_priv->dev,
+			"Could not configure DMA channel \"%s\": %d\n",
+			tx_pipe->dma_chan_name, ret);
+		dma_release_channel(tx_pipe->dma_channel);
+		tx_pipe->dma_channel = NULL;
+		return ret;
+	}
+
+	dmaengine_pause(tx_pipe->dma_channel);
+
+	tx_pipe->dma_flow = 0;
+	tx_pipe->dma_queue = dma_get_tx_queue(tx_pipe->dma_channel);
+	atomic_set(&tx_pipe->dma_poll_count, tx_pipe->dma_poll_threshold);
+
+	dev_dbg(tx_pipe->netcp_priv->dev, "opened tx pipe %s\n",
+		tx_pipe->dma_chan_name);
+	return 0;
+}
+EXPORT_SYMBOL(netcp_txpipe_open);
+
+int netcp_txpipe_init(struct netcp_tx_pipe *tx_pipe,
+		struct netcp_priv *netcp_priv,
+		const char *chan_name,
+		int queue_depth)
+{
+	tx_pipe->netcp_priv = netcp_priv;
+	tx_pipe->dma_chan_name = chan_name;
+	tx_pipe->dma_queue_depth = queue_depth;
+	tx_pipe->dma_poll_threshold = queue_depth / 2;
+
+	dev_dbg(tx_pipe->netcp_priv->dev, "initialized tx pipe %s, %d\n",
+		tx_pipe->dma_chan_name, tx_pipe->dma_poll_threshold);
+	return 0;
+}
+EXPORT_SYMBOL(netcp_txpipe_init);
+
 
 static void netcp_uc_list_set(struct net_device *ndev, int vid)
 {
