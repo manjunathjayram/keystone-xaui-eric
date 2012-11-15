@@ -586,35 +586,6 @@ static void netcp_rx_complete(void *data)
 	netif_receive_skb(skb);
 }
 
-static void netcp_tx_complete(void *data)
-{
-	struct netcp_packet *p_info = data;
-	struct netcp_priv *netcp = p_info->netcp;
-	struct sk_buff *skb = p_info->skb;
-	enum dma_status status;
-	unsigned int sg_ents;
-
-	status = dma_async_is_tx_complete(p_info->tx_pipe->dma_channel,
-						  p_info->cookie, NULL, NULL);
-	WARN_ON(status != DMA_SUCCESS && status != DMA_ERROR);
-
-	sg_ents = sg_count(&p_info->sg[2], p_info->sg_ents);
-	dma_unmap_sg(netcp->dev, &p_info->sg[2], sg_ents, DMA_TO_DEVICE);
-
-	netcp_dump_packet(p_info, "txc");
-
-	if (status != DMA_SUCCESS)
-		netcp->ndev->stats.tx_errors++;
-
-	if (netif_subqueue_stopped(netcp->ndev, skb) &&
-	    netcp_is_alive(netcp))
-		netif_wake_subqueue(netcp->ndev, skb_get_queue_mapping(skb));
-
-	atomic_inc(&p_info->tx_pipe->dma_poll_count);
-	dev_kfree_skb_any(skb);
-	kfree(p_info);
-}
-
 /* Release a free receive buffer */
 static void netcp_rxpool_free(void *arg, unsigned q_num, unsigned bufsize,
 		struct dma_async_tx_descriptor *desc)
@@ -781,6 +752,35 @@ static int netcp_poll(struct napi_struct *napi, int budget)
 	dma_rxfree_refill(netcp->rx_channel);
 
 	return packets;
+}
+
+static void netcp_tx_complete(void *data)
+{
+	struct netcp_packet *p_info = data;
+	struct netcp_priv *netcp = p_info->netcp;
+	struct sk_buff *skb = p_info->skb;
+	enum dma_status status;
+	unsigned int sg_ents;
+
+	status = dma_async_is_tx_complete(p_info->tx_pipe->dma_channel,
+						  p_info->cookie, NULL, NULL);
+	WARN_ON(status != DMA_SUCCESS && status != DMA_ERROR);
+
+	sg_ents = sg_count(&p_info->sg[2], p_info->sg_ents);
+	dma_unmap_sg(netcp->dev, &p_info->sg[2], sg_ents, DMA_TO_DEVICE);
+
+	netcp_dump_packet(p_info, "txc");
+
+	if (status != DMA_SUCCESS)
+		netcp->ndev->stats.tx_errors++;
+
+	if (netif_subqueue_stopped(netcp->ndev, skb) &&
+	    netcp_is_alive(netcp))
+		netif_wake_subqueue(netcp->ndev, skb_get_queue_mapping(skb));
+
+	atomic_inc(&p_info->tx_pipe->dma_poll_count);
+	dev_kfree_skb_any(skb);
+	kfree(p_info);
 }
 
 /* Push an outcoming packet */
