@@ -2583,12 +2583,15 @@ static int khwq_qos_init_range(struct khwq_range_info *range)
 	pdsp = info->pdsp;
 	kdev = info->kdev;
 
+	spin_lock_bh(&info->lock);
+
 	magic = __raw_readl(pdsp->command + QOS_MAGIC_OFFSET);
 	version = __raw_readl(pdsp->command + QOS_VERSION_OFFSET);
 
 	if ((magic >> 16) != QOS_MAGIC_DROPSCHED) {
 		dev_err(kdev->dev, "invalid qos magic word %x\n", magic);
-		return -EINVAL;
+		error = -EINVAL;
+		goto fail;
 	}
 
 	dev_info(kdev->dev, "qos version 0x%x, magic %s\n", version,
@@ -2612,7 +2615,7 @@ static int khwq_qos_init_range(struct khwq_range_info *range)
 	error = khwq_qos_write_cmd(info, command);
 	if (error) {
 		dev_err(kdev->dev, "failed to set drop sched base\n");
-		return error;
+		goto fail;
 	}
 
 	/* command for qos scheduler base */
@@ -2621,7 +2624,7 @@ static int khwq_qos_init_range(struct khwq_range_info *range)
 	error = khwq_qos_write_cmd(info, command);
 	if (error) {
 		dev_err(kdev->dev, "failed to set qos sched base\n");
-		return error;
+		goto fail;
 	}
 
 	/* calculate the timer config from the pdsp tick */
@@ -2631,22 +2634,28 @@ static int khwq_qos_init_range(struct khwq_range_info *range)
 	error = khwq_qos_write_cmd(info, command);
 	if (error) {
 		dev_err(kdev->dev, "failed to set timer\n");
-		return error;
+		goto fail;
 	}
 
 	error = khwq_qos_program_drop_sched(info);
 	if (error) {
 		dev_err(kdev->dev, "failed to initialize drop scheduler\n");
-		return error;
+		goto fail;
 	}
+
+	spin_unlock_bh(&info->lock);
 
 	error = khwq_program_drop_policies(info);
 	if (error) {
 		dev_err(kdev->dev, "failed to initialize drop policies\n");
-		return error;
+		goto fail;
 	}
 
 	return 0;
+
+fail:
+	spin_unlock_bh(&info->lock);
+	return error;
 }
 
 struct khwq_range_ops khwq_qos_range_ops = {
