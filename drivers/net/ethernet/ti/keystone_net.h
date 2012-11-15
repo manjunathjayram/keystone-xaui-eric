@@ -19,6 +19,7 @@
 #include <linux/if_ether.h>
 #include <linux/netdevice.h>
 #include <linux/keystone-dma.h>
+#include <linux/interrupt.h>
 
 /* Maximum Ethernet frame size supported by Keystone switch */
 #define NETCP_MAX_FRAME_SIZE	9504
@@ -44,6 +45,13 @@ enum netcp_rx_state {
 	RX_STATE_INVALID,
 };
 
+enum netcp_tx_state {
+	TX_STATE_INVALID,
+	TX_STATE_INTERRUPT,
+	TX_STATE_SCHEDULED,
+	TX_STATE_POLL,
+};
+
 struct netcp_tx_pipe {
 	struct netcp_priv		*netcp_priv;
 	struct dma_chan			*dma_channel;
@@ -52,8 +60,11 @@ struct netcp_tx_pipe {
 	u16				 dma_queue;
 	unsigned int			 dma_queue_depth;
 	unsigned int			 dma_poll_threshold;
+	unsigned int			 dma_pause_threshold;
+	unsigned int			 dma_resume_threshold;
 	atomic_t			 dma_poll_count;
-	spinlock_t			 dma_poll_lock;
+	struct tasklet_struct		 dma_poll_tasklet;
+	enum netcp_tx_state		 dma_poll_state;
 };
 
 struct netcp_priv {
@@ -100,7 +111,6 @@ struct netcp_packet {
 	u32				 psdata[NETCP_PSDATA_LEN];
 	unsigned int			 psdata_len;
 	struct netcp_priv		*netcp;
-	enum dma_status			 status;
 	dma_cookie_t			 cookie;
 	struct netcp_tx_pipe		*tx_pipe;
 };
