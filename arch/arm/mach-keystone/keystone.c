@@ -157,7 +157,7 @@ static void __init keystone_init_meminfo(void)
 }
 
 DT_MACHINE_START(KEYSTONE, "Keystone")
-	smp_ops(keystone_smp_ops)
+	.smp		= smp_ops(keystone_smp_ops),
 	.map_io		= keystone_map_io,
 	.init_irq	= keystone_init_irq,
 	.timer		= &keystone_timer,
