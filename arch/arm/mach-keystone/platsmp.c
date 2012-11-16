@@ -20,8 +20,8 @@
 #include <linux/smp.h>
 #include <linux/io.h>
 
+#include <asm/smp.h>
 #include <asm/smp_plat.h>
-#include <asm/smp_ops.h>
 #include <asm/hardware/gic.h>
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
@@ -52,7 +52,7 @@ static void __init keystone_smp_prepare_cpus(unsigned int max_cpus)
 	/* nothing for now */
 }
 
-static void __cpuinit keystone_secondary_initmem(void)
+static void __cpuinit keystone_smp_secondary_initmem(void)
 {
 #ifdef CONFIG_ARM_LPAE
 	pgd_t *pgd0 = pgd_offset_k(0);
@@ -61,14 +61,14 @@ static void __cpuinit keystone_secondary_initmem(void)
 #endif
 }
 
-static void __cpuinit keystone_secondary_init(unsigned int cpu)
+static void __cpuinit keystone_smp_secondary_init(unsigned int cpu)
 {
 	gic_secondary_init(0);
-	keystone_secondary_initmem();
+	keystone_smp_secondary_initmem();
 }
 
 static int __cpuinit
-keystone_boot_secondary(unsigned int cpu, struct task_struct *idle)
+keystone_smp_boot_secondary(unsigned int cpu, struct task_struct *idle)
 {
 	unsigned long *ptr = (unsigned long *)(PAGE_OFFSET + 0x1f0);
 
@@ -78,7 +78,30 @@ keystone_boot_secondary(unsigned int cpu, struct task_struct *idle)
 	return 0;
 }
 
-struct smp_ops keystone_smp_ops __initdata = {
-	smp_init_ops(keystone)
-	smp_secondary_ops(keystone)
+#ifdef CONFIG_HOTPLUG_CPU
+static int keystone_cpu_kill(unsigned int cpu)
+{
+	BUG();
+}
+
+static int keystone_cpu_die(unsigned int cpu)
+{
+	BUG();
+}
+static int keystone_cpu_disable(unsigned int cpu)
+{
+	BUG();
+}
+#endif
+
+struct smp_operations keystone_smp_ops __initdata = {
+	.smp_init_cpus		= keystone_smp_init_cpus,
+	.smp_prepare_cpus	= keystone_smp_prepare_cpus,
+	.smp_secondary_init	= keystone_smp_secondary_init,
+	.smp_boot_secondary	= keystone_smp_boot_secondary,
+#ifdef CONFIG_HOTPLUG_CPU
+	.cpu_kill		= keystone_cpu_kill,
+	.cpu_die		= keystone_cpu_die,
+	.cpu_disable		= keystone_cpu_disable,
+#endif
 };
