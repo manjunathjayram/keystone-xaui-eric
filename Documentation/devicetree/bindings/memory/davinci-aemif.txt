@@ -1,0 +1,103 @@
+* Texas Instruments Davinci AEMIF bus interface
+
+This file provides information for the davinci-emif device and
+async bus bindings.
+
+Required properties:=
+- compatible: "ti,davinci-aemif";
+- #address-cells : Should be either two or three.  The first cell is the
+                   chipselect number, and the remaining cells are the
+                   offset into the chipselect.
+- #size-cells : Either one or two, depending on how large each chipselect
+                can be.
+- reg : contains offset/length value for AEMIF control registers space
+- ranges : Each range corresponds to a single chipselect, and cover
+           the entire access window as configured.
+
+Child device nodes describe the devices connected to IFC such as NOR (e.g.
+cfi-flash) and NAND (ti,davinci-nand, see Documentation/devicetree/bindings/
+mtd/davinci-nand.txt). There might be board specific devices like FPGAs.
+
+In addition, optional child sub nodes contains bindings for the async bus
+interface for a given chip select.
+
+Optional cs node properties:-
+- compatible: "ti,davinci-cs"
+
+  All of the params below in nanoseconds and are optional
+
+- ti,davinci-cs-asize - asynchronous data bus width (0 - 8bit, 1 - 16 bit)
+- ti,davinci-cs-ta - Minimum turn around time
+- ti,davinci-cs-rhold - read hold width
+- ti,davinci-cs-rstobe - read strobe width
+- ti,davinci-cs-rsetup - read setup width
+- ti,davinci-cs-whold - write hold width
+- ti,davinci-cs-wstrobe - write strobe width
+- ti,davinci-cs-wsetup - write setup width
+- ti,davinci-cs-ss - enable/disable select strobe (0 - disable, 1 - enable)
+- ti,davinci-cs-ew - enable/disable extended wait cycles (0 - disable, 1 - enable)
+
+if any of the above parameters are absent, hardware register default or that
+set by a boot loader are used.
+
+Example for aemif, davinci nand and nor flash chip select shown below.
+
+aemif@60000000 {
+	compatible = "ti,davinci-aemif";
+	#address-cells = <2>;
+	#size-cells = <1>;
+	reg = <0x68000000 0x80000>;
+	ranges = <2 0 0x60000000 0x02000000
+		  3 0 0x62000000 0x02000000
+		  4 0 0x64000000 0x02000000
+		  5 0 0x66000000 0x02000000
+		  6 0 0x68000000 0x02000000>;
+
+	nand_cs:cs2@60000000 {
+		compatible = "ti,davinci-cs";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		/* all timings in nanoseconds */
+		ti,davinci-cs-ta = <0>;
+		ti,davinci-cs-rhold = <7>;
+		ti,davinci-cs-rstrobe = <42>;
+		ti,davinci-cs-rsetup = <14>;
+		ti,davinci-cs-whold = <7>;
+		ti,davinci-cs-wstrobe = <42>;
+		ti,davinci-cs-wsetup = <14>;
+	};
+
+	nor_cs:cs3@62000000 {
+		compatible = "ti,davinci-cs";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		/* all timings in nanoseconds */
+		ti,davinci-cs-ta = <0>;
+		ti,davinci-cs-rhold = <7>;
+		ti,davinci-cs-rstrobe = <42>;
+		ti,davinci-cs-rsetup = <14>;
+		ti,davinci-cs-whold = <7>;
+		ti,davinci-cs-wstrobe = <42>;
+		ti,davinci-cs-wsetup = <14>;
+		ti,davinci-cs-asize = <1>;
+	};
+
+	nand@3,0 {
+		compatible = "ti,davinci-nand";
+		reg = <3 0x0 0x807ff
+			6 0x0 0x8000>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		.. See Documentation/devicetree/bindings/mtd/davinci-nand.txt
+	};
+
+	flash@2,0 {
+		compatible = "cfi-flash";
+		reg = <2 0x0 0x400000>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+		bank-width = <2>;
+		device-width = <2>;
+	};
+};

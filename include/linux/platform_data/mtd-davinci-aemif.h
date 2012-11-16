@@ -17,20 +17,32 @@
 #define ACR_ASIZE_MASK		0x3
 #define ACR_EW_MASK		BIT(30)
 #define ACR_SS_MASK		BIT(31)
+#define ASIZE_16BIT		1
 
-/* All timings in nanoseconds */
-struct davinci_aemif_timing {
+struct davinci_aemif_cs_data {
+	u8	cs;
+	u16	wstrobe;
+	u16	rstrobe;
 	u8	wsetup;
-	u8	wstrobe;
 	u8	whold;
-
 	u8	rsetup;
-	u8	rstrobe;
 	u8	rhold;
-
 	u8	ta;
+	u8	enable_ss;
+	u8	enable_ew;
+	u8	asize;
 };
 
-int davinci_aemif_setup_timing(struct davinci_aemif_timing *t,
-					void __iomem *base, unsigned cs);
+struct davinci_aemif_pdata {
+	u8	num_cs;
+	struct davinci_aemif_cs_data cs_data[4];
+};
+
+/* API to Get current Asynchrnous emif bus parameters */
+struct davinci_aemif_cs_data *davinci_aemif_get_abus_params(unsigned int cs);
+
+/* API to Set current Asynchrnous emif bus parameters */
+int davinci_aemif_set_abus_params(unsigned int cs,
+			struct davinci_aemif_cs_data *data);
+
 #endif
