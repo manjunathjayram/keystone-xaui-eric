@@ -40,4 +40,14 @@ config TEGRA30_MC
 	  analysis, especially for IOMMU/SMMU(System Memory Management
 	  Unit) module.
 
+config TI_DAVINCI_AEMIF
+	bool "Texas Instruments DaVinci AEMIF driver"
+	help
+	  This driver is for the AEMIF module available in Texas Instruments
+	  SoCs. AEMIF stands for Asynchronous External Memory Interface and
+	  is intended to provide a glue-less interface to a variety of
+	  asynchronuous memory devices like ASRAM, NOR and NAND memory. A total
+	  of 256M bytes of any of these memories can be accessed at a given
+	  time via four chip selects with 64M byte access per chip select.
+
 endif
