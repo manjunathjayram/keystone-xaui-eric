@@ -17,7 +17,7 @@
 #ifndef __KEYSTONE_H__
 #define __KEYSTONE_H__
 
-extern struct smp_ops keystone_smp_ops;
+extern struct smp_operations keystone_smp_ops;
 extern void secondary_startup(void);
 
 #endif /* __KEYSTONE_H__ */
