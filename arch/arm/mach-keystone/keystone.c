@@ -18,6 +18,7 @@
 #include <linux/init.h>
 #include <linux/of_irq.h>
 #include <linux/of_platform.h>
+#include <linux/of_address.h>
 #include <linux/dma-mapping.h>
 #include <linux/platform_data/davinci-clock.h>
 
@@ -156,6 +157,34 @@ static void __init keystone_init_meminfo(void)
 					 KEYSTONE_LOW_PHYS_START);
 }
 
+void keystone_restart(char mode, const char *cmd)
+{
+	struct device_node *node;
+	void __iomem *rstctrl;
+	u32 val;
+
+	node = of_find_compatible_node(NULL, NULL, "ti,pllctrl-reset");
+	if (WARN_ON(!node)) {
+		pr_warn("ti, pllctrl-reset node undefined\n");
+		return;
+	}
+
+	rstctrl = of_iomap(node, 0);
+	if (WARN_ON(!rstctrl)) {
+		pr_warn("ti, pllctrl-reset iomap error\n");
+		return;
+	}
+
+	val = __raw_readl(rstctrl);
+	val &= 0xffff0000;
+	val |= 0x5a69;
+	__raw_writel(val, rstctrl);
+
+	val = __raw_readl(rstctrl);
+	val &= 0xfffe0000;
+	__raw_writel(val, rstctrl);
+}
+
 DT_MACHINE_START(KEYSTONE, "Keystone")
 	.smp		= smp_ops(keystone_smp_ops),
 	.map_io		= keystone_map_io,
@@ -168,4 +197,5 @@ DT_MACHINE_START(KEYSTONE, "Keystone")
 #ifdef CONFIG_ZONE_DMA
 	.dma_zone_size	= SZ_2G,
 #endif
+	.restart	= keystone_restart,
 MACHINE_END
