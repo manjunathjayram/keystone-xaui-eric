@@ -51,6 +51,7 @@
 		clocks {
 			#address-cells = <1>;
 			#size-cells = <1>;
+			ranges;
 
 			refclkmain: refclkmain {
 				#clock-cells = <0>;
@@ -943,6 +944,42 @@
 					reg = <0x80000 0x380000>;
 				};
 			};
+		};
+		i2c0@2530000 {
+			compatible = "ti,davinci-i2c";
+			reg = <0x02530000 0x400>;
+			clock-frequency = <100000>;
+			clocks		= <&clki2c>;
+			interrupts	= <0 283 0xf01>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			dtt@50 {
+				compatible = "at,24c1024";
+				reg = <0x50>;
+			};
+		};
+
+		i2c1@2530400 {
+			compatible = "ti,davinci-i2c";
+			reg = <0x02530400 0x400>;
+			clock-frequency = <100000>;
+			clocks		= <&clki2c>;
+			interrupts	= <0 286 0xf01>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+		};
+
+		i2c2@2530800 {
+			compatible = "ti,davinci-i2c";
+			reg = <0x02530800 0x400>;
+			clock-frequency = <100000>;
+			clocks		= <&clki2c>;
+			interrupts	= <0 289 0xf01>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
 		};
 	};
 };
