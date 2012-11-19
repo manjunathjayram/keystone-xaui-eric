@@ -48,6 +48,11 @@
 		interrupt-parent = <&gic>;
 		ranges = <0x0 0x0 0x0 0x80000000>;
 
+		rstctrl:rstctrl@23100e8 {
+			compatible = "ti,pllctrl-reset";
+			reg = <0x023100e8 4>;
+		};
+
 		clocks {
 			#address-cells = <1>;
 			#size-cells = <1>;
