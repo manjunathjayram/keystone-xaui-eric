@@ -177,6 +177,12 @@ struct khwq_qos_stats_class {
 	struct kobject			 kobj;
 };
 
+struct khwq_qos_input_queue {
+	bool				 valid;
+	u32				 queue;
+	int				 drop_queue_idx;
+};
+
 struct khwq_qos_tree_node {
 	struct khwq_qos_tree_node	*parent;
 	struct khwq_qos_info		*info;
@@ -191,6 +197,7 @@ struct khwq_qos_tree_node {
 	int				 burst_size;
 	int				 num_input_queues;
 	u32				 input_queues[QOS_MAX_INPUTS];
+	struct khwq_qos_input_queue	 input_queue[QOS_MAX_INPUTS];
 	struct khwq_qos_drop_policy	*drop_policy;
 	struct khwq_qos_stats_class	*stats_class;
 
@@ -370,6 +377,11 @@ DEFINE_FIELD_U32(QOS_SCHED_PORT_CFG, sched_wrr_q_count,    0x24, 16,  8)
 
 DEFINE_FIELD_U32_ARRAY(QOS_SCHED_PORT_CFG, sched_wrr_credit,  0x28, 0x8)
 DEFINE_FIELD_U32_ARRAY(QOS_SCHED_PORT_CFG, sched_cong_thresh, 0x2c, 0x8)
+
+int khwq_qos_start(struct khwq_qos_info *info);
+int khwq_qos_stop(struct khwq_qos_info *info);
+int khwq_qos_tree_start(struct khwq_qos_info *info);
+int khwq_qos_tree_stop(struct khwq_qos_info *info);
 
 #endif
 
