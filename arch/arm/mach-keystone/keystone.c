@@ -31,6 +31,11 @@
 
 #include "keystone.h"
 
+#define RSTMUX8_OMODE_DEVICE_RESET		5
+#define RSTMUX8_OMODE_DEVICE_RESET_SHIFT	1
+#define RSTMUX8_OMODE_DEVICE_RESET_MASK		(BIT(1) | BIT(2) | BIT(3))
+#define RSTMUX8_LOCK_MASK			BIT(0)
+
 static struct map_desc io_desc[] = {
 	{
 		.virtual        = 0xfe800000UL,
@@ -112,6 +117,40 @@ static void __init keystone_init(void)
 	of_platform_populate(NULL, tci6614_dt_match_table, NULL, NULL);
 }
 
+static int __init keystone_wd_rstmux_init(void)
+{
+	struct device_node *node;
+	void __iomem *rstmux8;
+	u32 val;
+
+	/*
+	 * For WD reset to function, rstmux8 should be configured
+	 * so that this will trigger a device reset.
+	 */
+	node = of_find_compatible_node(NULL, NULL, "ti,keystone-reset");
+	if (!node) {
+		pr_warn("ti, keystone-reset node undefined\n");
+		return -EINVAL;
+	}
+
+	/* rstmux8 address is configured in the rstctrl node at index 1 */
+	rstmux8 = of_iomap(node, 1);
+	if (WARN_ON(!rstmux8)) {
+		pr_warn("rstmux8 iomap error\n");
+		return -ENODEV;
+	}
+
+	val = __raw_readl(rstmux8) & ~RSTMUX8_OMODE_DEVICE_RESET_MASK;
+	if (!(val & RSTMUX8_LOCK_MASK)) {
+		val |= (RSTMUX8_OMODE_DEVICE_RESET <<
+				RSTMUX8_OMODE_DEVICE_RESET_SHIFT);
+		__raw_writel(val, rstmux8);
+	}
+	iounmap(rstmux8);
+	return 0;
+}
+postcore_initcall(keystone_wd_rstmux_init);
+
 static const char *keystone_match[] __initconst = {
 	"ti,keystone-evm",
 	NULL,
@@ -163,9 +202,9 @@ void keystone_restart(char mode, const char *cmd)
 	void __iomem *rstctrl;
 	u32 val;
 
-	node = of_find_compatible_node(NULL, NULL, "ti,pllctrl-reset");
+	node = of_find_compatible_node(NULL, NULL, "ti,keystone-reset");
 	if (WARN_ON(!node)) {
-		pr_warn("ti, pllctrl-reset node undefined\n");
+		pr_warn("ti, keystone-reset node undefined\n");
 		return;
 	}
 
