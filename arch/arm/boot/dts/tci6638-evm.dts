@@ -50,8 +50,9 @@
 		ranges = <0x0 0x0 0x0 0x80000000>;
 
 		rstctrl:rstctrl@23100e8 {
-			compatible = "ti,pllctrl-reset";
-			reg = <0x023100e8 4>;
+			compatible = "ti,keystone-reset";
+			reg = <0x023100e8 4	/* pll reset control reg */
+				0x02620328 4>;	/* rstmux8 register */
 		};
 
 		clocks {
