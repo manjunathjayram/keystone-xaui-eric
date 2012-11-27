@@ -14,7 +14,7 @@ struct virtqueue;
 struct virtqueue_ops {
 	int	(*add_buf)(struct virtqueue *vq, struct scatterlist sg[],
 			   unsigned int out_num, unsigned int in_num,
-			   void *data, gfp_t gfp);
+			   void *data, unsigned flags, gfp_t gfp);
 	bool	(*kick_prepare)(struct virtqueue *vq);
 	void	(*notify)(struct virtqueue *vq);
 	void	*(*get_buf)(struct virtqueue *vq, unsigned int *len);
@@ -51,6 +51,37 @@ struct virtqueue {
 };
 
 /**
+ * virtqueue_add_buf_flags - expose buffer to other end
+ * @vq: the struct virtqueue we're talking about.
+ * @sg: the description of the buffer(s).
+ * @out_num: the number of sg readable by other side
+ * @in_num: the number of sg which are writable (after readable ones)
+ * @data: the token identifying the buffer.
+ * @flags: optional flags to pass in to virtqueue
+ * @gfp: how to do memory allocations (if necessary).
+ *
+ * Caller must ensure we don't call this with other virtqueue operations
+ * at the same time (except where noted).
+ *
+ * Returns remaining capacity of queue or a negative error
+ * (ie. ENOSPC).  Note that it only really makes sense to treat all
+ * positive return values as "available": indirect buffers mean that
+ * we can put an entire sg[] array inside a single queue entry.
+ */
+static inline int virtqueue_add_buf_flags(struct virtqueue *vq,
+					  struct scatterlist sg[],
+					  unsigned int out_num,
+					  unsigned int in_num,
+					  void *data, unsigned flags,
+					  gfp_t gfp)
+{
+	if (vq && vq->ops && vq->ops->add_buf)
+		return vq->ops->add_buf(vq, sg, out_num, in_num, data, flags,
+					gfp);
+	return -ENOTSUPP;
+}
+
+/**
  * virtqueue_add_buf - expose buffer to other end
  * @vq: the struct virtqueue we're talking about.
  * @sg: the description of the buffer(s).
@@ -72,9 +103,7 @@ static inline int virtqueue_add_buf(struct virtqueue *vq,
 				    unsigned int out_num, unsigned int in_num,
 				    void *data, gfp_t gfp)
 {
-	if (vq && vq->ops && vq->ops->add_buf)
-		return vq->ops->add_buf(vq, sg, out_num, in_num, data, gfp);
-	return -ENOTSUPP;
+	return virtqueue_add_buf_flags(vq, sg, out_num, in_num, data, 0, gfp);
 }
 
 /**
