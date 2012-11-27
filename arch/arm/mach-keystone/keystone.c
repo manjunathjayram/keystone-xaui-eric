@@ -159,6 +159,11 @@ static const char *keystone_match[] __initconst = {
 
 unsigned long __arch_dma_pfn_offset;
 
+#ifdef CONFIG_ZONE_DMA
+extern phys_addr_t arm_dma_limit;
+extern unsigned long arm_dma_zone_size;
+#endif
+
 static void __init keystone_init_meminfo(void)
 {
 	bool lpae = IS_ENABLED(CONFIG_ARM_LPAE);
@@ -195,6 +200,10 @@ static void __init keystone_init_meminfo(void)
 
 	__arch_dma_pfn_offset = PFN_DOWN(KEYSTONE_HIGH_PHYS_START -
 					 KEYSTONE_LOW_PHYS_START);
+#ifdef CONFIG_ZONE_DMA
+	arm_dma_limit = __pv_phys_offset + arm_dma_zone_size - 1;
+#endif
+
 }
 
 void keystone_restart(char mode, const char *cmd)
