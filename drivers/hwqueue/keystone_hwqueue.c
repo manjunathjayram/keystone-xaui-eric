@@ -529,7 +529,14 @@ static int khwq_setup_regions(struct khwq_device *kdev,
 			devm_kfree(dev, region);
 			continue;
 		}
-		of_property_read_u32(child, "link-index", &region->link_index);
+		ret = of_property_read_u32(child, "link-index",
+					   &region->link_index);
+		if (ret) {
+			dev_err(dev, "link index not found for %s\n",
+				region->name);
+			devm_kfree(dev, region);
+			continue;
+		}
 
 		list_add_tail(&region->list, &kdev->regions);
 	}
