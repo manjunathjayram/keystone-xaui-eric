@@ -147,6 +147,12 @@ struct khwq_qos_info {
 	struct list_head		 drop_policies;
 	struct list_head		 stats_classes;
 	struct khwq_qos_drop_policy	*default_drop_policy;
+	
+	struct dentry			*root_dir;
+	struct dentry			*config_profiles;
+	struct dentry			*out_profiles;
+	struct dentry			*queue_configs;
+	struct dentry			*port_configs;
 
 	int	 sched_port_queue_base,
 		 drop_sched_queue_base,
@@ -361,7 +367,7 @@ DEFINE_FIELD_U32(QOS_DROP_OUT_PROF, drop_out_avg_depth,    0x08,  0, 32)
 
 DEFINE_FIELD_U32(QOS_DROP_QUEUE_CFG, drop_q_out_prof_idx,  0x00,  0,  8)
 DEFINE_FIELD_U32(QOS_DROP_QUEUE_CFG, drop_q_stat_blk_idx,  0x00,  8,  8)
-DEFINE_FIELD_U32(QOS_DROP_QUEUE_CFG, drop_q_stat_irq,      0x00, 16,  8)
+DEFINE_FIELD_U32(QOS_DROP_QUEUE_CFG, drop_q_stat_irq_pair_idx, 0x00, 16,  8)
 DEFINE_FIELD_U32(QOS_DROP_QUEUE_CFG, drop_q_valid,         0x00, 24,  8)
 
 DEFINE_FIELD_U32(QOS_SCHED_PORT_CFG, sched_unit_flags,     0x00,  0,  8)
