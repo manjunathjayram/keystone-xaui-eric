@@ -101,7 +101,7 @@ int hwqueue_device_register(struct hwqueue_device *hdev)
 	int id, size, ret = -EEXIST;
 	struct hwqueue_device *b;
 
-	if (!hdev->ops || !hdev->dev || !hdev->ops->push || !hdev->ops->pop)
+	if (!hdev->ops || !hdev->dev)
 		return -EINVAL;
 
 	mutex_lock(&hwqueue_devices_lock);
@@ -205,15 +205,15 @@ static struct hwqueue *__hwqueue_open(struct hwqueue_instance *inst,
 	}
 
 	if (hwqueue_is_readable(qh)) {
-		qh->get_count	= hdev->ops->get_count;
-		qh->pop		= hdev->ops->pop;
-		qh->unmap	= hdev->ops->unmap;
+		qh->get_count	= inst->ops->get_count;
+		qh->pop		= inst->ops->pop;
+		qh->unmap	= inst->ops->unmap;
 	}
 
 	if (hwqueue_is_writable(qh)) {
-		qh->flush	= hdev->ops->flush;
-		qh->push	= hdev->ops->push;
-		qh->map		= hdev->ops->map;
+		qh->flush	= inst->ops->flush;
+		qh->push	= inst->ops->push;
+		qh->map		= inst->ops->map;
 	}
 
 	list_add_tail_rcu(&qh->list, &inst->handles);
@@ -577,10 +577,10 @@ int hwqueue_set_notifier(struct hwqueue *qh, hwqueue_notify_fn fn,
 }
 EXPORT_SYMBOL(hwqueue_set_notifier);
 
-dma_addr_t __hwqueue_pop_slow(struct hwqueue_instance *inst, unsigned *size,
-			 struct timeval *timeout, unsigned flags)
+dma_addr_t __hwqueue_pop_slow(struct hwqueue *qh, unsigned *size,
+			      struct timeval *timeout, unsigned flags)
 {
-	struct hwqueue_device *hdev = inst->hdev;
+	struct hwqueue_instance *inst = qh->inst;
 	dma_addr_t dma_addr = 0;
 	int ret;
 
@@ -588,7 +588,7 @@ dma_addr_t __hwqueue_pop_slow(struct hwqueue_instance *inst, unsigned *size,
 		unsigned long expires = timeval_to_jiffies(timeout);
 
 		ret = wait_event_interruptible_timeout(inst->wait,
-				(dma_addr = hdev->ops->pop(inst, size, flags)),
+				(dma_addr = qh->pop(inst, size, flags)),
 				expires);
 		if (ret < 0)
 			return 0;
@@ -597,7 +597,7 @@ dma_addr_t __hwqueue_pop_slow(struct hwqueue_instance *inst, unsigned *size,
 		jiffies_to_timeval(ret, timeout);
 	} else {
 		ret = wait_event_interruptible(inst->wait,
-				(dma_addr = hdev->ops->pop(inst, size, flags)));
+				(dma_addr = qh->pop(inst, size, flags)));
 		if (ret < 0)
 			return 0;
 		if (WARN_ON(!ret && !dma_addr))
