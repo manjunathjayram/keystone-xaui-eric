@@ -34,6 +34,7 @@ struct virtqueue_ops {
  * @priv: a pointer for the virtqueue implementation to use.
  * @index: the zero-based ordinal number for this queue.
  * @num_free: number of elements we expect to be able to fit.
+ * @driver_data: a pointer for the virtqueue user to use.
  *
  * A note on @num_free: with indirect buffers, each buffer needs one
  * element in the queue, otherwise a buffer will need one element per
@@ -47,6 +48,7 @@ struct virtqueue {
 	unsigned int index;
 	unsigned int num_free;
 	void *priv;
+	void *driver_data;
 	struct virtqueue_ops *ops;
 };
 
@@ -263,6 +265,16 @@ static inline unsigned int virtqueue_get_queue_index(struct virtqueue *vq)
 	return vq->index;
 }
 
+static inline void *virtqueue_get_drvdata(const struct virtqueue *vq)
+{
+	return vq->driver_data;
+}
+
+static inline void virtqueue_set_drvdata(struct virtqueue *vq, void *data)
+{
+	vq->driver_data = data;
+}
+
 /**
  * virtio_device - representation of a device using virtio
  * @index: unique position on the virtio bus
@@ -330,5 +342,15 @@ void unregister_virtio_driver(struct virtio_driver *drv);
 	module_driver(__virtio_driver,		\
 		      register_virtio_driver,	\
 		      unregister_virtio_driver)
+
+static inline void *virtio_get_drvdata(const struct virtio_device *vdev)
+{
+	return dev_get_drvdata(&vdev->dev);
+}
+
+static inline void virtio_set_drvdata(struct virtio_device *vdev, void *data)
+{
+	dev_set_drvdata(&vdev->dev, data);
+}
 
 #endif /* _LINUX_VIRTIO_H */
