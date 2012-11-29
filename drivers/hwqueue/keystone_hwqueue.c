@@ -371,6 +371,9 @@ static struct hwqueue_device_ops khdev_ops = {
 	.open		= khwq_open,
 	.set_notify	= khwq_set_notify,
 	.close		= khwq_close,
+};
+
+static struct hwqueue_inst_ops khdev_inst_ops = {
 	.push		= khwq_push,
 	.pop		= khwq_pop,
 	.get_count	= khwq_get_count,
@@ -1086,6 +1089,8 @@ static int khwq_init_queue(struct khwq_device *kdev,
 	kq->range = range;
 	kq->irq_num = -1;
 
+	inst->ops = &range->inst_ops;
+
 	scnprintf(kq->irq_name, sizeof(kq->irq_name),
 		  "hwqueue-%d", range->queue_base + id);
 
@@ -1102,6 +1107,7 @@ static int khwq_init_queues(struct khwq_device *kdev)
 	int id, ret;
 
 	for_each_queue_range(kdev, range) {
+		range->inst_ops = khdev_inst_ops;
 		if (range->ops && range->ops->init_range)
 			range->ops->init_range(range);
 		for (id = range->queue_base;
