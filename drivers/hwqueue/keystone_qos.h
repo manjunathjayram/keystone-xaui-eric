@@ -249,7 +249,7 @@ struct khwq_query_stats_regs {
 };
 
 #define QOS_SHADOW_OFFSET	0x40
-#define QOS_PUSH_STATS_OFFSET	0x2e0
+#define QOS_PUSH_PROXY_OFFSET	0x2e0
 #define QOS_STATS_OFFSET	0x300
 #define QOS_MAGIC_OFFSET	0x1ff8
 #define QOS_VERSION_OFFSET	0x1ffc
