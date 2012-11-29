@@ -183,6 +183,7 @@ struct khwq_range_info {
 	unsigned		 flags;
 	struct list_head	 list;
 	struct khwq_range_ops	*ops;
+	struct hwqueue_inst_ops	 inst_ops;
 	struct khwq_acc_info	 acc_info;
 	struct khwq_acc_channel	*acc;
 	struct khwq_qos_info	*qos_info;
