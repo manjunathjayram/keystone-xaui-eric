@@ -85,8 +85,8 @@ int hwqueue_enable_notifier(struct hwqueue *queue);
 
 int hwqueue_disable_notifier(struct hwqueue *queue);
 
-dma_addr_t __hwqueue_pop_slow(struct hwqueue_instance *inst, unsigned *size,
-			 struct timeval *timeout, unsigned flags);
+dma_addr_t __hwqueue_pop_slow(struct hwqueue *qh, unsigned *size,
+			      struct timeval *timeout, unsigned flags);
 
 /**
  * hwqueue_get_count() - poll a hardware queue and check if empty
@@ -173,7 +173,7 @@ static inline dma_addr_t hwqueue_pop(struct hwqueue *qh, unsigned *size,
 			   (timeout && !timeout->tv_sec && !timeout->tv_usec)))
 			break;
 
-		ret = __hwqueue_pop_slow(qh->inst, size, timeout, flags);
+		ret = __hwqueue_pop_slow(qh, size, timeout, flags);
 	} while (0);
 
 	if (likely(ret)) {
