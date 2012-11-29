@@ -3243,6 +3243,39 @@ static int khwq_qos_set_notify(struct khwq_range_info *range,
 	return 0;
 }
 
+static int khwq_qos_push(struct hwqueue_instance *inst, dma_addr_t dma,
+			 unsigned size, unsigned flags)
+{
+	struct khwq_instance *kq = hwqueue_inst_to_priv(inst);
+	struct khwq_range_info *range = kq->range;
+	unsigned id = hwqueue_inst_to_id(inst);
+	struct khwq_qmgr_info *qmgr;
+	struct khwq_pdsp_info *pdsp;
+	struct khwq_qos_info *info;
+	unsigned long irq_flags;
+	u32 val;
+
+	qmgr = khwq_find_qmgr(inst);
+	if (!qmgr)
+		return -ENODEV;
+
+	info = range->qos_info;
+	pdsp = info->pdsp;
+
+	spin_lock_irqsave(&info->lock, irq_flags);
+
+	while(__raw_readl(pdsp->command + QOS_PUSH_PROXY_OFFSET + 0x4));
+	val = (id << 16) | (flags & BITS(17));
+	__raw_writel(val, pdsp->command + QOS_PUSH_PROXY_OFFSET);
+	
+	val = (u32)dma | ((size / 16) - 1);
+	__raw_writel(val, pdsp->command + QOS_PUSH_PROXY_OFFSET + 0x4);
+
+	spin_unlock_irqrestore(&info->lock, irq_flags);
+
+	return 0;
+}
+
 static int khwq_qos_init_range(struct khwq_range_info *range)
 {
 	struct khwq_pdsp_info *pdsp;
@@ -3254,6 +3287,8 @@ static int khwq_qos_init_range(struct khwq_range_info *range)
 	info = range->qos_info;
 	pdsp = info->pdsp;
 	kdev = info->kdev;
+
+	range->inst_ops.push = khwq_qos_push;
 
 	spin_lock_bh(&info->lock);
 
