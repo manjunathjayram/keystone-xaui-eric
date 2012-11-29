@@ -32,6 +32,7 @@ struct hwqueue_instance {
 	void			*priv;
 	char			 name[32];
 	atomic_t		 num_notifiers;
+	struct hwqueue_inst_ops	*ops;
 };
 
 struct hwqueue_device_ops {
@@ -52,7 +53,9 @@ struct hwqueue_device_ops {
 
 	/* Get a hardware identifier for a queue */
 	int	 (*get_hw_id)(struct hwqueue_instance *inst);
+};
 
+struct hwqueue_inst_ops {
 	/* Push something into the queue */
 	int	 (*push)(struct hwqueue_instance *inst, dma_addr_t dma,
 			 unsigned size, unsigned flags);
