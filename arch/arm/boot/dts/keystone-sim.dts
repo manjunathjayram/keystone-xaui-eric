@@ -13,7 +13,7 @@
 	};
 
 	chosen {
-		bootargs = "console=ttyS0,115200n8 debug earlyprintk rdinit=/bin/ash rw root=/dev/ram0 initrd=0x805000000,2M";
+		bootargs = "console=ttyS0,115200n8 debug earlyprintk rdinit=/bin/ash rw root=/dev/ram0 initrd=0x805000000,5M";
 	};
 
 	memory {
