@@ -1518,10 +1518,25 @@ static u16 netcp_select_queue(struct net_device *dev, struct sk_buff *skb)
 	return 0;
 }
 
-static int netcp_setup_tc(struct net_device *dev, u8 tc)
+static int netcp_setup_tc(struct net_device *dev, u8 num_tc)
 {
-	if ((dev->real_num_tx_queues <= 1) || (dev->real_num_tx_queues < tc))
+	int i;
+
+	/* setup tc must be called under rtnl lock */
+	ASSERT_RTNL();
+
+	/* Sanity-check the number of traffic classes requested */
+	if ((dev->real_num_tx_queues <= 1) || (dev->real_num_tx_queues < num_tc))
 		return -EINVAL;
+
+	/* Configure traffic class to queue mappings */
+	if (num_tc) {
+		netdev_set_num_tc(dev, num_tc);
+		for (i = 0; i < num_tc; i++)
+			netdev_set_tc_queue(dev, i, 1, i);
+	} else {
+		netdev_reset_tc(dev);
+	}
 
 	return 0;
 }
