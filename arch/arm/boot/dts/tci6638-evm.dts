@@ -995,6 +995,16 @@
 				0x0260bf10 0x28>;
 			gpio-controller;
 			#gpio-cells = <2>;
+			/* HW Interrupts mapped to GPIO pins */
+			interrupts = <0 120 0xf02 0 121 0xf02 0 122 0xf02 0 123 0xf02 0 124 0xf02
+					0 125 0xf02 0 126 0xf02 0 127 0xf02 0 128 0xf02 0 129 0xf02
+					0 130 0xf02 0 131 0xf02 0 132 0xf02 0 133 0xf02 0 134 0xf02
+					0 135 0xf02 0 136 0xf02 0 137 0xf02 0 138 0xf02 0 139 0xf02
+					0 140 0xf02 0 141 0xf02 0 142 0xf02 0 143 0xf02 0 144 0xf02
+					0 145 0xf02 0 146 0xf02 0 147 0xf02 0 148 0xf02 0 149 0xf02
+					0 150 0xf02 0 151 0xf02>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
 			clocks = <&clkgpio>;
 			clock-names = "gpio";
 		};
