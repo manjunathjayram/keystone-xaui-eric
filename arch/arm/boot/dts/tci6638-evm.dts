@@ -922,12 +922,11 @@
 			};
 		};
 
-		spi:spi0@21000400 {
+		spi0:spi@21000400 {
 			#address-cells			= <1>;
 			#size-cells			= <0>;
-			compatible			= "ti,davinci-spi";
+			compatible			= "ti,davinci-spi-v1";
 			reg				= <0x21000400 0x200>;
-			ti,davinci-spi-version		= "1.0";
 			ti,davinci-spi-num-cs		= <4>;
 			ti,davinci-spi-intr-line	= <0>;
 			interrupts			= <0 292 0xf01>;
