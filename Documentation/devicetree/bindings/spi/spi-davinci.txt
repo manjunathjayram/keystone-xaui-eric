@@ -2,28 +2,29 @@ Davinci SPI controller device bindings
 
 Required properties:
 - #address-cells: number of cells required to define a chip select
-	address on the SPI bus.
+	address on the SPI bus. Should be set to 1.
 - #size-cells: should be zero.
 - compatible:
-	- "ti,davinci-spi"
+	- "ti,davinci-spi-v1" for SPI version 1.0
+	- "ti,davinci-spi-v2" for SPI version 2.0
 - reg: Offset and length of SPI controller register space
-- ti,davinci-spi-version: SPI version :- "1.0" or "2.0"
 - ti,davinci-spi-num-cs: Number of chip selects
 - ti,davinci-spi-intr-line: interrupt line used to connect the SPI
-	IP to the ARM interrupt controller withn the SoC. Possible values
-	are 0 and 1.
+	IP to the interrupt controller withn the SoC. Possible values
+	are 0 and 1. Manual says one of the two possible interrupt
+	lines can be tied to the interrupt controller. Set this
+	based on a specifc SoC configuration.
 - interrupts: interrupt number offset at the irq parent
 - clocks: spi clk phandle
 
 Example of a NOR flash slave device (n25q032) connected to DaVinci
 SPI controller device over the SPI bus.
 
-spi:spi0@20BF0000 {
+spi0:spi@20BF0000 {
 	#address-cells			= <1>;
 	#size-cells			= <0>;
-	compatible			= "ti,davinci-spi";
+	compatible			= "ti,davinci-spi-v1";
 	reg				= <0x20BF0000 0x1000>;
-	ti,davinci-spi-version		= "1.0";
 	ti,davinci-spi-num-cs		= <4>;
 	ti,davinci-spi-intr-line	= <0>;
 	interrupts			= <338>;
