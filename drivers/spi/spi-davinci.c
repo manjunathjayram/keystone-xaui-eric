@@ -29,6 +29,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/edma.h>
 #include <linux/of.h>
+#include <linux/of_irq.h>
 #include <linux/of_device.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/spi_bitbang.h>
@@ -776,10 +777,10 @@ rx_dma_failed:
 #if defined(CONFIG_OF)
 static const struct of_device_id davinci_spi_of_match[] = {
 	{
-		.compatible = "ti,dm6441-spi",
+		.compatible = "ti,davinci-spi-v1",
 	},
 	{
-		.compatible = "ti,da830-spi",
+		.compatible = "ti,davinci-spi-v2",
 		.data = (void *)SPI_VERSION_2,
 	},
 	{ },
@@ -821,7 +822,7 @@ static int spi_davinci_get_pdata(struct platform_device *pdev,
 	 * supported yet in DT bindings.
 	 */
 	num_cs = 1;
-	of_property_read_u32(node, "num-cs", &num_cs);
+	of_property_read_u32(node, "ti,davinci-spi-num-cs", &num_cs);
 	pdata->num_chipselect = num_cs;
 	of_property_read_u32(node, "ti,davinci-spi-intr-line", &intr_line);
 	pdata->intr_line = intr_line;
@@ -850,12 +851,12 @@ static struct davinci_spi_platform_data
  */
 static int davinci_spi_probe(struct platform_device *pdev)
 {
-	struct spi_master *master;
-	struct davinci_spi *dspi;
-	struct davinci_spi_platform_data *pdata;
-	struct resource *r, *mem;
 	resource_size_t dma_rx_chan = SPI_NO_RESOURCE;
 	resource_size_t	dma_tx_chan = SPI_NO_RESOURCE;
+	struct davinci_spi_platform_data *pdata;
+	struct spi_master *master;
+	struct davinci_spi *dspi;
+	struct resource *r, *mem;
 	int i = 0, ret = 0;
 	u32 spipc0;
 
@@ -906,7 +907,11 @@ static int davinci_spi_probe(struct platform_device *pdev)
 		goto release_region;
 	}
 
+	/* first get irq through resource table, else try of irq method */
 	dspi->irq = platform_get_irq(pdev, 0);
+	if (dspi->irq <= 0)
+		dspi->irq = irq_of_parse_and_map(pdev->dev.of_node, 0);
+
 	if (dspi->irq <= 0) {
 		ret = -EINVAL;
 		goto unmap_io;
