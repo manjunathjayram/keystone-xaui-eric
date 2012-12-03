@@ -5,16 +5,16 @@ Required properties:
 	address on the SPI bus. Should be set to 1.
 - #size-cells: should be zero.
 - compatible:
-	- "ti,dm6441-spi" for SPI used similar to that on DM644x SoC family
-	- "ti,da830-spi" for SPI used similar to that on DA8xx SoC family
+	- "ti,davinci-spi-v1" for SPI version 1.0
+	- "ti,davinci-spi-v2" for SPI version 2.0
 - reg: Offset and length of SPI controller register space
-- num-cs: Number of chip selects
+- ti,davinci-spi-num-cs: Number of chip selects
 - ti,davinci-spi-intr-line: interrupt line used to connect the SPI
-	IP to the interrupt controller within the SoC. Possible values
+	IP to the interrupt controller withn the SoC. Possible values
 	are 0 and 1. Manual says one of the two possible interrupt
 	lines can be tied to the interrupt controller. Set this
 	based on a specifc SoC configuration.
-- interrupts: interrupt number mapped to CPU.
+- interrupts: interrupt number offset at the irq parent
 - clocks: spi clk phandle
 
 Example of a NOR flash slave device (n25q032) connected to DaVinci
@@ -23,9 +23,9 @@ SPI controller device over the SPI bus.
 spi0:spi@20BF0000 {
 	#address-cells			= <1>;
 	#size-cells			= <0>;
-	compatible			= "ti,dm6446-spi";
+	compatible			= "ti,davinci-spi-v1";
 	reg				= <0x20BF0000 0x1000>;
-	num-cs				= <4>;
+	ti,davinci-spi-num-cs		= <4>;
 	ti,davinci-spi-intr-line	= <0>;
 	interrupts			= <338>;
 	clocks				= <&clkspi>;
