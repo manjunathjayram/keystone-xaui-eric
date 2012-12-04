@@ -1387,6 +1387,37 @@ static int pa_fmtcmd_align(struct netcp_packet *p_info, const unsigned bytes)
 	return bytes;
 }
 
+static inline int extract_l4_proto(struct netcp_packet *p_info)
+{
+	struct sk_buff *skb = p_info->skb;
+	int l4_proto = 0;
+	__be16 l3_proto;
+
+	l3_proto = skb->protocol;
+	if (l3_proto == __constant_htons(ETH_P_8021Q)) {
+		/* Can't use vlan_eth_hdr() here, skb->mac_header isn't valid */
+		struct vlan_ethhdr *vhdr = (struct vlan_ethhdr *)skb->data;
+		l3_proto = vhdr->h_vlan_encapsulated_proto;
+	}
+
+	switch (l3_proto) {
+	case __constant_htons(ETH_P_IP):
+		l4_proto = ip_hdr(skb)->protocol;
+		break;
+	case __constant_htons(ETH_P_IPV6):
+		l4_proto = ipv6_hdr(skb)->nexthdr;
+		break;
+	default:
+		if (unlikely(net_ratelimit())) {
+			dev_warn(p_info->netcp->dev,
+				 "partial checksum but L3 proto = 0x%04hx!\n",
+				 ntohs(l3_proto));
+		}
+	}
+
+	return l4_proto;
+}
+
 static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 {
 	struct pa_device *pa_dev = data;
@@ -1442,23 +1473,9 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	/* If checksum offload required, request it */
 	if ((skb->ip_summed == CHECKSUM_PARTIAL) &&
 	    (pa_dev->csum_offload == CSUM_OFFLOAD_HARD)) {
-		u8 l4_proto = 0;
-		switch (skb->protocol) {
-		case __constant_htons(ETH_P_IP):
-			l4_proto = ip_hdr(skb)->protocol;
-			break;
-		case __constant_htons(ETH_P_IPV6):
-			l4_proto = ipv6_hdr(skb)->nexthdr;
-			break;
-		default:
-			if (unlikely(net_ratelimit())) {
-				dev_warn(p_info->netcp->dev,
-					 "partial checksum but L3 proto=%x!\n",
-					 skb->protocol);
-			}
-			break;
-		}
+		int l4_proto;
 
+		l4_proto = extract_l4_proto(p_info);
 		switch (l4_proto) {
 		case IPPROTO_TCP:
 		case IPPROTO_UDP:
@@ -1470,7 +1487,7 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 		default:
 			if (unlikely(net_ratelimit())) {
 				dev_warn(p_info->netcp->dev,
-					 "partial checksum but L4 proto=%x!\n",
+					 "partial checksum but L4 proto = %d!\n",
 					 l4_proto);
 			}
 			size = 0;
@@ -1572,28 +1589,16 @@ static int pa_txhook_softcsum(int order, void *data, struct netcp_packet *p_info
 	struct pa_device *pa_dev = data;
 	struct sk_buff *skb = p_info->skb;
 	int csum_start, csum_length, csum_offset;
-	u8 l4_proto = 0;
+	int l4_proto;
 	__wsum wsum;
 
 	if ((skb->ip_summed != CHECKSUM_PARTIAL) ||
 	    (pa_dev->csum_offload != CSUM_OFFLOAD_SOFT))
 		return 0;
 
-	switch (skb->protocol) {
-	case __constant_htons(ETH_P_IP):
-		l4_proto = ip_hdr(skb)->protocol;
-		break;
-	case __constant_htons(ETH_P_IPV6):
-		l4_proto = ipv6_hdr(skb)->nexthdr;
-		break;
-	default:
-		if (unlikely(net_ratelimit())) {
-			dev_warn(p_info->netcp->dev,
-				 "partial checksum but L3 proto=%x!\n",
-				 skb->protocol);
-		}
+	l4_proto = extract_l4_proto(p_info);
+	if (unlikely(!l4_proto))
 		return 0;
-	}
 
 	csum_start = skb_checksum_start_offset(skb);
 	csum_length = skb->len - csum_start;
@@ -1612,7 +1617,7 @@ static int pa_txhook_softcsum(int order, void *data, struct netcp_packet *p_info
 	default:
 		if (unlikely(net_ratelimit())) {
 			dev_warn(p_info->netcp->dev,
-				 "partial checksum but L4 proto=%x!\n",
+				 "partial checksum but L4 proto = %d!\n",
 				 l4_proto);
 		}
 		return 0;
