@@ -1136,36 +1136,6 @@ static int khwq_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	qmgrs =  of_find_child_by_name(node, "qmgrs");
-	BUG_ON(!qmgrs);
-	if (!qmgrs) {
-		dev_err(dev, "queue manager info not specified\n");
-		return -ENODEV;
-	}
-
-	queues = of_find_child_by_name(node, "queues");
-	if (!queues) {
-		dev_err(dev, "queues not specified\n");
-		return -ENODEV;
-	}
-	pdsps =  of_find_child_by_name(node, "pdsps");
-	BUG_ON(!pdsps);
-	if (!pdsps) {
-		dev_err(dev, "pdsp info not specified\n");
-		return -ENODEV;
-	}
-	descs =  of_find_child_by_name(node, "descriptors");
-	if (!descs) {
-		dev_err(dev, "descriptor pools not specified\n");
-		return -ENODEV;
-	}
-
-	regions =  of_find_child_by_name(node, "regions");
-	if (!regions) {
-		dev_err(dev, "region table not specified\n");
-		return -ENODEV;
-	}
-
 	kdev = devm_kzalloc(dev, sizeof(struct khwq_device), GFP_KERNEL);
 	if (!kdev) {
 		dev_err(dev, "memory allocation failed\n");
@@ -1188,16 +1158,23 @@ static int khwq_probe(struct platform_device *pdev)
 	kdev->base_id    = temp[0];
 	kdev->num_queues = temp[1];
 
+	qmgrs =  of_get_child_by_name(node, "qmgrs");
+	if (!qmgrs) {
+		dev_err(dev, "queue manager info not specified\n");
+		return -ENODEV;
+	}
 	/* Initialize queue managers using device tree configuration */
 	ret = khwq_init_qmgrs(kdev, qmgrs);
 	if (ret)
 		return ret;
+	of_node_put(qmgrs);
 
 	/*
 	 * TODO: failure handling in this code is somewhere between moronic
 	 * and non-existant - needs to be fixed
 	 */
 
+	pdsps =  of_get_child_by_name(node, "pdsps");
 	/* get pdsp configuration values from device tree */
 	if (pdsps) {
 		ret = khwq_init_pdsps(kdev, pdsps);
@@ -1208,12 +1185,24 @@ static int khwq_probe(struct platform_device *pdev)
 		if (ret)
 			return ret;
 	}
+	of_node_put(pdsps);
 
+	queues = of_get_child_by_name(node, "queues");
+	if (!queues) {
+		dev_err(dev, "queues not specified\n");
+		return -ENODEV;
+	}
 	/* get usable queue range values from device tree */
 	ret = khwq_setup_queue_ranges(kdev, queues);
 	if (ret)
 		return ret;
+	of_node_put(queues);
 
+	descs =  of_get_child_by_name(node, "descriptors");
+	if (!descs) {
+		dev_err(dev, "descriptor pools not specified\n");
+		return -ENODEV;
+	}
 	/* Get descriptor pool values from device tree */
 	ret = khwq_setup_pools(kdev, descs);
 	if (ret) {
@@ -1221,6 +1210,7 @@ static int khwq_probe(struct platform_device *pdev)
 		khwq_stop_pdsps(kdev);
 		return ret;
 	}
+	of_node_put(descs);
 
 	ret = khwq_get_link_ram(kdev, "linkram0", &kdev->link_rams[0]);
 	if (ret) {
@@ -1240,9 +1230,15 @@ static int khwq_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
+	regions =  of_get_child_by_name(node, "regions");
+	if (!regions) {
+		dev_err(dev, "region table not specified\n");
+		return -ENODEV;
+	}
 	ret = khwq_setup_regions(kdev, regions);
 	if (ret)
 		return ret;
+	of_node_put(regions);
 
 	/* initialize hwqueue device data */
 	hdev = to_hdev(kdev);
