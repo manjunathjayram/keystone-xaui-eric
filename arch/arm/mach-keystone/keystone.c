@@ -23,6 +23,7 @@
 #include <linux/platform_data/davinci-clock.h>
 
 #include <asm/setup.h>
+#include <asm/smp_plat.h>
 #include <asm/mach/map.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/time.h>
