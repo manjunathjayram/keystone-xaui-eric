@@ -2064,7 +2064,7 @@ static int keystone_dma_probe(struct platform_device *pdev)
 
 	INIT_LIST_HEAD(&engine->channels);
 
-	chans = of_find_child_by_name(node, "channels");
+	chans = of_get_child_by_name(node, "channels");
 	if (!chans) {
 		dev_err(dma_dev(dma), "could not find channels\n");
 		return -ENODEV;
