@@ -3499,27 +3499,27 @@ int khwq_init_qos_range(struct khwq_device *kdev, struct device_node *node,
 
 	child = of_parse_phandle(node, "drop-policies", 0);
 	if (!child)
-		child = of_find_child_by_name(node, "drop-policies");
+		child = of_get_child_by_name(node, "drop-policies");
 	if (!child) {
 		dev_err(kdev->dev, "could not find drop policies\n");
 		goto bail;
 	}
-
 	error = khwq_qos_get_drop_policies(kdev, info, child);
 	if (error)
 		goto bail;
+	of_node_put(child);
 
 	child = of_parse_phandle(node, "qos-tree", 0);
 	if (!child)
-		child = of_find_child_by_name(node, "qos-tree");
+		child = of_get_child_by_name(node, "qos-tree");
 	if (!child) {
 		dev_err(kdev->dev, "could not find qos tree\n");
 		goto bail;
 	}
-
 	error = khwq_qos_tree_parse(info, child, NULL);
 	if (error)
 		goto bail;
+	of_node_put(child);
 
 	error = khwq_qos_tree_init(info);
 	if (error)
