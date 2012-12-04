@@ -49,7 +49,7 @@ static void __init keystone_smp_init_cpus(void)
 
 static void __init keystone_smp_prepare_cpus(unsigned int max_cpus)
 {
-	/* nothing for now */
+	/* nothing to do here */
 }
 
 static void __cpuinit keystone_smp_secondary_initmem(void)
@@ -70,12 +70,26 @@ static void __cpuinit keystone_smp_secondary_init(unsigned int cpu)
 static int __cpuinit
 keystone_smp_boot_secondary(unsigned int cpu, struct task_struct *idle)
 {
-	unsigned long *ptr = (unsigned long *)(PAGE_OFFSET + 0x1f0);
+	unsigned long start = virt_to_idmap(&secondary_startup);
+	int error;
 
-	ptr[cpu] = virt_to_idmap(&secondary_startup);
-	__cpuc_flush_dcache_area(ptr, sizeof(ptr) * 4);
+	pr_debug("keystone-smp: booting cpu %d, vector %08lx\n",
+		 cpu, start);
 
-	return 0;
+	asm volatile (
+		"mov    r0, #0\n"	/* power on cmd	*/
+		"mov    r1, %1\n"	/* cpu		*/
+		"mov    r2, %2\n"	/* start	*/
+		".inst  0xe1600070\n"	/* SMI		*/
+		"mov    %0, r0\n"
+		: "=r" (error)
+		: "r"(cpu), "r"(start)
+		: "cc", "r0", "r1", "r2", "memory"
+	);
+
+	pr_debug("keystone-smp: monitor returned %d\n", error);
+
+	return error;
 }
 
 #ifdef CONFIG_HOTPLUG_CPU
