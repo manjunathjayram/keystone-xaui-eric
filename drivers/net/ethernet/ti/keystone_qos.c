@@ -225,7 +225,7 @@ static int qos_probe(struct netcp_device *netcp_device,
 	qos_dev->dev = dev;
 
 
-	channels = of_find_child_by_name(node, "input-channels");
+	channels = of_get_child_by_name(node, "input-channels");
 	if (!channels) {
 		dev_err(dev, "could not find \"input-channels\" in device tree\n");
 		ret = -ENODEV;
