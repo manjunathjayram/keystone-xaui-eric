@@ -1163,7 +1163,7 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	dev_info(dev, "ale_entries = %d\n", cpsw_dev->ale_entries);
 	dev_info(dev, "ale_ports = %d\n", cpsw_dev->ale_ports);
 
-	slaves = of_find_child_by_name(node, "slaves");
+	slaves = of_get_child_by_name(node, "slaves");
 	if (!slaves) {
 		dev_err(dev, "could not find slaves\n");
 		ret = -ENODEV;
