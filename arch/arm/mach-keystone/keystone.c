@@ -106,7 +106,7 @@ static struct notifier_block keystone_platform_nb = {
 	.notifier_call = keystone_platform_notifier,
 };
 
-static struct of_device_id tci6614_dt_match_table[] __initdata = {
+static struct of_device_id keystone_dt_match_table[] __initdata = {
 	{ .compatible = "simple-bus",},
 	{ .compatible = "ti,davinci-aemif", },
 	{}
@@ -115,7 +115,7 @@ static struct of_device_id tci6614_dt_match_table[] __initdata = {
 static void __init keystone_init(void)
 {
 	bus_register_notifier(&platform_bus_type, &keystone_platform_nb);
-	of_platform_populate(NULL, tci6614_dt_match_table, NULL, NULL);
+	of_platform_populate(NULL, keystone_dt_match_table, NULL, NULL);
 }
 
 static int __init keystone_wd_rstmux_init(void)
