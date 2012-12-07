@@ -26,6 +26,7 @@
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
 #include <linux/of.h>
+#include <linux/of_irq.h>
 #include <linux/of_device.h>
 #include <linux/of_address.h>
 #include <linux/firmware.h>
@@ -112,9 +113,9 @@ static void khwq_set_notify(struct hwqueue_instance *inst, bool enabled)
 	} else if (range->flags & RANGE_HAS_IRQ) {
 		queue = hwqueue_inst_to_id(inst) - range->queue_base;
 		if (enabled)
-			enable_irq(range->irq_base + queue);
+			enable_irq(range->irqs[queue]);
 		else
-			disable_irq_nosync(range->irq_base + queue);
+			disable_irq_nosync(range->irqs[queue]);
 	} else
 		hwqueue_set_poll(inst, enabled);
 }
@@ -127,7 +128,7 @@ static int khwq_setup_irq(struct khwq_range_info *range,
 	int ret = 0, irq;
 
 	if (range->flags & RANGE_HAS_IRQ) {
-		irq = range->irq_base + queue;
+		irq = range->irqs[queue];
 
 		ret = request_irq(irq, khwq_int_handler, 0, kq->irq_name, inst);
 		if (ret >= 0)
@@ -145,7 +146,7 @@ static void khwq_free_irq(struct hwqueue_instance *inst)
 	int irq;
 
 	if (range->flags & RANGE_HAS_IRQ) {
-		irq = range->irq_base + id;
+		irq = range->irqs[id];
 		free_irq(irq, inst);
 	}
 }
@@ -682,7 +683,7 @@ static int khwq_setup_queue_range(struct khwq_device *kdev,
 	struct khwq_range_info *range;
 	struct khwq_qmgr_info *qmgr;
 	u32 temp[2], start, end, id, index;
-	int ret;
+	int ret, i;
 
 	range = devm_kzalloc(dev, sizeof(*range), GFP_KERNEL);
 	if (!range) {
@@ -703,8 +704,14 @@ static int khwq_setup_queue_range(struct khwq_device *kdev,
 		return -EINVAL;
 	}
 
-	ret = of_property_read_u32(node, "irq-base", &range->irq_base);
-	if (ret >= 0)
+	for (i = 0; i < RANGE_MAX_IRQS; i++) {
+		range->irqs[i] = irq_of_parse_and_map(node, i);
+		if (range->irqs[i] == IRQ_NONE)
+			break;
+		range->num_irqs++;
+	}
+	range->num_irqs = min(range->num_irqs, range->num_queues);
+	if (range->num_irqs)
 		range->flags |= RANGE_HAS_IRQ;
 
 	if (of_get_property(node, "reserved", NULL))
@@ -741,11 +748,10 @@ static int khwq_setup_queue_range(struct khwq_device *kdev,
 
 	list_add_tail(&range->list, &kdev->queue_ranges);
 
-	dev_dbg(dev, "added range %s: %d-%d, irqs %d-%d%s%s%s\n",
+	dev_dbg(dev, "added range %s: %d-%d, %d irqs%s%s%s\n",
 		range->name, range->queue_base,
 		range->queue_base + range->num_queues - 1,
-		range->irq_base,
-		range->irq_base + range->num_queues - 1,
+		range->num_irqs,
 		(range->flags & RANGE_HAS_IRQ) ? ", has irq" : "",
 		(range->flags & RANGE_RESERVED) ? ", reserved" : "",
 		(range->flags & RANGE_HAS_ACCUMULATOR) ? ", acc" : "");
