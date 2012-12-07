@@ -20,6 +20,7 @@
 #include <linux/of_platform.h>
 #include <linux/of_address.h>
 #include <linux/dma-mapping.h>
+#include <linux/irqchip/tci6614.h>
 #include <linux/platform_data/davinci-clock.h>
 
 #include <asm/setup.h>
@@ -56,6 +57,10 @@ static const struct of_device_id irq_match[] = {
 		.compatible = "arm,cortex-a15-gic",
 		.data = gic_of_init,
 	},
+	{
+		.compatible = "ti,tci6614-intctrl",
+		.data = tci6614_of_init_irq,
+	},
 	{}
 };
 
@@ -67,9 +72,21 @@ static void __init keystone_init_irq(void)
 
 static void __init keystone_timer_init(void)
 {
+	int error;
+
 	davinci_of_clk_init();
-	arch_timer_of_register();
-	arch_timer_sched_clock_init();
+
+	error = tci6614_timer_init();
+	if (!error)
+		return;
+
+	error = arch_timer_of_register();
+	if (!error) {
+		arch_timer_sched_clock_init();
+		return;
+	}
+
+	panic("no timer!\n");
 }
 
 static struct sys_timer keystone_timer = {
@@ -153,8 +170,14 @@ static int __init keystone_wd_rstmux_init(void)
 }
 postcore_initcall(keystone_wd_rstmux_init);
 
-static const char *keystone_match[] __initconst = {
+static const char *keystone1_match[] __initconst = {
+	"ti,tci6614-evm",
+	NULL,
+};
+
+static const char *keystone2_match[] __initconst = {
 	"ti,keystone-evm",
+	"ti,tci6638-evm",
 	NULL,
 };
 
@@ -191,11 +214,11 @@ static void __init keystone_init_meminfo(void)
 	if (mem_start < KEYSTONE_HIGH_PHYS_START ||
 	    mem_end   > KEYSTONE_HIGH_PHYS_END) {
 		panic("Invalid address space for memory (%08llx-%08llx)\n",
-		      mem_start, mem_end);
+		      (u64)mem_start, (u64)mem_end);
 	}
 
 	offset += KEYSTONE_HIGH_PHYS_START;
-	pr_info("switching to high address space at 0x%llx\n", offset);
+	pr_info("switching to high address space at 0x%llx\n", (u64)offset);
 	__pv_phys_offset = offset;
 	__pv_offset      = offset - PAGE_OFFSET;
 
@@ -235,17 +258,26 @@ void keystone_restart(char mode, const char *cmd)
 	__raw_writel(val, rstctrl);
 }
 
-DT_MACHINE_START(KEYSTONE, "Keystone")
+#define KEYSTONE_MACHINE_DEFS				\
+	.map_io		= keystone_map_io,		\
+	.init_irq	= keystone_init_irq,		\
+	.timer		= &keystone_timer,		\
+	.init_machine	= keystone_init,		\
+	.init_meminfo	= keystone_init_meminfo,	\
+	.restart	= keystone_restart,
+
+DT_MACHINE_START(KEYSTONE1, "KeyStone1")
+	KEYSTONE_MACHINE_DEFS
+	.handle_irq	= tci6614_handle_irq,
+	.dt_compat	= keystone1_match,
+MACHINE_END
+
+DT_MACHINE_START(KEYSTONE2, "KeyStone2")
+	KEYSTONE_MACHINE_DEFS
 	.smp		= smp_ops(keystone_smp_ops),
-	.map_io		= keystone_map_io,
-	.init_irq	= keystone_init_irq,
-	.timer		= &keystone_timer,
 	.handle_irq	= gic_handle_irq,
-	.init_machine	= keystone_init,
-	.dt_compat	= keystone_match,
-	.init_meminfo	= keystone_init_meminfo,
+	.dt_compat	= keystone2_match,
 #ifdef CONFIG_ZONE_DMA
 	.dma_zone_size	= SZ_2G,
 #endif
-	.restart	= keystone_restart,
 MACHINE_END
