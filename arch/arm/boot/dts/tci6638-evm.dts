@@ -3,7 +3,7 @@
 
 / {
 	model = "Texas Instruments Keystone 2 SoC";
-	compatible = "ti,keystone-evm";
+	compatible = "ti,tci6638-evm";
 	#address-cells = <2>;
 	#size-cells = <2>;
 	interrupt-parent = <&gic>;
