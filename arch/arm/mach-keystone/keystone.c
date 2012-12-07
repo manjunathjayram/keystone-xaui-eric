@@ -115,6 +115,7 @@ static struct of_device_id keystone_dt_match_table[] __initdata = {
 static void __init keystone_init(void)
 {
 	bus_register_notifier(&platform_bus_type, &keystone_platform_nb);
+	keystone_pm_runtime_init();
 	of_platform_populate(NULL, keystone_dt_match_table, NULL, NULL);
 }
 
