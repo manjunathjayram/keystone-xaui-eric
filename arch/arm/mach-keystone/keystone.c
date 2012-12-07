@@ -67,9 +67,17 @@ static void __init keystone_init_irq(void)
 
 static void __init keystone_timer_init(void)
 {
+	int error;
+
 	davinci_of_clk_init();
-	arch_timer_of_register();
-	arch_timer_sched_clock_init();
+
+	error = arch_timer_of_register();
+	if (!error) {
+		arch_timer_sched_clock_init();
+		return;
+	}
+
+	panic("no timer!\n");
 }
 
 static struct sys_timer keystone_timer = {
@@ -153,8 +161,9 @@ static int __init keystone_wd_rstmux_init(void)
 }
 postcore_initcall(keystone_wd_rstmux_init);
 
-static const char *keystone_match[] __initconst = {
+static const char *keystone2_match[] __initconst = {
 	"ti,keystone-evm",
+	"ti,tci6638-evm",
 	NULL,
 };
 
@@ -191,11 +200,11 @@ static void __init keystone_init_meminfo(void)
 	if (mem_start < KEYSTONE_HIGH_PHYS_START ||
 	    mem_end   > KEYSTONE_HIGH_PHYS_END) {
 		panic("Invalid address space for memory (%08llx-%08llx)\n",
-		      mem_start, mem_end);
+		      (u64)mem_start, (u64)mem_end);
 	}
 
 	offset += KEYSTONE_HIGH_PHYS_START;
-	pr_info("switching to high address space at 0x%llx\n", offset);
+	pr_info("switching to high address space at 0x%llx\n", (u64)offset);
 	__pv_phys_offset = offset;
 	__pv_offset      = offset - PAGE_OFFSET;
 
@@ -235,17 +244,17 @@ void keystone_restart(char mode, const char *cmd)
 	__raw_writel(val, rstctrl);
 }
 
-DT_MACHINE_START(KEYSTONE, "Keystone")
-	.smp		= smp_ops(keystone_smp_ops),
+DT_MACHINE_START(KEYSTONE2, "KeyStone2")
 	.map_io		= keystone_map_io,
 	.init_irq	= keystone_init_irq,
 	.timer		= &keystone_timer,
-	.handle_irq	= gic_handle_irq,
 	.init_machine	= keystone_init,
-	.dt_compat	= keystone_match,
 	.init_meminfo	= keystone_init_meminfo,
+	.restart	= keystone_restart,
+	.smp		= smp_ops(keystone_smp_ops),
+	.handle_irq	= gic_handle_irq,
+	.dt_compat	= keystone2_match,
 #ifdef CONFIG_ZONE_DMA
 	.dma_zone_size	= SZ_2G,
 #endif
-	.restart	= keystone_restart,
 MACHINE_END
