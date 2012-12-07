@@ -148,6 +148,34 @@ choice
 
 		  If you have a ZC702 board and want early boot messages to
 		  appear on the USB serial adaptor, select this option.
+	
+	config DEBUG_DAVINCI_TCI6614_UART0
+		bool "Kernel low-level debugging on TCI6614 using UART0"
+		depends on ARCH_KEYSTONE
+		help
+		  Say Y here if you want the debug print routines to direct
+		  their output to UART0 serial port on TCI6614 devices.
+
+	config DEBUG_DAVINCI_TCI6614_UART1
+		bool "Kernel low-level debugging on TCI6614 using UART1"
+		depends on ARCH_KEYSTONE
+		help
+		  Say Y here if you want the debug print routines to direct
+		  their output to UART1 serial port on TCI6614 devices.
+
+	config DEBUG_DAVINCI_TCI6638_UART0
+		bool "Kernel low-level debugging on TCI6638 using UART0"
+		depends on ARCH_KEYSTONE
+		help
+		  Say Y here if you want the debug print routines to direct
+		  their output to UART0 serial port on TCI6638 devices.
+
+	config DEBUG_DAVINCI_TCI6638_UART1
+		bool "Kernel low-level debugging on TCI6638 using UART1"
+		depends on ARCH_KEYSTONE
+		help
+		  Say Y here if you want the debug print routines to direct
+		  their output to UART1 serial port on TCI6638 devices.
 
 	config DEBUG_DC21285_PORT
 		bool "Kernel low-level debugging messages via footbridge serial port"
