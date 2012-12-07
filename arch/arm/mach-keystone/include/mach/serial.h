@@ -1,4 +1,6 @@
 /*
+ * Serial port register definitions
+ *
  * Copyright 2010-2012 Texas Instruments, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -13,36 +15,34 @@
  * You should have received a copy of the GNU General Public License along with
  * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#ifndef __MACH_KEYSTONE_UNCOMPRESS_H__
-#define __MACH_KEYSTONE_UNCOMPRESS_H__
 
-#include <linux/types.h>
-#include <linux/serial_reg.h>
+#ifndef __MACH_KEYSTONE_SERIAL_H__
+#define __MACH_KEYSTONE_SERIAL_H__
 
-#include <mach/serial.h>
+#if defined(CONFIG_DEBUG_DAVINCI_TCI6614_UART0)
 
-static void putc(char c)
-{
-#ifdef UART_PHYS
-	u32 *uart = (u32 *)UART_PHYS;
+#define UART_PHYS	0x02540000
+#define UART_VIRT	0xfed40000
 
-	while (!(uart[UART_LSR] & UART_LSR_THRE))
-		barrier();
-	uart[UART_TX] = c;
+#elif defined(CONFIG_DEBUG_DAVINCI_TCI6614_UART1)
+
+#define UART_PHYS	0x02541000
+#define UART_VIRT	0xfed41000
+
+#elif defined(CONFIG_DEBUG_DAVINCI_TCI6638_UART0)
+
+#define UART_PHYS	0x02530c00
+#define UART_VIRT	0xfed30c00
+
+#elif defined(CONFIG_DEBUG_DAVINCI_TCI6638_UART1)
+
+#define UART_PHYS	0x02531000
+#define UART_VIRT	0xfed31000
+
+#elif defined(CONFIG_DEBUG_EARLY_PRINTK)
+
+#warn unsupported early debug configuration
+
 #endif
-}
-
-static inline void flush(void)
-{
-#ifdef UART_PHYS
-	u32 *uart = (u32 *)UART_PHYS;
-
-	while (!(uart[UART_LSR] & UART_LSR_THRE))
-		barrier();
-#endif
-}
-
-#define arch_decomp_setup()
-#define arch_decomp_wdog()
 
 #endif
