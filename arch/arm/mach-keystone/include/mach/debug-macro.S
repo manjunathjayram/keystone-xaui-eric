@@ -17,17 +17,17 @@
  * You should have received a copy of the GNU General Public License along with
  * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+
 #include <linux/serial_reg.h>
+
+#include <mach/serial.h>
 
 #define UART_SHIFT	2
 
 	.macro	addruart,rp,rv,tmp
-	movw	\rv, #0x0c00
-	movt	\rv, #0xfed3
-	movw	\rp, #0x0c00
-	movt	\rp, #0x0253
+	ldr	\rv, =UART_VIRT
+	ldr	\rp, =UART_PHYS
 	.endm
-
 
 	.macro	senduart,rd,rx
 	str	\rd, [\rx, #UART_TX << UART_SHIFT]
