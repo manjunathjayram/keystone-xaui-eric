@@ -20,4 +20,6 @@
 extern struct smp_operations keystone_smp_ops;
 extern void secondary_startup(void);
 
+extern int __init keystone_pm_runtime_init(void);
+
 #endif /* __KEYSTONE_H__ */
