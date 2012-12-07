@@ -52,6 +52,8 @@
 #define ACC_INTD_OFFSET_COUNT(ch)	(0x0300 + 4 * (ch))
 #define ACC_INTD_OFFSET_STATUS(ch)	(0x0200 + 4 * ((ch) / 32))
 
+#define RANGE_MAX_IRQS			64
+
 enum khwq_acc_result {
 	ACC_RET_IDLE,
 	ACC_RET_SUCCESS,
@@ -179,7 +181,6 @@ struct khwq_range_info {
 	struct khwq_device	*kdev;
 	unsigned		 queue_base;
 	unsigned		 num_queues;
-	unsigned		 irq_base;
 	unsigned		 flags;
 	struct list_head	 list;
 	struct khwq_range_ops	*ops;
@@ -187,6 +188,8 @@ struct khwq_range_info {
 	struct khwq_acc_info	 acc_info;
 	struct khwq_acc_channel	*acc;
 	struct khwq_qos_info	*qos_info;
+	unsigned		 num_irqs;
+	int			 irqs[RANGE_MAX_IRQS];
 };
 
 struct khwq_range_ops {
