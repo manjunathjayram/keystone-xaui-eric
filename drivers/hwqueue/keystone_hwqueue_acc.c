@@ -112,7 +112,10 @@ static irqreturn_t khwq_acc_int_handler(int irq, void *_instdata)
 	range_base = kdev->base_id + range->queue_base;
 
 	if ((range->flags & RANGE_MULTI_QUEUE) == 0) {
-		queue	 = irq - range->irq_base;
+		/* TODO: this needs extent checks */
+		for (queue = 0; queue < range->num_irqs; queue++)
+			if (range->irqs[queue] == irq)
+				break;
 		inst	 = hwqueue_id_to_inst(hdev, range_base + queue);
 		kq	 = hwqueue_inst_to_priv(inst);
 		acc	+= queue;
@@ -219,10 +222,10 @@ int khwq_range_setup_acc_irq(struct khwq_range_info *range, int queue,
 
 	if (range->flags & RANGE_MULTI_QUEUE) {
 		acc = range->acc;
-		irq = range->irq_base;
+		irq = range->irqs[0];
 	} else {
 		acc = range->acc + queue;
-		irq = range->irq_base + queue;
+		irq = range->irqs[queue];
 	}
 
 	old = acc->open_mask;
