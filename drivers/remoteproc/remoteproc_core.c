@@ -206,7 +206,10 @@ int rproc_alloc_vring(struct rproc_vdev *rvdev, int i)
 	 * Allocate non-cacheable memory for the vring. In the future
 	 * this call will also configure the IOMMU for us
 	 */
-	va = dma_alloc_coherent(dev->parent, size, &dma, GFP_KERNEL);
+	if (rproc->ops->alloc)
+		va = rproc->ops->alloc(dev->parent, size, &dma, GFP_KERNEL);
+	else
+		va = dma_alloc_coherent(dev->parent, size, &dma, GFP_KERNEL);
 	if (!va) {
 		dev_err(dev->parent, "dma_alloc_coherent failed\n");
 		return -EINVAL;
@@ -281,8 +284,12 @@ void rproc_free_vring(struct rproc_vring *rvring)
 	struct rproc *rproc = rvring->rvdev->rproc;
 	int idx = rvring->rvdev->vring - rvring;
 	struct fw_rsc_vdev *rsc;
+	struct device *dev = rproc->dev.parent;
 
-	dma_free_coherent(rproc->dev.parent, size, rvring->va, rvring->dma);
+	if (rproc->ops->free)
+		rproc->ops->free(dev, size, rvring->va, rvring->dma);
+	else
+		dma_free_coherent(dev, size, rvring->va, rvring->dma);
 	idr_remove(&rproc->notifyids, rvring->notifyid);
 
 	/* reset resource entry info */
@@ -802,7 +809,10 @@ static int rproc_fw_boot(struct rproc *rproc, const struct firmware *fw)
 	if (ret)
 		return ret;
 
-	dev_info(dev, "Booting fw image %s, size %zd\n", name, fw->size);
+	if (fw)
+		dev_info(dev, "Booting fw image %s, size %zd\n", name, fw->size);
+	else
+		dev_info(dev, "Booting unspecified firmware\n");
 
 	/*
 	 * if enabling an IOMMU isn't relevant for this rproc, this is
@@ -827,6 +837,15 @@ static int rproc_fw_boot(struct rproc *rproc, const struct firmware *fw)
 	if (rproc->table_csum != crc32(0, table, tablesz)) {
 		dev_err(dev, "resource checksum failed, fw changed?\n");
 		goto clean_up;
+	}
+
+	if (!fw) {
+		/* handle vdev resources */
+		ret = rproc_handle_virtio_rsc(rproc, table, tablesz);
+		if (ret) {
+			dev_err(dev, "Failed to process resources: %d\n", ret);
+			goto clean_up;
+		}
 	}
 
 	/* handle fw resources which are required to boot rproc */
@@ -942,6 +961,12 @@ static int rproc_add_virtio_devices(struct rproc *rproc)
 	/* rproc_del() calls must wait until async loader completes */
 	init_completion(&rproc->firmware_loading_complete);
 
+	if (!rproc->firmware) {
+		dev_warn(&rproc->dev, "no firmware found\n");
+		complete_all(&rproc->firmware_loading_complete);
+		return 0;
+	}
+
 	/*
 	 * We must retrieve early virtio configuration info from
 	 * the firmware (e.g. whether to register a virtio device,
@@ -1036,7 +1061,7 @@ static void rproc_crash_handler_work(struct work_struct *work)
  */
 int rproc_boot(struct rproc *rproc)
 {
-	const struct firmware *firmware_p;
+	const struct firmware *firmware_p = NULL;
 	struct device *dev;
 	int ret;
 
@@ -1051,13 +1076,6 @@ int rproc_boot(struct rproc *rproc)
 	if (ret) {
 		dev_err(dev, "can't lock rproc %s: %d\n", rproc->name, ret);
 		return ret;
-	}
-
-	/* loading a firmware is required */
-	if (!rproc->firmware) {
-		dev_err(dev, "%s: no firmware to load\n", __func__);
-		ret = -EINVAL;
-		goto unlock_mutex;
 	}
 
 	/* prevent underlying implementation from being removed */
@@ -1075,16 +1093,19 @@ int rproc_boot(struct rproc *rproc)
 
 	dev_info(dev, "powering up %s\n", rproc->name);
 
-	/* load firmware */
-	ret = request_firmware(&firmware_p, rproc->firmware, dev);
-	if (ret < 0) {
-		dev_err(dev, "request_firmware failed: %d\n", ret);
-		goto downref_rproc;
+	if (rproc->firmware) {
+		/* load firmware */
+		ret = request_firmware(&firmware_p, rproc->firmware, dev);
+		if (ret < 0) {
+			dev_err(dev, "request_firmware failed: %d\n", ret);
+			goto downref_rproc;
+		}
 	}
 
 	ret = rproc_fw_boot(rproc, firmware_p);
 
-	release_firmware(firmware_p);
+	if (firmware_p)
+		release_firmware(firmware_p);
 
 downref_rproc:
 	if (ret) {
