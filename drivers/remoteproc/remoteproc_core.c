@@ -206,7 +206,10 @@ int rproc_alloc_vring(struct rproc_vdev *rvdev, int i)
 	 * Allocate non-cacheable memory for the vring. In the future
 	 * this call will also configure the IOMMU for us
 	 */
-	va = dma_alloc_coherent(dev->parent, size, &dma, GFP_KERNEL);
+	if (rproc->ops->alloc)
+		va = rproc->ops->alloc(dev->parent, size, &dma, GFP_KERNEL);
+	else
+		va = dma_alloc_coherent(dev->parent, size, &dma, GFP_KERNEL);
 	if (!va) {
 		dev_err(dev->parent, "dma_alloc_coherent failed\n");
 		return -EINVAL;
@@ -281,8 +284,12 @@ void rproc_free_vring(struct rproc_vring *rvring)
 	struct rproc *rproc = rvring->rvdev->rproc;
 	int idx = rvring->rvdev->vring - rvring;
 	struct fw_rsc_vdev *rsc;
+	struct device *dev = rproc->dev.parent;
 
-	dma_free_coherent(rproc->dev.parent, size, rvring->va, rvring->dma);
+	if (rproc->ops->free)
+		rproc->ops->free(dev, size, rvring->va, rvring->dma);
+	else
+		dma_free_coherent(dev, size, rvring->va, rvring->dma);
 	idr_remove(&rproc->notifyids, rvring->notifyid);
 
 	/* reset resource entry info */
