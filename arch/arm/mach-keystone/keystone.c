@@ -21,6 +21,7 @@
 #include <linux/of_address.h>
 #include <linux/dma-mapping.h>
 #include <linux/irqchip/tci6614.h>
+#include <linux/irqchip/keystone-ipc.h>
 #include <linux/platform_data/davinci-clock.h>
 
 #include <asm/setup.h>
@@ -60,6 +61,10 @@ static const struct of_device_id irq_match[] = {
 	{
 		.compatible = "ti,tci6614-intctrl",
 		.data = tci6614_of_init_irq,
+	},
+	{
+		.compatible = "ti,keystone-ipc-irq",
+		.data = keystone_ipc_irq_of_init,
 	},
 	{}
 };
