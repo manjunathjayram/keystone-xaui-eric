@@ -20,6 +20,7 @@
 #include <linux/of_platform.h>
 #include <linux/of_address.h>
 #include <linux/dma-mapping.h>
+#include <linux/irqchip/keystone-ipc.h>
 #include <linux/platform_data/davinci-clock.h>
 
 #include <asm/setup.h>
@@ -55,6 +56,10 @@ static const struct of_device_id irq_match[] = {
 	{
 		.compatible = "arm,cortex-a15-gic",
 		.data = gic_of_init,
+	},
+	{
+		.compatible = "ti,keystone-ipc-irq",
+		.data = keystone_ipc_irq_of_init,
 	},
 	{}
 };
