@@ -109,6 +109,8 @@ static LIST_HEAD(netcp_devices);
 static LIST_HEAD(netcp_modules);
 static DEFINE_MUTEX(netcp_modules_lock);
 
+static struct kmem_cache *netcp_pinfo_cache;
+
 /*
  *  Module management routines
  */
@@ -531,7 +533,7 @@ static void netcp_rx_complete(void *data)
 			"receive: reclaimed packet %p, status %d, state %s\n",
 			p_info, status, netcp_rx_state_str(netcp));
 		dev_kfree_skb_any(skb);
-		kfree(p_info);
+		kmem_cache_free(netcp_pinfo_cache, p_info);
 		netcp->ndev->stats.rx_dropped++;
 		return;
 	}
@@ -541,7 +543,7 @@ static void netcp_rx_complete(void *data)
 			 "receive: reclaimed packet %p, status %d, state %s\n",
 			 p_info, status, netcp_rx_state_str(netcp));
 		dev_kfree_skb_any(skb);
-		kfree(p_info);
+		kmem_cache_free(netcp_pinfo_cache, p_info);
 		netcp->ndev->stats.rx_errors++;
 		return;
 	}
@@ -549,7 +551,7 @@ static void netcp_rx_complete(void *data)
 	if (unlikely(!skb->len)) {
 		dev_warn(netcp->dev, "receive: zero length packet\n");
 		dev_kfree_skb_any(skb);
-		kfree(p_info);
+		kmem_cache_free(netcp_pinfo_cache, p_info);
 		netcp->ndev->stats.rx_errors++;
 		return;
 	}
@@ -570,7 +572,7 @@ static void netcp_rx_complete(void *data)
 		if (ret) {
 			dev_err(netcp->dev, "RX hook %d failed: %d\n", rx_hook->order, ret);
 			dev_kfree_skb_any(skb);
-			kfree(p_info);
+			kmem_cache_free(netcp_pinfo_cache, p_info);
 			return;
 		}
 	}
@@ -579,7 +581,7 @@ static void netcp_rx_complete(void *data)
 	netcp->ndev->stats.rx_bytes += skb->len;
 
 	p_info->skb = NULL;
-	kfree(p_info);
+	kmem_cache_free(netcp_pinfo_cache, p_info);
 
 	/* push skb up the stack */
 	skb->protocol = eth_type_trans(skb, netcp->ndev);
@@ -598,7 +600,7 @@ static void netcp_rxpool_free(void *arg, unsigned q_num, unsigned bufsize,
 
 		dma_unmap_sg(netcp->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
 		dev_kfree_skb_any(skb);
-		kfree(p_info);
+		kmem_cache_free(netcp_pinfo_cache, p_info);
 	} else {
 		void *bufptr = desc->callback_param;
 		struct scatterlist sg[1];
@@ -632,7 +634,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		struct sk_buff *skb;
 
 		/* Allocate a primary receive queue entry */
-		p_info = kzalloc(sizeof(*p_info), GFP_ATOMIC);
+		p_info = kmem_cache_alloc(netcp_pinfo_cache, GFP_ATOMIC);
 		if (!p_info) {
 			dev_err(netcp->dev, "packet alloc failed\n");
 			return NULL;
@@ -642,7 +644,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		skb = netdev_alloc_skb(netcp->ndev, bufsize);
 		if (!skb) {
 			dev_err(netcp->dev, "skb alloc failed\n");
-			kfree(p_info);
+			kmem_cache_free(netcp_pinfo_cache, p_info);
 			return NULL;
 		}
 		skb->dev = netcp->ndev;
@@ -658,7 +660,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		if (p_info->sg_ents != 3) {
 			dev_err(netcp->dev, "dma map failed\n");
 			dev_kfree_skb_any(skb);
-			kfree(p_info);
+			kmem_cache_free(netcp_pinfo_cache, p_info);
 			return NULL;
 		}
 
@@ -668,7 +670,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		if (IS_ERR_OR_NULL(desc)) {
 			dma_unmap_sg(netcp->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
 			dev_kfree_skb_any(skb);
-			kfree(p_info);
+			kmem_cache_free(netcp_pinfo_cache, p_info);
 			err = PTR_ERR(desc);
 			if (err != -ENOMEM) {
 				dev_err(netcp->dev,
@@ -871,7 +873,7 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	ndev->stats.tx_packets++;
 	ndev->stats.tx_bytes += skb->len;
 
-	p_info = kzalloc(sizeof(*p_info), GFP_ATOMIC);
+	p_info = kmalloc(sizeof(*p_info), GFP_ATOMIC);
 	if (!p_info) {
 		ndev->stats.tx_dropped++;
 		dev_kfree_skb_any(skb);
@@ -883,6 +885,7 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	p_info->skb = skb;
 	p_info->tx_pipe = NULL;
 	p_info->psdata_len = 0;
+	memset(p_info->epib, 0, sizeof(p_info->epib));
 
 	/* Find out where to inject the packet for transmission */
 	list_for_each_entry(tx_hook, &netcp->txhook_list_head, list) {
@@ -1896,13 +1899,36 @@ static struct platform_driver netcp_driver = {
 	.remove = netcp_remove,
 };
 
-extern void keystone_cpsw_init(void);
+extern int  keystone_cpsw_init(void);
 extern void keystone_cpsw_exit(void);
 
 static int __init netcp_init(void)
 {
-	keystone_cpsw_init();
-	return platform_driver_register(&netcp_driver);
+	int err;
+
+	/* Create a cache for these commonly-used structures */
+	netcp_pinfo_cache = kmem_cache_create("netcp_pinfo_cache",
+			sizeof(struct netcp_packet), sizeof(void *),
+			0, NULL);
+	if (!netcp_pinfo_cache)
+		return -ENOMEM;
+
+	err = keystone_cpsw_init();
+	if (err)
+		goto cpsw_fail;
+
+	err = platform_driver_register(&netcp_driver);
+	if (err)
+		goto netcp_fail;
+
+	return 0;
+
+netcp_fail:
+	keystone_cpsw_exit();
+cpsw_fail:
+	kmem_cache_destroy(netcp_pinfo_cache);
+	netcp_pinfo_cache = NULL;
+	return err;
 }
 module_init(netcp_init);
 
@@ -1910,6 +1936,9 @@ static void __exit netcp_exit(void)
 {
 	platform_driver_unregister(&netcp_driver);
 	keystone_cpsw_exit();
+
+	kmem_cache_destroy(netcp_pinfo_cache);
+	netcp_pinfo_cache = NULL;
 }
 module_exit(netcp_exit);
 
