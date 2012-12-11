@@ -38,6 +38,7 @@
 #define MDSTAT_STATE_MASK	0x3f
 #define PDSTAT_STATE_MASK	0x1f
 #define MDCTL_FORCE		BIT(31)
+#define MDCTL_LRESET		BIT(8)
 #define PDCTL_NEXT		BIT(0)
 #define PDCTL_EPCGOOD		BIT(8)
 
@@ -46,6 +47,7 @@
 #define PSC_FORCE		BIT(1) /* Force module state transtition */
 #define PSC_HAS_EXT_POWER_CNTL	BIT(2) /* PSC has external power control
 					* available (for DM6446 SoC) */
+#define PSC_LRESET		BIT(3) /* Keep module in local reset */
 /**
  * struct clk_psc - DaVinci PSC clock
  * @hw: clk_hw for the psc
@@ -80,6 +82,8 @@ static void clk_psc_config(void __iomem *base, unsigned int domain,
 	mdctl |= next_state;
 	if (flags & PSC_FORCE)
 		mdctl |= MDCTL_FORCE;
+	if (flags & PSC_LRESET)
+		mdctl &= ~MDCTL_LRESET;
 	__raw_writel(mdctl, psc_base + MDCTL + 4 * id);
 
 	pdstat = __raw_readl(psc_base + PDSTAT + 4 * domain);
@@ -278,6 +282,11 @@ void __init of_davinci_psc_clk_init(struct device_node *node, spinlock_t *lock)
 	of_property_read_string_index(node, "base-flags", 0, &base_flags);
 	if (base_flags && !strcmp(base_flags, "ignore-unused"))
 		data->flags = CLK_IGNORE_UNUSED;
+
+	if (of_property_read_bool(node, "ti,psc-lreset"))
+		data->psc_flags |= PSC_LRESET;
+	if (of_property_read_bool(node, "ti,psc-force"))
+		data->psc_flags |= PSC_FORCE;
 
 	clk = clk_register_davinci_psc(NULL, clk_name, parent_name,
 				data, lock);
