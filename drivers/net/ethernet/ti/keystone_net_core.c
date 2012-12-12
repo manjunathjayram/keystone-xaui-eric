@@ -1389,7 +1389,7 @@ static int netcp_ndo_ioctl(struct net_device *ndev,
 	if (cmd == SIOCSHWTSTAMP)
 		return netcp_hwtstamp_ioctl(ndev, req, cmd);
 
-	return 0;
+	return -EOPNOTSUPP;
 }
 
 static int netcp_ndo_change_mtu(struct net_device *ndev, int new_mtu)
