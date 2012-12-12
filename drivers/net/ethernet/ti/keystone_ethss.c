@@ -597,7 +597,7 @@ static void cpsw_slave_open(struct cpsw_slave *slave, struct cpsw_priv *priv)
 	char name[32];
 	u32 slave_port;
 
-	sprintf(name, "slave-%d", slave->slave_num);
+	snprintf(name, sizeof(name), "slave-%d", slave->slave_num);
 
 	keystone_sgmii_reset(priv->sgmii_port_regs, slave->slave_num);
 
