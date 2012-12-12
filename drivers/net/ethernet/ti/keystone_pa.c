@@ -913,7 +913,7 @@ static void tstamp_complete(u32 context, struct pa_packet *p_info)
 	
 	skb = pend->skb;
 	if (!p_info) {
-		dev_warn(p_info->priv->dev, "Timestamp completion timeout\n");
+		dev_warn(pend->pa_dev->dev, "Timestamp completion timeout\n");
 		kfree_skb(skb);
 	} else {
 		tx_timestamp = p_info->epib[0];
