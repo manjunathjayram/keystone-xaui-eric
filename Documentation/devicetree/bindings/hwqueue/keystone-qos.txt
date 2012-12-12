@@ -43,7 +43,7 @@ The following attributes are recognized within QoS configuration nodes:
 
   - "weight"
 
-    e.g. weight = <50>;
+    e.g. weight = <80>;
 
     This attribute specifies the weight attached to the child node of a
     weighted-round-robin node.  It is an error to specify this attribute on a
@@ -70,7 +70,7 @@ The following attributes are recognized within QoS configuration nodes:
 
   - "output-rate"
 
-    e.g. output-rate = <100000 1000>;
+    e.g. output-rate = <31250000 25000>;
 
     The first element of this attribute specifies the output shaped rate in
     bytes/second or packets/second (depending on the accounting mode for the
@@ -102,7 +102,7 @@ The following attributes are recognized within QoS configuration nodes:
 
   - "input-queues"
 
-    e.g. input-queues = <0 4 8 12 56>;
+    e.g. input-queues = <8010 8065>;
 
     This specifies a set of ingress queues that feed into a QoS node. This attribute
     must be defined only for leaf nodes in the QoS tree.  Specifying input queues 
@@ -120,6 +120,8 @@ The following attributes are recognized within QoS configuration nodes:
     stats-class attribute on an intermediate node will be treated as an error.
 
   - "drop-policy"
+
+    e.g. drop-policy = "no-drop"
 
     The drop-policy attribute specifies a drop policy to apply to a QoS
     node (tail drop, random early drop, no drop, etc.) when the traffic
@@ -159,9 +161,9 @@ The following attributes are recognized within traffic drop policy nodes:
 
   - "random-early-drop"
 
-    e.g. random-early-drop = <1000 50000 2000>;
+    e.g. random-early-drop = <32768 65536 2 2000>;
 
-    The random-early-drop attribute specifies the following three parameters
+    The random-early-drop attribute specifies the following four parameters
     in order:
 
       - low threshold:	No packets are dropped when the average queue depth is
@@ -171,6 +173,8 @@ The following attributes are recognized within traffic drop policy nodes:
       - high threshold:	All packets are dropped when the average queue depth
 			above this threshold (in bytes). This parameter is
 			optional, and defaults to twice the low threshold.
+
+      - max drop probability: the maximum drop probability
 
       - half-life:	Specified in milli seconds. This is used to calculate
 			the average queue depth. This parameter
