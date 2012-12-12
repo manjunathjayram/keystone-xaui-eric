@@ -354,8 +354,8 @@ static const struct netcp_ethtool_stat et_stats[] = {
 static void keystone_get_drvinfo(struct net_device *ndev,
 			     struct ethtool_drvinfo *info)
 {
-	strcpy(info->driver, NETCP_DRIVER_NAME);
-	strcpy(info->version, NETCP_DRIVER_VERSION);
+	strncpy(info->driver, NETCP_DRIVER_NAME, sizeof(info->driver));
+	strncpy(info->version, NETCP_DRIVER_VERSION, sizeof(info->version));
 }
 
 static u32 keystone_get_msglevel(struct net_device *ndev)
