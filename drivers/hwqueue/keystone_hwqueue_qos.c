@@ -369,7 +369,7 @@ static int khwq_program_drop_policy(struct khwq_qos_info *info,
 	error = khwq_qos_set_drop_cfg_red_high(kdev, policy->drop_cfg_idx,
 					       policy->red_high, false);
 
-	val = policy->half_life * (info->ticks_per_sec / 1000);
+	val = policy->half_life / 100;
 	time_constant = ilog2((3 * val) + 1);
 
 	error = khwq_qos_set_drop_cfg_time_const(kdev, policy->drop_cfg_idx,
@@ -673,18 +673,18 @@ khwq_qos_get_drop_policy(struct khwq_device *kdev, struct khwq_qos_info *info,
 	if (elements > 1)
 		policy->red_high = temp[1];
 
-	policy->max_drop_prob = 20;
+	policy->max_drop_prob = 2;
 	if (elements > 2)
 		policy->max_drop_prob = temp[2];
 	if (policy->max_drop_prob >= 100) {
 		dev_warn(kdev->dev, "invalid max drop prob %d on policy %s, taking defaults\n",
 			 policy->max_drop_prob, policy->name);
-		policy->max_drop_prob = 20;
+		policy->max_drop_prob = 2;
 	}
 
 	policy->half_life = 2000;
 	if (elements > 3)
-		policy->half_life = temp[2];
+		policy->half_life = temp[3];
 
 done:
 	if (of_find_property(node, "default", NULL)) {
@@ -2132,7 +2132,7 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 	if (WARN_ON(error))
 		return error;
 
-	val = 0;
+	val = qnode->output_rate / info->ticks_per_sec;
 	error = khwq_qos_set_sched_out_throttle(kdev, idx, val, sync);
 	if (WARN_ON(error))
 		return error;
