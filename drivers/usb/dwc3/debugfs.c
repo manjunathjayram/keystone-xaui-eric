@@ -384,7 +384,7 @@ static int dwc3_mode_show(struct seq_file *s, void *unused)
 	u32			reg;
 
 	spin_lock_irqsave(&dwc->lock, flags);
-	reg = dwc3_readl(dwc->regs, DWC3_GCTL);
+	reg = dwc3_readl(dwc, DWC3_GCTL);
 	spin_unlock_irqrestore(&dwc->lock, flags);
 
 	switch (DWC3_GCTL_PRTCAP(reg)) {
@@ -453,7 +453,7 @@ static int dwc3_testmode_show(struct seq_file *s, void *unused)
 	u32			reg;
 
 	spin_lock_irqsave(&dwc->lock, flags);
-	reg = dwc3_readl(dwc->regs, DWC3_DCTL);
+	reg = dwc3_readl(dwc, DWC3_DCTL);
 	reg &= DWC3_DCTL_TSTCTRL_MASK;
 	reg >>= 1;
 	spin_unlock_irqrestore(&dwc->lock, flags);
@@ -537,7 +537,7 @@ static int dwc3_link_state_show(struct seq_file *s, void *unused)
 	u32			reg;
 
 	spin_lock_irqsave(&dwc->lock, flags);
-	reg = dwc3_readl(dwc->regs, DWC3_DSTS);
+	reg = dwc3_readl(dwc, DWC3_DSTS);
 	state = DWC3_DSTS_USBLNKST(reg);
 	spin_unlock_irqrestore(&dwc->lock, flags);
 
