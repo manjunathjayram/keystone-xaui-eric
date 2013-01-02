@@ -16,6 +16,7 @@
 #include <linux/io.h>
 #include <linux/of.h>
 #include <linux/init.h>
+#include <linux/slab.h>
 #include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/of_address.h>
@@ -38,6 +39,13 @@
 #define RSTMUX8_OMODE_DEVICE_RESET_SHIFT	1
 #define RSTMUX8_OMODE_DEVICE_RESET_MASK		(BIT(1) | BIT(2) | BIT(3))
 #define RSTMUX8_LOCK_MASK			BIT(0)
+
+unsigned long __arch_dma_pfn_offset;
+
+#ifdef CONFIG_ZONE_DMA
+extern phys_addr_t arm_dma_limit;
+extern unsigned long arm_dma_zone_size;
+#endif
 
 static struct map_desc io_desc[] = {
 	{
@@ -113,15 +121,25 @@ static bool is_coherent(struct device *dev)
 }
 
 static int keystone_platform_notifier(struct notifier_block *nb,
-				      unsigned long event, void *dev)
+				      unsigned long event, void *_dev)
 {
-	if (event != BUS_NOTIFY_ADD_DEVICE)
-		return NOTIFY_DONE;
+	struct device *dev = _dev;
 
-	if (is_coherent(dev))
-		set_dma_ops(dev, &arm_coherent_dma_ops);
-
-	return NOTIFY_OK;
+#ifdef CONFIG_ZONE_DMA
+	if (event == BUS_NOTIFY_ADD_DEVICE) {
+		dev->dma_mask = kmalloc(sizeof(*dev->dma_mask), GFP_KERNEL);
+		dev->coherent_dma_mask = arm_dma_limit;
+		if (dev->dma_mask)
+			*dev->dma_mask = arm_dma_limit;
+		if (is_coherent(dev))
+			set_dma_ops(dev, &arm_coherent_dma_ops);
+		return NOTIFY_OK;
+	} else if (event == BUS_NOTIFY_DEL_DEVICE) {
+		kfree(dev->dma_mask);
+		return NOTIFY_OK;
+	}
+#endif
+	return NOTIFY_DONE;
 }
 
 static struct notifier_block keystone_platform_nb = {
@@ -185,13 +203,6 @@ static const char *keystone2_match[] __initconst = {
 	"ti,tci6638-evm",
 	NULL,
 };
-
-unsigned long __arch_dma_pfn_offset;
-
-#ifdef CONFIG_ZONE_DMA
-extern phys_addr_t arm_dma_limit;
-extern unsigned long arm_dma_zone_size;
-#endif
 
 static void __init keystone_init_meminfo(void)
 {
