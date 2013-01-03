@@ -16,13 +16,27 @@
 #define __CLK_KEYSTONE_PLL_H
 
 struct clk_keystone_pll_data {
-	/* register holds lower bits of PLLM */
+	/*
+	 * Has pllctrl. If set to non zero, lower 6 bits of multiplier is in
+	 * pllm register of pll controller, else it is in the pll_ctrl0
+	 * (bit 11-6)
+	 */
+	unsigned char has_pllctrl;
+	/*
+	 * physical address of PLLM in pll controller. Used when has_pllctrl is
+	 * non zero
+	 */
 	u32 phy_pllm;
-	/* holds upper bits of PLLM */
-	u32 phy_main_pll_ctl0;
-	/* mapped addresses. should be initialized by  */
+	/*
+	 * Physical address of PLL ctrl0. This could be that of Main PLL or Any
+	 * other PLLs in the device such as ARM PLL, DDR PLL or PA PLL available
+	 * on keystone2. These PLLs are controlled by this register. Main PLL is
+	 * controlled by a PLL controller.
+	 */
+	u32 phy_pll_ctl0;
+	/* mapped addresses of the above registers. */
 	void __iomem *pllm;
-	void __iomem *main_pll_ctl0;
+	void __iomem *pll_ctl0;
 	u32 pllm_lower_mask;
 	u32 pllm_upper_mask;
 	u32 pllm_upper_shift;
