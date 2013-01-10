@@ -63,7 +63,7 @@
 			refclkmain: refclkmain {
 				#clock-cells = <0>;
 				compatible = "fixed-clock";
-				clock-frequency = <122880000>;
+				clock-frequency = <100000000>;
 				clock-output-names = "refclk-main";
 			};
 
@@ -219,7 +219,6 @@
 				clocks = <&chipclk16>;
 				clock-output-names = "usb";
 				reg = <0x02350000 4096>;
-				status = "enabled";
 				lpsc = <2>;
 			};
 
@@ -233,15 +232,6 @@
 				lpsc = <3>;
 			};
 
-			clktsip: clktsip {
-				#clock-cells = <0>;
-				compatible = "davinci,psc-clk";
-				clocks = <&chipclk13>;
-				clock-output-names = "tsip";
-				reg = <0x02350000 4096>;
-				status = "enabled";
-				lpsc = <4>;
-			};
 
 			clkdebugsstrc: clkdebugsstrc {
 				#clock-cells = <0>;
@@ -861,7 +851,7 @@
 		timer {
 			compatible = "arm,armv7-timer";
 			interrupts = <1 13 0xf08 1 14 0xf08>;
-			clock-frequency = <10000000>; /* Freq in Hz - optional */
+			clock-frequency = <166666666>; /* Freq in Hz - optional */
 		};
 
 		uart0:	serial@02530c00 {
@@ -996,13 +986,13 @@
 			gpio-controller;
 			#gpio-cells = <2>;
 			/* HW Interrupts mapped to GPIO pins */
-			interrupts = <0 120 0xf02 0 121 0xf02 0 122 0xf02 0 123 0xf02 0 124 0xf02
-					0 125 0xf02 0 126 0xf02 0 127 0xf02 0 128 0xf02 0 129 0xf02
-					0 130 0xf02 0 131 0xf02 0 132 0xf02 0 133 0xf02 0 134 0xf02
-					0 135 0xf02 0 136 0xf02 0 137 0xf02 0 138 0xf02 0 139 0xf02
-					0 140 0xf02 0 141 0xf02 0 142 0xf02 0 143 0xf02 0 144 0xf02
-					0 145 0xf02 0 146 0xf02 0 147 0xf02 0 148 0xf02 0 149 0xf02
-					0 150 0xf02 0 151 0xf02>;
+			interrupts = <0 120 0xf01 0 121 0xf01 0 122 0xf01 0 123 0xf01 0 124 0xf01
+					0 125 0xf01 0 126 0xf01 0 127 0xf01 0 128 0xf01 0 129 0xf01
+					0 130 0xf01 0 131 0xf01 0 132 0xf01 0 133 0xf01 0 134 0xf01
+					0 135 0xf01 0 136 0xf01 0 137 0xf01 0 138 0xf01 0 139 0xf01
+					0 140 0xf01 0 141 0xf01 0 142 0xf01 0 143 0xf01 0 144 0xf01
+					0 145 0xf01 0 146 0xf01 0 147 0xf01 0 148 0xf01 0 149 0xf01
+					0 150 0xf01 0 151 0xf01>;
 			interrupt-controller;
 			#interrupt-cells = <2>;
 			clocks = <&clkgpio>;
