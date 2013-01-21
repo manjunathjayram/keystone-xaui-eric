@@ -1515,15 +1515,9 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 }
 
 
-static __wsum crc32c_partial(const void *buff, int len, __wsum wsum)
-{
-	return (__wsum)sctp_crc32c(wsum, (u8 *)buff, (u16)len);
-}
-
 /* This code adapted from net/core/skbuff.c:skb_checksum() */
-static __wsum checksum_fragments(struct sk_buff *skb,
-		__wsum (*calculate)(const void *buff, int len, __wsum wsum),
-		int offset, int len, __wsum wsum)
+static __wsum skb_sctp_csum(struct sk_buff *skb, int offset,
+			  int len, __wsum csum)
 {
 	int start = skb_headlen(skb);
 	int i, copy = start - offset;
@@ -1533,9 +1527,9 @@ static __wsum checksum_fragments(struct sk_buff *skb,
 	if (copy > 0) {
 		if (copy > len)
 			copy = len;
-		wsum = calculate(skb->data + offset, copy, wsum);
+		csum = sctp_update_cksum(skb->data + offset, copy, csum);
 		if ((len -= copy) == 0)
-			return wsum;
+			return csum;
 		offset += copy;
 	}
 
@@ -1552,12 +1546,12 @@ static __wsum checksum_fragments(struct sk_buff *skb,
 
 			if (copy > len)
 				copy = len;
-			vaddr = kmap_atomic(skb_frag_page(frag));
-			wsum = calculate(vaddr + frag->page_offset +
-					 offset - start, copy, wsum);
-			kunmap_atomic(vaddr);
+			vaddr = kmap_skb_frag(frag);
+			csum = sctp_update_cksum(vaddr + frag->page_offset +
+					 offset - start, copy, csum);
+			kunmap_skb_frag(vaddr);
 			if (!(len -= copy))
-				return wsum;
+				return csum;
 			offset += copy;
 		}
 		start = end;
@@ -1572,25 +1566,77 @@ static __wsum checksum_fragments(struct sk_buff *skb,
 		if ((copy = end - offset) > 0) {
 			if (copy > len)
 				copy = len;
-			wsum = checksum_fragments(frag_iter, calculate,
-						offset - start, copy, wsum);
+			csum = skb_sctp_csum(frag_iter,
+						offset - start, copy, csum);
 			if ((len -= copy) == 0)
-				return wsum;
+				return csum;
 			offset += copy;
 		}
 		start = end;
 	}
+	BUG_ON(len);
 
-	return wsum;
+	return csum;
+}
+
+static void skb_warn_bad_offload(const struct sk_buff *skb)
+{
+	static const netdev_features_t null_features = 0;
+	struct net_device *dev = skb->dev;
+	const char *driver = "";
+
+	if (dev && dev->dev.parent)
+		driver = dev_driver_string(dev->dev.parent);
+
+	WARN(1, "%s: caps=(%pNF, %pNF) len=%d data_len=%d gso_size=%d "
+	     "gso_type=%d ip_summed=%d\n",
+	     driver, dev ? &dev->features : &null_features,
+	     skb->sk ? &skb->sk->sk_route_caps : &null_features,
+	     skb->len, skb->data_len, skb_shinfo(skb)->gso_size,
+	     skb_shinfo(skb)->gso_type, skb->ip_summed);
+}
+
+/* This code adapted from net/core/dev.c:skb_checksum_help() */
+static int skb_sctp_csum_help(struct sk_buff *skb)
+{
+	__wsum csum;
+	int ret = 0, offset;
+
+	if (skb->ip_summed == CHECKSUM_COMPLETE)
+		goto out_set_summed;
+
+	if (unlikely(skb_shinfo(skb)->gso_size)) {
+		skb_warn_bad_offload(skb);
+		return -EINVAL;
+	}
+
+	offset = skb_checksum_start_offset(skb);
+	BUG_ON(offset >= skb_headlen(skb));
+	csum = skb_sctp_csum(skb, offset, skb->len - offset, ~0);
+
+	offset += skb->csum_offset;
+	BUG_ON(offset + sizeof(__le32) > skb_headlen(skb));
+
+	if (skb_cloned(skb) &&
+	    !skb_clone_writable(skb, offset + sizeof(__le32))) {
+		ret = pskb_expand_head(skb, 0, 0, GFP_ATOMIC);
+		if (ret)
+			goto out;
+	}
+
+	*(__le32 *)(skb->data + offset) = sctp_end_cksum(csum);
+out_set_summed:
+	skb->ip_summed = CHECKSUM_NONE;
+out:
+	return ret;
 }
 
 static int pa_txhook_softcsum(int order, void *data, struct netcp_packet *p_info)
 {
 	struct pa_device *pa_dev = data;
 	struct sk_buff *skb = p_info->skb;
-	int csum_start, csum_length, csum_offset;
 	int l4_proto;
-	__wsum wsum;
+	int ret = 0;
 
 	if ((skb->ip_summed != CHECKSUM_PARTIAL) ||
 	    (pa_dev->csum_offload != CSUM_OFFLOAD_SOFT))
@@ -1600,19 +1646,13 @@ static int pa_txhook_softcsum(int order, void *data, struct netcp_packet *p_info
 	if (unlikely(!l4_proto))
 		return 0;
 
-	csum_start = skb_checksum_start_offset(skb);
-	csum_length = skb->len - csum_start;
-	csum_offset = csum_start + skb->csum_offset;
-
 	switch (l4_proto) {
 	case IPPROTO_TCP:
 	case IPPROTO_UDP:
-		wsum = checksum_fragments(skb, csum_partial, csum_start, csum_length, 0);
-		*(u16 *)(skb->data + csum_offset) = csum_fold(wsum);
+		ret = skb_checksum_help(skb);
 		break;
 	case IPPROTO_SCTP:
-		wsum = checksum_fragments(skb, crc32c_partial, csum_start, csum_length, ~0);
-		*(u32 *)(skb->data + csum_offset) = sctp_end_cksum(wsum);
+		ret = skb_sctp_csum_help(skb);
 		break;
 	default:
 		if (unlikely(net_ratelimit())) {
@@ -1623,8 +1663,7 @@ static int pa_txhook_softcsum(int order, void *data, struct netcp_packet *p_info
 		return 0;
 	}
 
-	skb->ip_summed = CHECKSUM_NONE;
-	return 0;
+	return ret;
 }
 
 
@@ -1876,9 +1915,9 @@ static int pa_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 	return 0;
 }
 
-static int pa_release(void *inst_priv)
+static int pa_release(void *intf_priv)
 {
-	struct pa_device *pa_dev = inst_priv;
+	struct pa_device *pa_dev = intf_priv;
 	struct net_device *ndev = pa_dev->net_device;
 
 	if (pa_dev->csum_offload) {
