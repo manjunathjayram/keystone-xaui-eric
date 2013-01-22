@@ -44,7 +44,7 @@
 #define DEVICE_PA_PDSP3_FIRMWARE "keystone/pa_pdsp3_classify2.fw"
 #define DEVICE_PA_PDSP45_FIRMWARE "keystone/pa_pdsp45_pam.fw"
 
-#define	PA_NETIF_FEATURES	(NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM | NETIF_F_SCTP_CSUM)
+#define	PA_NETIF_FEATURES	(NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM)
 
 #define PSTREAM_ROUTE_PDSP0	0
 
