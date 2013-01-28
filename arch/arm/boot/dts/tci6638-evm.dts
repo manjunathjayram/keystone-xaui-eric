@@ -1023,20 +1023,6 @@
 			clock-names = "gpio";
 		};
 
-		dwc: dwc@2680000 {
-			compatible = "ti,keystone-dwc3";
-			#address-cells = <1>;
-			#size-cells = <1>;
-			reg = <0x2690000 0x70000
-			       0x2680000 0x10000
-			       0x2620738 32>;
-			interrupts = <0 393 0xf01>;
-			clocks = <&clkusb>;
-			clock-names = "usb";
-			interrupt-controller;
-			#interrupt-cells = <2>;
-		};
-
 		ipcgpio0: gpio@2620240 {
 			compatible = "ti,keystone-ipc-gpio";
 			reg = <0x02620240 4>;
