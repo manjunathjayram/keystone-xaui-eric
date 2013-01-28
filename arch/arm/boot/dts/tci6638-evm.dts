@@ -63,7 +63,7 @@
 			refclkmain: refclkmain {
 				#clock-cells = <0>;
 				compatible = "fixed-clock";
-				clock-frequency = <100000000>;
+				clock-frequency = <122880000>;
 				clock-output-names = "refclk-main";
 			};
 
