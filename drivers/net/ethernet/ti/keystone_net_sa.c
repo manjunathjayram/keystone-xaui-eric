@@ -37,6 +37,8 @@ struct sa_device {
 	const char			*tx_chan_name;
 	u32				 tx_queue_depth;
 	struct netcp_tx_pipe		 tx_pipe;
+	struct device_node		*node;
+	u32				 multi_if;
 };
 
 struct ipsecmgr_mod_sa_ctx_info {
@@ -127,29 +129,39 @@ fail:
 
 static int sa_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 {
+	struct netcp_priv *netcp = netdev_priv(ndev);
 	struct sa_device *sa_dev = inst_priv;
+	char node_name[24];
 
-	sa_dev->net_device = ndev;
-	*intf_priv = sa_dev;
+	snprintf(node_name, sizeof(node_name), "interface-%d",
+		 (sa_dev->multi_if) ? (netcp->cpsw_port - 1) : 0);
 
-	netcp_txpipe_init(&sa_dev->tx_pipe, netdev_priv(ndev),
-			  sa_dev->tx_chan_name, sa_dev->tx_queue_depth);
+	if (of_find_property(sa_dev->node, node_name, NULL)) {
+		sa_dev->net_device = ndev;
+		*intf_priv = sa_dev;
 
-	return 0;
+		netcp_txpipe_init(&sa_dev->tx_pipe, netdev_priv(ndev),
+				  sa_dev->tx_chan_name, sa_dev->tx_queue_depth);
+
+		sa_dev->tx_pipe.dma_psflags = netcp->cpsw_port;
+
+		return 0;
+	} else
+		return -ENODEV;
 }
 
-static int sa_release(void *inst_priv)
+static int sa_release(void *intf_priv)
 {
-	struct sa_device *sa_dev = inst_priv;
+	struct sa_device *sa_dev = intf_priv;
 
 	printk("%s() called for interface %s\n", __func__, sa_dev->net_device->name);
 	sa_dev->net_device = NULL;
 	return 0;
 }
 
-static int sa_remove(struct netcp_device *netcp_device, void *intf_priv)
+static int sa_remove(struct netcp_device *netcp_device, void *inst_priv)
 {
-	struct sa_device *sa_dev = intf_priv;
+	struct sa_device *sa_dev = inst_priv;
 	kfree(sa_dev);
 	return 0;
 }
@@ -175,6 +187,11 @@ static int sa_probe(struct netcp_device *netcp_device,
 	*inst_priv = sa_dev;
 	sa_dev->dev = dev;
 
+	sa_dev->node = node;
+
+	if (of_find_property(node, "multi-interface", NULL))
+		sa_dev->multi_if = 1;
+
 	ret = of_property_read_string(node, "tx-channel", &sa_dev->tx_chan_name);
 	if (ret < 0) {
 		dev_err(dev, "missing \"tx-channel\" parameter, err %d\n", ret);
@@ -189,7 +206,6 @@ static int sa_probe(struct netcp_device *netcp_device,
 		sa_dev->tx_queue_depth = 32;
 	}
 	dev_dbg(dev, "tx_queue_depth %u\n", sa_dev->tx_queue_depth);
-
 
 	return 0;
 }
