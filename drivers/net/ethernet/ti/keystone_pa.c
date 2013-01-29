@@ -27,6 +27,7 @@
 #include <linux/highmem.h>
 #include <linux/interrupt.h>
 #include <linux/dmaengine.h>
+#include <linux/net_tstamp.h>
 #include <linux/dma-mapping.h>
 #include <linux/scatterlist.h>
 #include <linux/byteorder/generic.h>
@@ -213,24 +214,41 @@ struct pa_statistics_regs {
 #define	PA_TXHOOK_ORDER	10
 #define	PA_RXHOOK_ORDER	10
 
+static DEFINE_MUTEX(pa_modules_lock);
+/**
+ * struct pa_lut_range_map lut range map entry
+ */
+struct pa_lut_range_map {
+	int start;
+	int end;
+	struct list_head node;
+};
+
+struct pa_lut_entry {
+	int in_use;
+	int used_by;
+	u8 mac_addr[6];
+};
+
 struct pa_intf {
 	struct pa_device		*pa_device;
 	struct net_device		*net_device;
+	struct netcp_tx_pipe		 tx_pipe;
+	unsigned			 data_flow_num;
+	unsigned			 data_queue_num;
+	u32				 saved_ss_state;
+	char				 tx_chan_name[24];
 };
 
 struct pa_device {
 	struct netcp_device		*netcp_device;
-	struct net_device		*net_device;		/* FIXME */
 	struct device			*dev;
 	struct clk			*clk;
-	struct dma_chan			*tx_channel;
+	struct dma_chan			*pdsp0_tx_channel;
 	struct dma_chan			*rx_channel;
-	const char			*tx_chan_name;
 	const char			*rx_chan_name;
 	unsigned			 cmd_flow_num;
 	unsigned			 cmd_queue_num;
-	unsigned			 data_flow_num;
-	unsigned			 data_queue_num;
 
 	u64				 pa2system_offset;
 
@@ -243,14 +261,12 @@ struct pa_device {
 	void __iomem				*pa_sram;
 	void __iomem				*pa_iram;
 	
-	u32				 saved_ss_state;
 
 	u8				*mc_list;
 	u8				 addr_count;
 	struct tasklet_struct		 task;
 	spinlock_t			 lock;
 	
-	struct netcp_tx_pipe		 tx_pipe;
 	u32				 tx_cmd_queue_depth;
 	u32				 tx_data_queue_depth;
 	u32				 rx_pool_depth;
@@ -259,6 +275,14 @@ struct pa_device {
 	u32				 txhook_order;
 	u32				 txhook_softcsum;
 	u32				 rxhook_order;
+	u32				 multi_if;
+	u32				 inuse_if_count;
+	u32				 lut_inuse_count;
+	u32				 lut_max_count;
+	struct list_head		 pa_lut_range_map;
+	struct pa_lut_entry		 *pa_lut_entry;
+
+	u32				 ts_not_req;
 };
 
 #define pa_from_module(data)	container_of(data, struct pa_device, module)
@@ -1065,13 +1089,14 @@ static struct dma_async_tx_descriptor *pa_rxpool_alloc(void *arg,
 	return desc;
 }
 
-static int keystone_pa_add_mac(struct pa_device *priv, const u8 *mac,
-			int rule, unsigned etype, int index)
+static int keystone_pa_add_mac(struct pa_intf *pa_intf, const u8 *mac,
+			int rule, unsigned etype, int index, int cpsw_port)
 {
 	struct pa_route_info route_info, fail_info;
 	struct pa_frm_command *fcmd;
 	struct pa_frm_cmd_add_lut1 *al1;
 	struct pa_packet *tx;
+	struct pa_device *priv = pa_intf->pa_device;
 	u32 context = PA_CONTEXT_CONFIG;
 	int size, ret;
 
@@ -1081,19 +1106,19 @@ static int keystone_pa_add_mac(struct pa_device *priv, const u8 *mac,
 
 	if (rule == PACKET_HST) {
 		route_info.dest			= PA_DEST_HOST;
-		route_info.flow_id		= priv->data_flow_num;
-		route_info.queue		= priv->data_queue_num;
+		route_info.flow_id		= pa_intf->data_flow_num;
+		route_info.queue		= pa_intf->data_queue_num;
 		route_info.m_route_index	= -1;
 		fail_info.dest			= PA_DEST_HOST;
-		fail_info.flow_id		= priv->data_flow_num;
-		fail_info.queue			= priv->data_queue_num;
+		fail_info.flow_id		= pa_intf->data_flow_num;
+		fail_info.queue			= pa_intf->data_queue_num;
 		fail_info.m_route_index		= -1;
 	} else if (rule == PACKET_PARSE) {
 		route_info.dest			= PA_DEST_CONTINUE_PARSE_LUT1;
 		route_info.m_route_index	= -1;
 		fail_info.dest			= PA_DEST_HOST;
-		fail_info.flow_id		= priv->data_flow_num;
-		fail_info.queue			= priv->data_queue_num;
+		fail_info.flow_id		= pa_intf->data_flow_num;
+		fail_info.queue			= pa_intf->data_queue_num;
 		fail_info.m_route_index		= -1;
 	} else if (rule == PACKET_DROP) {
 		route_info.dest			= PA_DEST_DISCARD;
@@ -1104,7 +1129,7 @@ static int keystone_pa_add_mac(struct pa_device *priv, const u8 *mac,
 
 	size = (sizeof(struct pa_frm_command) +
 		sizeof(struct pa_frm_cmd_add_lut1) + 4);
-	tx = pa_alloc_packet(priv, size, priv->tx_channel);
+	tx = pa_alloc_packet(priv, size, priv->pdsp0_tx_channel);
 	if (!tx) {
 		dev_err(priv->dev, "could not allocate cmd tx packet\n");
 		return -ENOMEM;
@@ -1127,11 +1152,14 @@ static int keystone_pa_add_mac(struct pa_device *priv, const u8 *mac,
 
 	if (etype) {
 		al1->u.eth_ip.etype	= etype;
-		al1->u.eth_ip.match_flags |= PAFRM_LUT1_CUSTOM_MATCH_ETYPE;
+		al1->u.eth_ip.match_flags |= PAFRM_LUT1_MATCH_ETYPE;
 	}
 
 	al1->u.eth_ip.vlan	= 0;
 	al1->u.eth_ip.pm.mpls	= 0;
+	al1->u.eth_ip.inport    = cpsw_port;
+	if (cpsw_port)
+		al1->u.eth_ip.match_flags |= PAFRM_LUT1_MATCH_PORT;
 
 	if (mac) {
 		al1->u.eth_ip.dmac[0] = mac[0];
@@ -1140,7 +1168,7 @@ static int keystone_pa_add_mac(struct pa_device *priv, const u8 *mac,
 		al1->u.eth_ip.dmac[3] = mac[3];
 		al1->u.eth_ip.dmac[4] = mac[4];
 		al1->u.eth_ip.dmac[5] = mac[5];
-		al1->u.eth_ip.key |= PAFRM_LUT1_KEY_MAC;
+		al1->u.eth_ip.key |= PAFRM_LUT1_MATCH_DMAC;
 	}
 
 	al1->u.eth_ip.smac[0] = 0;
@@ -1202,7 +1230,7 @@ static int pa_config_crc_engine(struct pa_device *priv)
 
 	/* Verify that there is enough room to create the command */
 	size = sizeof(*fcmd) + sizeof(*ccrc) - sizeof(u32);
-	tx = pa_alloc_packet(priv, size, priv->tx_pipe.dma_channel);
+	tx = pa_alloc_packet(priv, size, priv->pdsp0_tx_channel);
 	if (!tx) {
 		dev_err(priv->dev, "could not allocate cmd tx packet\n");
 		return -ENOMEM;
@@ -1420,20 +1448,19 @@ static inline int extract_l4_proto(struct netcp_packet *p_info)
 
 static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 {
-	struct pa_device *pa_dev = data;
+	struct pa_intf *pa_intf = data;
+	struct pa_device *pa_dev = pa_intf->pa_device;
+	struct netcp_priv *netcp_priv = netdev_priv(pa_intf->net_device);
 	struct sk_buff *skb = p_info->skb;
-	static const struct pa_cmd_next_route route_cmd = {
-					0,		/*  ctrlBitfield */
-					PA_DEST_EMAC,	/* Route - host */
-					0,              /* pktType don't care */
-					0,              /* flow Id */
-					0,  		/* Queue */
-					0,              /* SWInfo 0 */
-					0,              /* SWInfo 1 */
-					0,
-					};
 	struct pa_cmd_tx_timestamp tx_ts;
 	int size, total = 0;
+	struct pa_cmd_next_route route_cmd;
+
+	/* Generate the route_cmd */
+	memset(&route_cmd, 0, sizeof(route_cmd));
+	route_cmd.dest = PA_DEST_EMAC;
+	if (pa_dev->multi_if)
+		route_cmd.pkt_type_emac_ctrl = netcp_priv->cpsw_port;
 
 	/* Generate the next route command */
 	size = pa_fmtcmd_next_route(p_info, &route_cmd);
@@ -1442,7 +1469,9 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	total += size;
 
 	/* If TX Timestamp required, request it */
-	if ((skb_shinfo(p_info->skb)->tx_flags & SKBTX_HW_TSTAMP) && p_info->skb->sk) {
+	if ((skb_shinfo(p_info->skb)->tx_flags & SKBTX_HW_TSTAMP) &&
+	    p_info->skb->sk && (netcp_priv->pa_ts_req == 1) &&
+	    (netcp_priv->hwts_tx_en == 1)) {
 		struct tstamp_pending	*pend;
 		
 		pend = kzalloc(sizeof(*pend), GFP_ATOMIC);
@@ -1510,7 +1539,7 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 		total += size;
 	}
 
-	p_info->tx_pipe = &pa_dev->tx_pipe;
+	p_info->tx_pipe = &pa_intf->tx_pipe;
 	return 0;
 }
 
@@ -1633,7 +1662,8 @@ out:
 
 static int pa_txhook_softcsum(int order, void *data, struct netcp_packet *p_info)
 {
-	struct pa_device *pa_dev = data;
+	struct pa_intf *pa_intf = data;
+	struct pa_device *pa_dev = pa_intf->pa_device;
 	struct sk_buff *skb = p_info->skb;
 	int l4_proto;
 	int ret = 0;
@@ -1669,12 +1699,16 @@ static int pa_txhook_softcsum(int order, void *data, struct netcp_packet *p_info
 
 static int pa_rx_timestamp(int order, void *data, struct netcp_packet *p_info)
 {
-	struct pa_device *pa_dev = data;
-	struct netcp_priv *netcp = netdev_priv(pa_dev->net_device);
+	struct pa_intf *pa_intf = data;
+	struct pa_device *pa_dev = pa_intf->pa_device;
+	struct netcp_priv *netcp = netdev_priv(pa_intf->net_device);
 	struct sk_buff *skb = p_info->skb;
 	struct skb_shared_hwtstamps *sh_hw_tstamps;
 	u64 rx_timestamp;
 	u64 sys_time;
+
+	if (!netcp->pa_ts_req)
+		return 0;
 
 	if (!netcp->hwts_rx_en)
 		return 0;
@@ -1694,215 +1728,544 @@ static int pa_rx_timestamp(int order, void *data, struct netcp_packet *p_info)
 
 static int pa_close(void *intf_priv, struct net_device *ndev)
 {
-	struct pa_device *pa_dev = intf_priv;
+	struct pa_intf *pa_intf = intf_priv;
+	struct pa_device *pa_dev = pa_intf->pa_device;
 	struct netcp_priv *netcp_priv = netdev_priv(ndev);
 
-	/* De-Configure the streaming switch */
-	netcp_set_streaming_switch(pa_dev->netcp_device, 0, pa_dev->saved_ss_state);
-
-	netcp_unregister_txhook(netcp_priv, pa_dev->txhook_order, pa_tx_hook, pa_dev);
+	netcp_unregister_txhook(netcp_priv, pa_dev->txhook_order,
+				pa_tx_hook, intf_priv);
 	if (pa_dev->csum_offload == CSUM_OFFLOAD_SOFT)
-		netcp_unregister_txhook(netcp_priv, pa_dev->txhook_softcsum, pa_txhook_softcsum, pa_dev);
-	netcp_unregister_rxhook(netcp_priv, pa_dev->rxhook_order, pa_rx_timestamp, pa_dev);
+		netcp_unregister_txhook(netcp_priv, pa_dev->txhook_softcsum,
+					pa_txhook_softcsum, intf_priv);
+	netcp_unregister_rxhook(netcp_priv, pa_dev->rxhook_order,
+				pa_rx_timestamp, intf_priv);
 
-	tasklet_disable(&pa_dev->task);
-	
-	tstamp_purge_pending(pa_dev);
+	netcp_txpipe_close(&pa_intf->tx_pipe);
 
-	if (pa_dev->tx_channel) {
-		dmaengine_pause(pa_dev->tx_channel);
-		dma_release_channel(pa_dev->tx_channel);
-		pa_dev->tx_channel = NULL;
+	/* De-Configure the streaming switch */
+	netcp_set_streaming_switch(pa_dev->netcp_device,
+				   netcp_priv->cpsw_port,
+				   pa_intf->saved_ss_state);
+
+
+	mutex_lock(&pa_modules_lock);
+	if (!--pa_dev->inuse_if_count) {
+		/* Do pa disable related stuff only if this is the last
+		 * interface to go down
+		 */
+		tasklet_disable(&pa_dev->task);
+
+		tstamp_purge_pending(pa_dev);
+
+		if (pa_dev->pdsp0_tx_channel) {
+			dmaengine_pause(pa_dev->pdsp0_tx_channel);
+			dma_release_channel(pa_dev->pdsp0_tx_channel);
+			pa_dev->pdsp0_tx_channel = NULL;
+		}
+		if (pa_dev->rx_channel) {
+			dmaengine_pause(pa_dev->rx_channel);
+			dma_release_channel(pa_dev->rx_channel);
+			pa_dev->rx_channel = NULL;
+		}
+
+		if (pa_dev->clk) {
+			clk_disable_unprepare(pa_dev->clk);
+			clk_put(pa_dev->clk);
+		}
+		pa_dev->clk = NULL;
 	}
 
-	netcp_txpipe_close(&pa_dev->tx_pipe);
+	kfree(pa_intf);
 
-	if (pa_dev->rx_channel) {
-		dmaengine_pause(pa_dev->rx_channel);
-		dma_release_channel(pa_dev->rx_channel);
-		pa_dev->rx_channel = NULL;
-	}
-
-	if (pa_dev->clk) {
-		clk_disable_unprepare(pa_dev->clk);
-		clk_put(pa_dev->clk);
-	}
-	pa_dev->clk = NULL;
-
+	mutex_unlock(&pa_modules_lock);
 	return 0;
 }
 
 static int pa_open(void *intf_priv, struct net_device *ndev)
 {
-	struct pa_device *pa_dev = intf_priv;
+	struct pa_intf *pa_intf = intf_priv;
+	struct pa_device *pa_dev = pa_intf->pa_device;
 	struct netcp_priv *netcp_priv = netdev_priv(ndev);
 	const struct firmware *fw;
-	const u8 bcast_addr[6] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
 	struct dma_chan *chan;
 	struct dma_keystone_info config;
+	struct pa_lut_range_map *lutrange;
+	struct pa_lut_entry *tableentry;
 	dma_cap_mask_t mask;
+	u8 invalid_port = 0xff;
 	int i, factor;
-	int ret, err;
+	int ret, err, entry_id;
 
-	pa_dev->saved_ss_state = netcp_get_streaming_switch(pa_dev->netcp_device, 0);
+	/* The first time an open is being called */
+	mutex_lock(&pa_modules_lock);
 
-	pa_dev->clk = clk_get(pa_dev->dev, "clk_pa");
-	if (IS_ERR_OR_NULL(pa_dev->clk)) {
-		dev_warn(pa_dev->dev, "unable to get Packet Accelerator clock\n");
-		pa_dev->clk = NULL;
-	}
+	dev_dbg(pa_dev->dev, "pa_open() called for port: %d\n",
+		 netcp_priv->cpsw_port);
 
-	if (pa_dev->clk)
-		clk_prepare_enable(pa_dev->clk);
+	if (++pa_dev->inuse_if_count == 1) {
 
-	keystone_pa_reset(pa_dev);
+		/* Do pa enable, load firmware only for the first interface
+		 * that comes up
+		 */
+		dev_dbg(pa_dev->dev, "pa_open() called for first time"
+			" initializing per dev stuff\n");
 
-	for (i = 0; i <= 5; i++) {
-		if (i <= 2)
-			ret = request_firmware(&fw, DEVICE_PA_PDSP02_FIRMWARE, pa_dev->dev);
-		else if (i == 3)
-			ret = request_firmware(&fw, DEVICE_PA_PDSP3_FIRMWARE, pa_dev->dev);
-		else if (i > 3)
-			ret = request_firmware(&fw, DEVICE_PA_PDSP45_FIRMWARE, pa_dev->dev);
-		if (ret != 0) {
-			dev_err(pa_dev->dev, "cannot find firmware for pdsp %d\n", i);
+		pa_dev->clk = clk_get(pa_dev->dev, "clk_pa");
+		if (IS_ERR_OR_NULL(pa_dev->clk)) {
+			dev_warn(pa_dev->dev, "unable to get Packet Accelerator clock\n");
+			pa_dev->clk = NULL;
+		}
+
+		if (pa_dev->clk)
+			clk_prepare_enable(pa_dev->clk);
+
+		keystone_pa_reset(pa_dev);
+
+		for (i = 0; i <= 5; i++) {
+			if (i <= 2)
+				ret = request_firmware(&fw,
+					       DEVICE_PA_PDSP02_FIRMWARE,
+					       pa_dev->dev);
+			else if (i == 3)
+				ret = request_firmware(&fw,
+					       DEVICE_PA_PDSP3_FIRMWARE,
+					       pa_dev->dev);
+			else if (i > 3)
+				ret = request_firmware(&fw,
+						DEVICE_PA_PDSP45_FIRMWARE,
+						pa_dev->dev);
+			if (ret != 0) {
+				dev_err(pa_dev->dev, "cant find fw for pdsp %d",
+					i);
+				ret = -ENODEV;
+				goto fail;
+			}
+
+			/* Download the firmware to the PDSP */
+			keystone_pa_set_firmware(pa_dev, i,
+					(const unsigned int *) fw->data,
+					fw->size);
+
+			release_firmware(fw);
+		}
+
+		ret = keystone_pa_reset_control(pa_dev, PA_STATE_ENABLE);
+		if (ret != 1) {
+			dev_err(pa_dev->dev, "enable failed, ret = %d\n", ret);
 			ret = -ENODEV;
 			goto fail;
 		}
 
-		/* Download the firmware to the PDSP */
-		keystone_pa_set_firmware(pa_dev, i,
-					 (const unsigned int*) fw->data,
-					 fw->size);
+		pa_get_version(pa_dev);
 
-		release_firmware(fw);
+		factor = PA_TIMESTAMP_SCALER_FACTOR_2;
+
+		ret = pa_config_timestamp(pa_dev, factor);
+		if (ret != 0) {
+			dev_err(pa_dev->dev, "timestamp config fail, ret %d\n",
+				ret);
+			ret = -ENODEV;
+			goto fail;
+		}
+
+		pa_dev->pa2system_offset = 0;
+		pa_calibrate_with_system_timer(pa_dev);
+
+		dma_cap_zero(mask);
+		dma_cap_set(DMA_SLAVE, mask);
+
+		/* Open the PA Command transmit channel */
+		pa_dev->pdsp0_tx_channel = dma_request_channel_by_name(mask,
+								"patx-pdsp0");
+		if (IS_ERR_OR_NULL(pa_dev->pdsp0_tx_channel)) {
+			dev_err(pa_dev->dev, "Couldnt get PATX cmd channel\n");
+			pa_dev->pdsp0_tx_channel = NULL;
+			ret = -ENODEV;
+			goto fail;
+		}
+
+		memset(&config, 0, sizeof(config));
+		config.direction	= DMA_MEM_TO_DEV;
+		config.tx_queue_depth	= pa_dev->tx_cmd_queue_depth;
+
+		err = dma_keystone_config(pa_dev->pdsp0_tx_channel, &config);
+		if (err)
+			goto fail;
+
+		/* Open the PA common response channel */
+		pa_dev->rx_channel = dma_request_channel_by_name(mask, "parx");
+		if (IS_ERR_OR_NULL(pa_dev->rx_channel)) {
+			dev_err(pa_dev->dev, "Could not get PA RX channel\n");
+			pa_dev->rx_channel = NULL;
+			ret = -ENODEV;
+			goto fail;
+		}
+
+		memset(&config, 0, sizeof(config));
+
+		config.direction		= DMA_DEV_TO_MEM;
+		config.scatterlist_size		= PA_SGLIST_SIZE;
+		config.rxpool_allocator		= pa_rxpool_alloc;
+		config.rxpool_destructor	= pa_rxpool_free;
+		config.rxpool_param		= pa_dev;
+		config.rxpool_count		= 1;
+		config.rxpool_thresh_enable	= DMA_THRESH_NONE;
+		config.rxpools[0].pool_depth	= pa_dev->rx_pool_depth;
+		config.rxpools[0].buffer_size	= pa_dev->rx_buffer_size;
+
+		err = dma_keystone_config(pa_dev->rx_channel, &config);
+		if (err)
+			goto fail;
+
+		tasklet_init(&pa_dev->task, pa_chan_work_handler,
+			     (unsigned long) pa_dev);
+
+		dma_set_notify(pa_dev->rx_channel, pa_chan_notify, pa_dev);
+
+		pa_dev->cmd_flow_num = dma_get_rx_flow(pa_dev->rx_channel);
+		pa_dev->cmd_queue_num = dma_get_rx_queue(pa_dev->rx_channel);
+
+		dev_dbg(pa_dev->dev, "command receive flow %d, queue %d\n",
+			pa_dev->cmd_flow_num, pa_dev->cmd_queue_num);
+
+		pa_dev->addr_count = 0;
+
+		dma_rxfree_refill(pa_dev->rx_channel);
+
+		ret = pa_config_crc_engine(pa_dev);
+		if (ret < 0)
+			goto fail;
+		/* Write entries to PA with INVALID for all entries owned by
+		 * linux
+		 */
+
+		list_for_each_entry(lutrange, &pa_dev->pa_lut_range_map, node)
+		{
+			for (entry_id = lutrange->start;
+			     entry_id <= lutrange->end; entry_id++) {
+				tableentry = pa_dev->pa_lut_entry + entry_id;
+				tableentry->used_by = invalid_port;
+				keystone_pa_add_mac(pa_intf, NULL, PACKET_DROP,
+						    0, entry_id, invalid_port);
+			}
+		}
 	}
+	mutex_unlock(&pa_modules_lock);
 
-	ret = keystone_pa_reset_control(pa_dev, PA_STATE_ENABLE);
-	if (ret != 1) {
-		dev_err(pa_dev->dev, "enabling failed, ret = %d\n", ret);
-		ret = -ENODEV;
-		goto fail;
-	}
+	pa_intf->saved_ss_state = netcp_get_streaming_switch(
+						     pa_dev->netcp_device,
+						     netcp_priv->cpsw_port);
+	dev_dbg(pa_dev->dev, "saved_ss_state for port %d is %d\n",
+		 netcp_priv->cpsw_port, pa_intf->saved_ss_state);
 
-	pa_get_version(pa_dev);
+	chan = netcp_get_rx_chan(netcp_priv);
+	pa_intf->data_flow_num = dma_get_rx_flow(chan);
+	pa_intf->data_queue_num = dma_get_rx_queue(chan);
 
-	factor = PA_TIMESTAMP_SCALER_FACTOR_2;
+	dev_dbg(pa_dev->dev, "configuring data receive flow %d, queue %d\n",
+		 pa_intf->data_flow_num, pa_intf->data_queue_num);
 
-	ret = pa_config_timestamp(pa_dev, factor);
-	if (ret != 0) {
-		dev_err(pa_dev->dev, "timestamp configuration failed, ret = %d\n", ret);
-		ret = -ENODEV;
-		goto fail;
-	}
-
-	pa_dev->pa2system_offset = 0;
-	pa_calibrate_with_system_timer(pa_dev);
-
-	dma_cap_zero(mask);
-	dma_cap_set(DMA_SLAVE, mask);
-
-	/* Open the PA Command transmit channel */
-	pa_dev->tx_channel = dma_request_channel_by_name(mask, "patx-cmd");
-	if (IS_ERR_OR_NULL(pa_dev->tx_channel)) {
-		dev_err(pa_dev->dev, "Could not get PA TX command channel\n");
-		pa_dev->tx_channel = NULL;
-		ret = -ENODEV;
-		goto fail;
-	}
-
-	memset(&config, 0, sizeof(config));
-	config.direction	= DMA_MEM_TO_DEV;
-	config.tx_queue_depth	= pa_dev->tx_cmd_queue_depth;
-
-	err = dma_keystone_config(pa_dev->tx_channel, &config);
-	if (err)
-		goto fail;
+	/* Configure the streaming switch */
+	netcp_set_streaming_switch(pa_dev->netcp_device, netcp_priv->cpsw_port,
+				   PSTREAM_ROUTE_PDSP0);
 
 	/* Open the PA Data transmit channel */
-	ret = netcp_txpipe_open(&pa_dev->tx_pipe);
+	ret = netcp_txpipe_open(&pa_intf->tx_pipe);
 	if (ret)
 		goto fail;
 
-	/* Open the PA common response channel */
-	pa_dev->rx_channel = dma_request_channel_by_name(mask, "parx");
-	if (IS_ERR_OR_NULL(pa_dev->rx_channel)) {
-		dev_err(pa_dev->dev, "Could not get PA RX channel\n");
-		pa_dev->rx_channel = NULL;
-		ret = -ENODEV;
-		goto fail;
-	}
-
-	memset(&config, 0, sizeof(config));
-
-	config.direction		= DMA_DEV_TO_MEM;
-	config.scatterlist_size		= PA_SGLIST_SIZE;
-	config.rxpool_allocator		= pa_rxpool_alloc;
-	config.rxpool_destructor	= pa_rxpool_free;
-	config.rxpool_param		= pa_dev;
-	config.rxpool_count		= 1;
-	config.rxpool_thresh_enable	= DMA_THRESH_NONE;
-	config.rxpools[0].pool_depth	= pa_dev->rx_pool_depth;
-	config.rxpools[0].buffer_size	= pa_dev->rx_buffer_size;
-
-	err = dma_keystone_config(pa_dev->rx_channel, &config);
-	if (err)
-		goto fail;
-
-	tasklet_init(&pa_dev->task, pa_chan_work_handler,
-		     (unsigned long) pa_dev);
-
-	dma_set_notify(pa_dev->rx_channel, pa_chan_notify, pa_dev);
-
-	chan = netcp_get_rx_chan(netcp_priv);
-
-	pa_dev->data_flow_num = dma_get_rx_flow(chan);
-	pa_dev->data_queue_num = dma_get_rx_queue(chan);
-	pa_dev->cmd_flow_num = dma_get_rx_flow(pa_dev->rx_channel);
-	pa_dev->cmd_queue_num = dma_get_rx_queue(pa_dev->rx_channel);
-
-	dev_dbg(pa_dev->dev, "configuring command receive flow %d, queue %d\n",
-		pa_dev->cmd_flow_num, pa_dev->cmd_queue_num);
-
-	pa_dev->addr_count = 0;
-
-	dma_rxfree_refill(pa_dev->rx_channel);
-
-	ret = pa_config_crc_engine(pa_dev);
-	if (ret < 0)
-		goto fail;
-
-	ret = keystone_pa_add_mac(pa_dev, NULL,       PACKET_HST,  0,      63);
-	ret = keystone_pa_add_mac(pa_dev, bcast_addr, PACKET_HST,  0,      62);
-	ret = keystone_pa_add_mac(pa_dev, ndev->dev_addr,   PACKET_HST,  0,      61);
-	ret = keystone_pa_add_mac(pa_dev, ndev->dev_addr,   PACKET_PARSE, 0x0800, 60);
-	ret = keystone_pa_add_mac(pa_dev, ndev->dev_addr,   PACKET_PARSE, 0x86dd, 59);
-	pa_dev->addr_count = 5;
-
-	netcp_register_txhook(netcp_priv, pa_dev->txhook_order, pa_tx_hook, intf_priv);
+	netcp_register_txhook(netcp_priv, pa_dev->txhook_order,
+			      pa_tx_hook, intf_priv);
 	if (pa_dev->csum_offload == CSUM_OFFLOAD_SOFT)
-		netcp_register_txhook(netcp_priv, pa_dev->txhook_softcsum, pa_txhook_softcsum, intf_priv);
-	netcp_register_rxhook(netcp_priv, pa_dev->rxhook_order, pa_rx_timestamp, intf_priv);
-
-	/* Configure the streaming switch */
-	netcp_set_streaming_switch(pa_dev->netcp_device, 0, PSTREAM_ROUTE_PDSP0);
+		netcp_register_txhook(netcp_priv, pa_dev->txhook_softcsum,
+				      pa_txhook_softcsum, intf_priv);
+	netcp_register_rxhook(netcp_priv, pa_dev->rxhook_order,
+			      pa_rx_timestamp, intf_priv);
 
 	return 0;
 
 fail:
+	mutex_unlock(&pa_modules_lock);
 	pa_close(intf_priv, ndev);
 	return ret;
+}
+
+static int pa_find_lut_entry_with_mac(struct pa_device *pa_dev, u8 *addr, int
+				      cpsw_port)
+{
+	struct pa_lut_range_map *lutrange;
+	struct pa_lut_entry *tableentry;
+	int entry_id;
+
+	list_for_each_entry(lutrange, &pa_dev->pa_lut_range_map, node)
+	{
+		for (entry_id = lutrange->start;
+		     entry_id <= lutrange->end; entry_id++) {
+			tableentry = pa_dev->pa_lut_entry + entry_id;
+			if (tableentry->in_use &&
+			    (tableentry->used_by == cpsw_port) &&
+			    (!memcmp(tableentry->mac_addr, addr, ETH_ALEN))) {
+				dev_dbg(pa_dev->dev, "pa found lut entry with"
+					" mac, returning entry_id:%d\n",
+					entry_id);
+				return entry_id;
+			}
+		}
+	}
+	return -EINVAL;
+
+}
+
+static int pa_find_free_entry(struct pa_device *pa_dev)
+{
+	struct pa_lut_range_map *lutrange;
+	struct pa_lut_entry *tableentry;
+	int entry_id;
+
+	list_for_each_entry(lutrange, &pa_dev->pa_lut_range_map, node)
+	{
+		for (entry_id = lutrange->start;
+		     entry_id <= lutrange->end; entry_id++) {
+			tableentry = pa_dev->pa_lut_entry + entry_id;
+			if (tableentry->in_use)
+				continue;
+			else {
+				dev_dbg(pa_dev->dev, "pa_find_free_entry()"
+					" returning entry_id:%d\n", entry_id);
+				return entry_id;
+			}
+		}
+	}
+	return -EINVAL;
+
+}
+
+static int pa_remove_lut_entry(struct pa_intf *pa_intf, u8 *addr,
+			       int num_entries)
+{
+	struct pa_device *pa_dev = pa_intf->pa_device;
+	struct netcp_priv *netcp_priv = netdev_priv(pa_intf->net_device);
+	struct pa_lut_entry *tableentry;
+	int entry_id, count, ret;
+	u8 invalid_port = 0xff;
+
+	dev_dbg(pa_dev->dev, "pa: rm_lut_entry, num_entry:%d\n", num_entries);
+
+	for (count = 0; count < num_entries; count++) {
+		entry_id = pa_find_lut_entry_with_mac(pa_dev, addr,
+						      netcp_priv->cpsw_port);
+		if (entry_id < 0) {
+			dev_err(pa_dev->dev, "pa: invalid lut entry\n");
+			return -ENOENT;
+		}
+
+		ret = keystone_pa_add_mac(pa_intf, NULL, PACKET_DROP, 0,
+					  entry_id, invalid_port);
+		if (ret != 0)
+			/* Add mac entry returned error */
+			return ret;
+
+		/*Mark the entry id in our local lut entry table */
+		tableentry = pa_dev->pa_lut_entry + entry_id;
+		tableentry->in_use = 0;
+		pa_dev->lut_inuse_count--;
+		tableentry->used_by = invalid_port;
+
+		dev_dbg(pa_dev->dev, "pa: deleted lutentry to port %d, id %d\n",
+			tableentry->used_by, entry_id);
+	}
+
+	dev_dbg(pa_dev->dev, "pa: lut-in-use-count %d\n",
+		pa_dev->lut_inuse_count);
+
+	return 0;
+}
+
+static int pa_add_lut_entry(struct pa_intf *pa_intf, u8 *addr, int num_entries)
+{
+	struct pa_device *pa_dev = pa_intf->pa_device;
+	struct netcp_priv *netcp_priv = netdev_priv(pa_intf->net_device);
+	struct pa_lut_entry *tableentry;
+	int fwd_info[3] = { PACKET_PARSE, PACKET_PARSE, PACKET_HST };
+	int port_info[3] = { 0x0800, 0x86dd, 0 };
+	int entry_id, count, ret;
+
+	/* Make sure we have enough entries first */
+	if ((pa_dev->lut_max_count - pa_dev->lut_inuse_count) < num_entries) {
+		dev_err(pa_dev->dev, "pa: no lut entries avail to add\n");
+		return -ENOENT;
+	}
+
+	dev_dbg(pa_dev->dev, "pa: add_lut_entry, num_entry:%d port %d\n",
+		num_entries, netcp_priv->cpsw_port);
+	for (count = 0; count < num_entries; count++) {
+		entry_id = pa_find_free_entry(pa_dev);
+		if (entry_id < 0) {
+			/*Should not reach this point, coz we already
+			 * confirmed availability
+			 */
+			dev_err(pa_dev->dev, "pa: no free lut entry\n");
+			return -ENOENT;
+		}
+
+		ret = keystone_pa_add_mac(pa_intf, addr, fwd_info[count],
+					  port_info[count], entry_id,
+					  netcp_priv->cpsw_port);
+		if (ret != 0)
+			/* Add mac entry returned error */
+			return ret;
+
+		/*Mark the entry id in our local lut entry table */
+		tableentry = pa_dev->pa_lut_entry + entry_id;
+		tableentry->in_use = 1;
+		pa_dev->lut_inuse_count++;
+		tableentry->used_by = netcp_priv->cpsw_port;
+		memcpy(&tableentry->mac_addr[0], &addr[0], ETH_ALEN);
+
+		dev_dbg(pa_dev->dev, "pa: Added lut-entry for port %d, id %d"
+			" address %x:%x:%x:%x:%x:%x\n",
+			tableentry->used_by, entry_id,
+			tableentry->mac_addr[0], tableentry->mac_addr[1],
+			tableentry->mac_addr[2], tableentry->mac_addr[3],
+			tableentry->mac_addr[4], tableentry->mac_addr[5]);
+	}
+
+	dev_dbg(pa_dev->dev, "pa: lut-in-use-count %d\n",
+		pa_dev->lut_inuse_count);
+
+	return 0;
+}
+
+int pa_add_addr(void *intf_priv, u8 *addr, unsigned int flags)
+{
+	struct pa_intf *pa_intf = intf_priv;
+	struct pa_device *pa_dev = pa_intf->pa_device;
+	struct netcp_priv *netcp_priv = netdev_priv(pa_intf->net_device);
+	int num_entries = 0;
+	int ret = 0;
+
+	dev_dbg(pa_dev->dev, "pa:adding address %x:%x:%x:%x:%x:%x port:%d"
+		" flags 0x%x\n",
+		addr[0], addr[1], addr[2], addr[3], addr[4], addr[5],
+		netcp_priv->cpsw_port, flags);
+
+	mutex_lock(&pa_modules_lock);
+
+	if (flags & (ADDR_MCAST | ADDR_BCAST))
+		num_entries = 1;
+	else if (flags & (ADDR_UCAST | ADDR_DEV))
+		num_entries = 3;
+
+	ret = pa_add_lut_entry(pa_intf, addr, num_entries);
+
+	mutex_unlock(&pa_modules_lock);
+
+	return ret;
+
+}
+
+int pa_del_addr(void *intf_priv, u8 *addr, unsigned int flags)
+{
+	struct pa_intf *pa_intf = intf_priv;
+	struct pa_device *pa_dev = pa_intf->pa_device;
+	struct netcp_priv *netcp_priv = netdev_priv(pa_intf->net_device);
+	int num_entries = 0;
+	int ret = 0;
+
+	dev_dbg(pa_dev->dev, "pa:deleting address %x:%x:%x:%x:%x:%x port:%d"
+		" flags 0x%x\n",
+		addr[0], addr[1], addr[2], addr[3], addr[4], addr[5],
+		netcp_priv->cpsw_port, flags);
+
+	mutex_lock(&pa_modules_lock);
+
+	if (flags & (ADDR_MCAST | ADDR_BCAST))
+		num_entries = 1;
+	else if (flags & (ADDR_UCAST | ADDR_DEV))
+		num_entries = 3;
+
+	ret = pa_remove_lut_entry(pa_intf, addr, num_entries);
+
+	mutex_unlock(&pa_modules_lock);
+
+	return ret;
+}
+
+static int pa_hwtstamp_ioctl(struct net_device *ndev,
+			     struct ifreq *ifr, int cmd)
+{
+	struct netcp_priv *netcp = netdev_priv(ndev);
+	struct hwtstamp_config cfg;
+
+	if (copy_from_user(&cfg, ifr->ifr_data, sizeof(cfg)))
+		return -EFAULT;
+
+	if (cfg.flags)
+		return -EINVAL;
+
+	switch (cfg.tx_type) {
+	case HWTSTAMP_TX_OFF:
+		netcp->hwts_tx_en = 0;
+		break;
+	case HWTSTAMP_TX_ON:
+		netcp->hwts_tx_en = 1;
+		break;
+	default:
+		return -ERANGE;
+	}
+
+	switch (cfg.rx_filter) {
+	case HWTSTAMP_FILTER_NONE:
+		netcp->hwts_rx_en = 0;
+		break;
+	default:
+		netcp->hwts_rx_en = 1;
+		break;
+	}
+
+	return copy_to_user(ifr->ifr_data, &cfg, sizeof(cfg)) ? -EFAULT : 0;
+}
+
+int pa_ioctl(void *intf_priv, struct ifreq *req, int cmd)
+{
+	struct pa_intf *pa_intf = intf_priv;
+	struct net_device *ndev = pa_intf->net_device;
+
+	if (cmd == SIOCSHWTSTAMP)
+		return pa_hwtstamp_ioctl(ndev, req, cmd);
+
+	return -EOPNOTSUPP;
 }
 
 static int pa_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 {
 	struct pa_device *pa_dev = inst_priv;
+	struct netcp_priv *netcp_priv = netdev_priv(ndev);
+	struct pa_intf *pa_intf;
+	int chan_id = 0;
 
-	pa_dev->net_device = ndev;
-	*intf_priv = pa_dev;
+	if (netcp_priv->cpsw_port)
+		pa_dev->multi_if = 1;
 
-	netcp_txpipe_init(&pa_dev->tx_pipe, netdev_priv(ndev),
-			  pa_dev->tx_chan_name, pa_dev->tx_data_queue_depth);
+	dev_dbg(pa_dev->dev, "pa_attach, port %d\n", netcp_priv->cpsw_port);
+	pa_intf = devm_kzalloc(pa_dev->dev, sizeof(struct pa_intf), GFP_KERNEL);
+	if (!pa_intf) {
+		dev_err(pa_dev->dev, "memory allocation failed\n");
+		return -ENOMEM;
+	}
+
+	pa_intf->net_device = ndev;
+	pa_intf->pa_device = pa_dev;
+	*intf_priv = pa_intf;
+
+	/* Use pdsp5 with 0 as base */
+	if (netcp_priv->cpsw_port)
+		chan_id = netcp_priv->cpsw_port - 1;
+
+	snprintf(pa_intf->tx_chan_name, sizeof(pa_intf->tx_chan_name),
+		 "patx-pdsp5-%d", chan_id);
+	netcp_txpipe_init(&pa_intf->tx_pipe, netdev_priv(ndev),
+			  pa_intf->tx_chan_name, pa_dev->tx_data_queue_depth);
 
 	if (pa_dev->csum_offload) {
 		rtnl_lock();
@@ -1917,10 +2280,12 @@ static int pa_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 
 static int pa_release(void *intf_priv)
 {
-	struct pa_device *pa_dev = intf_priv;
-	struct net_device *ndev = pa_dev->net_device;
+	struct pa_intf *pa_intf = intf_priv;
+	struct pa_device *pa_dev = pa_intf->pa_device;
+	struct net_device *ndev = pa_intf->net_device;
 
-	if (pa_dev->csum_offload) {
+	mutex_lock(&pa_modules_lock);
+	if ((!--pa_dev->inuse_if_count) && (pa_dev->csum_offload)) {
 		rtnl_lock();
 		ndev->features		&= ~PA_NETIF_FEATURES;
 		ndev->hw_features	&= ~PA_NETIF_FEATURES;
@@ -1928,8 +2293,9 @@ static int pa_release(void *intf_priv)
 		netdev_update_features(ndev);
 		rtnl_unlock();
 	}
+	mutex_unlock(&pa_modules_lock);
 
-	pa_dev->net_device = NULL;
+	devm_kfree(pa_dev->dev, pa_intf);
 	return 0;
 }
 
@@ -1965,8 +2331,12 @@ static int pa_probe(struct netcp_device *netcp_device,
 		    struct device_node *node,
 		    void **inst_priv)
 {
+	struct pa_lut_range_map *lutrange;
 	struct pa_device *pa_dev;
-	int ret = 0;
+	int i, ret, len = 0;
+	int table_size = 0;
+	int num_ranges = 0;
+	u32 *prange;
 
 	if (!node) {
 		dev_err(dev, "device tree info unavailable\n");
@@ -1983,7 +2353,6 @@ static int pa_probe(struct netcp_device *netcp_device,
 	pa_dev->netcp_device = netcp_device;
 	pa_dev->dev = dev;
 
-	pa_dev->tx_chan_name = "patx-dat";
 	ret = of_property_read_u32(node, "tx_cmd_queue_depth",
 				   &pa_dev->tx_cmd_queue_depth);
 	if (ret < 0) {
@@ -2082,6 +2451,56 @@ static int pa_probe(struct netcp_device *netcp_device,
 	}
 	dev_dbg(dev, "rxhook-order %u\n", pa_dev->rxhook_order);
 
+	INIT_LIST_HEAD(&pa_dev->pa_lut_range_map);
+	if (!of_get_property(node, "lut-ranges", &len)) {
+		dev_err(dev, "No lut-entry array in dt bindings for PA\n");
+		return -ENODEV;
+	}
+
+	prange = devm_kzalloc(dev, len, GFP_KERNEL);
+	if (!prange) {
+		dev_err(dev, "memory allocation failed at PA lut entry range\n");
+		return -ENOMEM;
+	}
+	len = len / sizeof(u32);
+	if ((len % 2) != 0) {
+		dev_err(dev, "invalid address map in dt binding\n");
+		return -EINVAL;
+	}
+	num_ranges = len / 2;
+	if (of_property_read_u32_array(node, "lut-ranges",
+				       (u32 *)prange, len)) {
+		dev_err(dev, "No range-map array  in dt bindings\n");
+		return -ENODEV;
+	}
+	lutrange  = devm_kzalloc(dev,
+				sizeof(struct pa_lut_range_map) * num_ranges,
+				GFP_KERNEL);
+	if (!lutrange) {
+		dev_err(dev, "devm_kzalloc mapping failed\n");
+		return -ENOMEM;
+	}
+	for (i = 0; i < num_ranges; i++) {
+		lutrange->start		= *prange++;
+		lutrange->end		= *prange++;
+		list_add_tail(&lutrange->node, &pa_dev->pa_lut_range_map);
+		if (lutrange->end > table_size)
+			table_size = lutrange->end;
+		lutrange++;
+	}
+
+	/* Initialize a table for storing entry listings locally */
+	pa_dev->pa_lut_entry  = devm_kzalloc(dev,
+				sizeof(struct pa_lut_entry) * table_size,
+				GFP_KERNEL);
+	if (!pa_dev->pa_lut_entry) {
+		dev_err(dev, "devm_kzalloc mapping failed\n");
+		return -ENOMEM;
+	}
+	pa_dev->lut_max_count = table_size;
+	dev_dbg(dev, "initialized pa lut table with %d entries, used %d\n",
+		pa_dev->lut_max_count, pa_dev->lut_inuse_count);
+
 	spin_lock_init(&pa_dev->lock);
 	spin_lock_init(&tstamp_lock);
 
@@ -2103,6 +2522,9 @@ static struct netcp_module pa_module = {
 	.remove		= pa_remove,
 	.attach		= pa_attach,
 	.release	= pa_release,
+	.add_addr	= pa_add_addr,
+	.del_addr	= pa_del_addr,
+	.ioctl		= pa_ioctl,
 };
 
 static int __init keystone_pa_init(void)
