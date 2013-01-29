@@ -186,8 +186,6 @@ enum {
 	PAFRM_FORWARD_TYPE_DISCARD
 };
 
-#define PAFRM_LUT1_KEY_MAC		(1 << 0)
-
 /* Custom match flag bits */
 #define	PAFRM_LUT1_CUSTOM_MATCH_ETYPE	(1 << 2)
 #define	PAFRM_LUT1_CUSTOM_MATCH_VLAN	(1 << 3)
