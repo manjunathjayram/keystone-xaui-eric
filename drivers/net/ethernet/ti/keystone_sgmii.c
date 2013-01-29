@@ -123,6 +123,20 @@ int keystone_sgmii_link_status(void __iomem *sgmii_ofs, int ports)
 	return link;
 }
 
+int keystone_sgmii_get_port_link(void __iomem *sgmii_ofs, int port)
+{
+	u32 status = 0, link = 0;
+
+	status = sgmii_read_reg(sgmii_ofs, SGMII_STATUS_REG(port));
+	if ((status & SGMII_REG_STATUS_LINK) != 0)
+		link |= BIT(port);
+	else
+		link &= ~BIT(port);
+
+	return link;
+}
+
+
 int keystone_sgmii_config(void __iomem *sgmii_ofs,
 			  int port, u32 interface)
 {
