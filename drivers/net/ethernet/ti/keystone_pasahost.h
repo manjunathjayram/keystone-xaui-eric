@@ -174,8 +174,14 @@ struct pasaho_long_info {
 /* Extract the incomplete IP route flag */
 #define PASAHO_LINFO_READ_FLAG_ROUTE(x)		PASAHO_READ_BITFIELD((x)->word3,2,1)
 
+/* Extract the (1-based) input EMAC port number */
+/*  0: Indicates that the packet does not enter PASS through CPSW */
+#define PASAHO_LINFO_READ_INPORT(x)		PASAHO_READ_BITFIELD((x)->word3,0,3)
+
 /* Extract the last pseudo-header checksum computed */
 #define PASAHO_LINFO_READ_PSEUDO_CHKSM(x)	PASAHO_READ_BITFIELD((x)->word4,16,16)
+
+#define PASAHO_LINFO_READ_TSTAMP_MSB(x)		PASAHO_READ_BITFIELD((x)->word4,0,16)
 
 /* Extract the IP Reassembly Traffic Flow Index */
 #define PASAHO_LINFO_READ_TFINDEX(x)		PASAHO_READ_BITFIELD((x)->word4,24,8)
