@@ -23,6 +23,7 @@
 #include <linux/if_vlan.h>
 #include <linux/ethtool.h>
 #include <linux/if_ether.h>
+#include <linux/net_tstamp.h>
 #include <linux/netdevice.h>
 #include <linux/interrupt.h>
 #include <linux/dmaengine.h>
@@ -206,7 +207,6 @@ struct cpsw_ale_regs {
 
 struct cpsw_priv {
 	struct device			*dev;
-	struct net_device		*ndev;
 	struct clk			*cpgmac;
 	struct netcp_device		*netcp_device;
 	u32				 num_slaves;
@@ -226,29 +226,47 @@ struct cpsw_priv {
 
 	struct cpsw_regs __iomem	*regs;
 	struct cpsw_ss_regs __iomem	*ss_regs;
-	struct cpsw_hw_stats __iomem	*hw_stats[2];
+	struct cpsw_hw_stats __iomem	*hw_stats_regs[2];
 	struct cpsw_host_regs __iomem	*host_port_regs;
 	struct cpsw_ale_regs __iomem	*ale_reg;
 
 	void __iomem			*sgmii_port_regs;
 
-	u8				 mac_addr[ETH_ALEN];
-	struct cpsw_slave		*slaves;
 	struct cpsw_ale			*ale;
+	u32				 ale_refcnt;
 
 	u32				 link[5];
-	u32				 sgmii_link;
-
-	struct timer_list		 timer;
 
 	u32				 intf_tx_queues;
 
-	const char			*tx_chan_name;
-	u32				 tx_queue_depth;
-	struct netcp_tx_pipe		 tx_pipe;
+	u32				 multi_if;
+	u32				 slaves_per_interface;
+	u32				 num_interfaces;
+	struct device_node		*interfaces;
+	struct list_head		 cpsw_intf_head;
+
+	u64				 hw_stats[72];
 };
 
-static struct cpsw_priv *priv;
+struct cpsw_intf {
+	struct net_device	*ndev;
+	struct device		*dev;
+	struct cpsw_priv	*cpsw_priv;
+	u32			 num_slaves;
+	u32			 slave_port;
+	struct cpsw_slave	*slaves;
+	u32			 intf_tx_queues;
+	const char		*tx_chan_name;
+	u32			 tx_queue_depth;
+	struct netcp_tx_pipe	 tx_pipe;
+	u32			 multi_if;
+	struct list_head	 cpsw_intf_list;
+	struct timer_list	 timer;
+	u32			 sgmii_link;
+	unsigned long		 active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
+};
+
+static struct cpsw_priv *priv;		/* FIXME: REMOVE THIS!! */
 
 /*
  * Statistic management
@@ -260,11 +278,15 @@ struct netcp_ethtool_stat {
 	int offset;
 };
 
-#define for_each_slave(priv, func, arg...)			\
-	do {							\
-		int idx;					\
-		for (idx = 0; idx < (priv)->num_slaves; idx++)	\
-			(func)((priv)->slaves + idx, ##arg);	\
+#define for_each_slave(priv, func, arg...)				\
+	do {								\
+		int idx, port;						\
+		port = (priv)->slave_port;				\
+		if ((priv)->multi_if)					\
+			(func)((priv)->slaves, ##arg);			\
+		else							\
+			for (idx = 0; idx < (priv)->num_slaves; idx++)	\
+				(func)((priv)->slaves + idx, ##arg);	\
 	} while (0)
 
 #define FIELDINFO(_struct, field)       FIELD_SIZEOF(_struct, field),	\
@@ -401,9 +423,8 @@ static int keystone_get_sset_count(struct net_device *ndev, int stringset)
 
 static void cpsw_update_stats(struct cpsw_priv *cpsw_dev, uint64_t *data)
 {
-	struct cpsw_hw_stats __iomem *cpsw_statsa = cpsw_dev->hw_stats[0];
-	struct cpsw_hw_stats __iomem *cpsw_statsb = cpsw_dev->hw_stats[1];
-	struct netcp_priv *netcp = netdev_priv(cpsw_dev->ndev);
+	struct cpsw_hw_stats __iomem *cpsw_statsa = cpsw_dev->hw_stats_regs[0];
+	struct cpsw_hw_stats __iomem *cpsw_statsb = cpsw_dev->hw_stats_regs[1];
 	void *p = NULL;
 	u32 tmp = 0;
 	int i;
@@ -420,8 +441,9 @@ static void cpsw_update_stats(struct cpsw_priv *cpsw_dev, uint64_t *data)
 
 		p = (u8 *)p + et_stats[i].offset;
 		tmp = *(u32 *)p;
-		data[i] = netcp->hw_stats[i] + tmp;
-		netcp->hw_stats[i] = data[i];
+		cpsw_dev->hw_stats[i] = cpsw_dev->hw_stats[i] + tmp;
+		if (data)
+			data[i] = cpsw_dev->hw_stats[i];
 		*(u32 *)p = tmp;
 	}
 
@@ -452,10 +474,12 @@ static const struct ethtool_ops keystone_ethtool_ops = {
 #define mac_lo(mac)	(((mac)[4] << 0) | ((mac)[5] << 8))
 
 static void cpsw_set_slave_mac(struct cpsw_slave *slave,
-			       struct cpsw_priv *priv)
+			       struct cpsw_intf *cpsw_intf)
 {
-	__raw_writel(mac_hi(priv->mac_addr), &slave->regs->sa_hi);
-	__raw_writel(mac_lo(priv->mac_addr), &slave->regs->sa_lo);
+	struct net_device *ndev = cpsw_intf->ndev;
+
+	__raw_writel(mac_hi(ndev->dev_addr), &slave->regs->sa_hi);
+	__raw_writel(mac_lo(ndev->dev_addr), &slave->regs->sa_lo);
 }
 
 static inline int cpsw_get_slave_port(struct cpsw_priv *priv, u32 slave_num)
@@ -580,21 +604,24 @@ static int match_device(struct device *dev, void *data)
 		return 0;
 }
 
-static void cpsw_slave_link(struct cpsw_slave *slave, struct cpsw_priv *priv)
+static void cpsw_slave_link(struct cpsw_slave *slave,
+			    struct cpsw_intf *cpsw_intf)
 {
-	struct netcp_priv *netcp = netdev_priv(priv->ndev);
+	struct netcp_priv *netcp = netdev_priv(cpsw_intf->ndev);
 
 	if (slave->link_interface == SGMII_LINK_MAC_PHY) {
 		if (netcp->link_state)
-			priv->sgmii_link |= BIT(slave->slave_num);
+			cpsw_intf->sgmii_link |= BIT(slave->slave_num);
 		else
-			priv->sgmii_link &= ~BIT(slave->slave_num);
+			cpsw_intf->sgmii_link &= ~BIT(slave->slave_num);
 	}
 }
 
-static void cpsw_slave_open(struct cpsw_slave *slave, struct cpsw_priv *priv)
+static void cpsw_slave_open(struct cpsw_slave *slave,
+			    struct cpsw_intf *cpsw_intf)
 {
-	char name[32];
+	struct cpsw_priv *priv = cpsw_intf->cpsw_priv;
+	char name[32];		/* FIXME: Unused variable */
 	u32 slave_port;
 
 	snprintf(name, sizeof(name), "slave-%d", slave->slave_num);
@@ -608,7 +635,7 @@ static void cpsw_slave_open(struct cpsw_slave *slave, struct cpsw_priv *priv)
 
 	cpsw_port_config(slave, priv->rx_packet_max);
 
-	cpsw_set_slave_mac(slave, priv);
+	cpsw_set_slave_mac(slave, cpsw_intf);
 
 	slave->mac_control = MACSL_ENABLE | MACSL_RX_ENABLE_EXT_CTL |
 				MACSL_RX_ENABLE_CSF;
@@ -622,7 +649,7 @@ static void cpsw_slave_open(struct cpsw_slave *slave, struct cpsw_priv *priv)
 	cpsw_ale_control_set(priv->ale, slave_port,
 			     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
 
-	cpsw_ale_add_mcast(priv->ale, priv->ndev->broadcast,
+	cpsw_ale_add_mcast(priv->ale, cpsw_intf->ndev->broadcast,
 			   1 << slave_port, 0, ALE_MCAST_FWD_2,
 			   CPSW_NON_VLAN_ADDR);
 
@@ -637,7 +664,7 @@ static void cpsw_slave_open(struct cpsw_slave *slave, struct cpsw_priv *priv)
 		}
 
 		if (slave->phy_id && *slave->phy_id) {
-			slave->phy = phy_connect(priv->ndev, slave->phy_id,
+			slave->phy = phy_connect(cpsw_intf->ndev, slave->phy_id,
 					&cpsw_adjust_link, 0,
 					PHY_INTERFACE_MODE_SGMII,
 					slave);
@@ -649,21 +676,26 @@ static void cpsw_slave_open(struct cpsw_slave *slave, struct cpsw_priv *priv)
 			} else {
 				dev_info(priv->dev, "phy found: id is: 0x%s\n",
 					slave->phy_id);
+				cpsw_intf->ndev->phydev = slave->phy;
 				phy_start(slave->phy);
 			}
 		}
 	}
 }
 
-static void cpsw_init_host_port(struct cpsw_priv *priv)
+static void cpsw_init_host_port(struct cpsw_priv *priv,
+				struct cpsw_intf *cpsw_intf)
 {
 	/* Max length register */
 	__raw_writel(MAX_SIZE_STREAM_BUFFER,
 		     &priv->host_port_regs->rx_maxlen);
 
-	cpsw_ale_start(priv->ale);
+	if (priv->ale_refcnt == 1)
+		cpsw_ale_start(priv->ale);
 
-	/* switch to vlan aware mode */
+	if (priv->multi_if)
+		cpsw_ale_control_set(priv->ale, 0, ALE_BYPASS, 1);
+
 	cpsw_ale_control_set(priv->ale, 0, ALE_VLAN_AWARE, 1);
 
 	cpsw_ale_control_set(priv->ale, 0, ALE_NO_PORT_VLAN, 1);
@@ -687,13 +719,13 @@ static void cpsw_init_host_port(struct cpsw_priv *priv)
 			     ALE_PORT_UNTAGGED_EGRESS,
 			     CPSW_MASK_ALL_PORTS);
 
-	cpsw_ale_add_ucast(priv->ale, priv->mac_addr,
+
+	cpsw_ale_add_ucast(priv->ale, cpsw_intf->ndev->dev_addr,
 			   priv->host_port, 0, CPSW_NON_VLAN_ADDR);
 
-	cpsw_ale_add_mcast(priv->ale, priv->ndev->broadcast,
+	cpsw_ale_add_mcast(priv->ale, cpsw_intf->ndev->broadcast,
 			   1 << priv->host_port, 0,
 			   ALE_MCAST_FWD_2, CPSW_NON_VLAN_ADDR);
-
 }
 
 static void cpsw_slave_init(struct cpsw_slave *slave, struct cpsw_priv *priv)
@@ -705,57 +737,74 @@ static void cpsw_slave_init(struct cpsw_slave *slave, struct cpsw_priv *priv)
 	slave->sliver	= regs + priv->sliver_reg_ofs + (0x40 * slave_num);
 }
 
-int cpsw_add_ucast(void *intf_priv, u8 *uc_list, int uc_count, int vid)
+int cpsw_add_addr(void *intf_priv, u8 *addr, unsigned int flags)
 {
-	struct cpsw_priv *cpsw_dev = intf_priv;
-	u8 mac_addr[ETH_ALEN];
-	int i;
+	struct cpsw_intf *cpsw_intf = intf_priv;
+	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+	u16 vlan_id;
 
-	dev_dbg(cpsw_dev->dev, "uc count is = %d\n", uc_count);
+	dev_dbg(cpsw_dev->dev, "adding address %x:%x:%x:%x:%x:%x flags = %x\n",
+		 addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], flags);
 
-	for (i = 0; i < uc_count; i++) {
-		dev_dbg(cpsw_dev->dev, "uc address %x:%x:%x:%x:%x:%x\n",
-			uc_list[(i * 6) + 0], uc_list[(i * 6) + 1],
-			uc_list[(i * 6) + 2], uc_list[(i * 6) + 3],
-			uc_list[(i * 6) + 4], uc_list[(i * 6) + 5]);
+	if (flags & (ADDR_MCAST | ADDR_BCAST)) {
+		cpsw_ale_add_mcast(cpsw_dev->ale, &addr[0], CPSW_MASK_ALL_PORTS,
+				   0, ALE_MCAST_FWD_2, -1);
 
-		memcpy(mac_addr, &uc_list[(i * 6)], ETH_ALEN);
+		for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID)
+			cpsw_ale_add_mcast(cpsw_dev->ale, &addr[0],
+					   CPSW_MASK_ALL_PORTS, 0,
+					   ALE_MCAST_FWD_2, vlan_id);
+	}
 
-		cpsw_ale_add_ucast(cpsw_dev->ale, mac_addr,
-				   cpsw_dev->host_port, 0, vid);
+	if (flags & (ADDR_UCAST | ADDR_DEV)) {
+		cpsw_ale_add_ucast(cpsw_dev->ale, &addr[0],
+				   cpsw_dev->host_port, 0, -1);
 
+		for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID)
+			cpsw_ale_add_ucast(cpsw_dev->ale, &addr[0],
+					   cpsw_dev->host_port, 0, vlan_id);
 	}
 
 	return 0;
 }
 
-int cpsw_add_mcast(void *intf_priv, u8 *mc_list, int mc_count, int vid)
+int cpsw_del_addr(void *intf_priv, u8 *addr, unsigned int flags)
 {
-	struct cpsw_priv *cpsw_dev = intf_priv;
-	u8 mac_addr[ETH_ALEN];
-	int i;
+	struct cpsw_intf *cpsw_intf = intf_priv;
+	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+	u16 vlan_id;
 
-	dev_dbg(cpsw_dev->dev, "mc count is = %d\n", mc_count);
+	dev_dbg(cpsw_dev->dev, "deleting address %x:%x:%x:%x:%x:%x flags =%x\n",
+		 addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], flags);
 
-	for (i = 0; i < mc_count; i++) {
-		dev_dbg(cpsw_dev->dev, "mc address %x:%x:%x:%x:%x:%x\n",
-			mc_list[(i * 6) + 0], mc_list[(i * 6) + 1],
-			mc_list[(i * 6) + 2], mc_list[(i * 6) + 3],
-			mc_list[(i * 6) + 4], mc_list[(i * 6) + 5]);
+	if (flags & (ADDR_MCAST | ADDR_BCAST)) {
+		cpsw_ale_del_mcast(cpsw_dev->ale, &addr[0],
+				   CPSW_MASK_ALL_PORTS, -1);
 
-		memcpy(mac_addr, &mc_list[(i * 6)], ETH_ALEN);
+		for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID)
+			cpsw_ale_del_mcast(cpsw_dev->ale, &addr[0],
+					   CPSW_MASK_ALL_PORTS, vlan_id);
+	}
 
-		cpsw_ale_add_mcast(cpsw_dev->ale, mac_addr,
-				   CPSW_MASK_ALL_PORTS, 0,
-				   ALE_MCAST_FWD_2, vid);
+	if (flags & (ADDR_UCAST | ADDR_DEV)) {
+		cpsw_ale_del_ucast(cpsw_dev->ale, &addr[0],
+				   cpsw_dev->host_port, -1);
+
+		for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID)
+			cpsw_ale_del_ucast(cpsw_dev->ale, &addr[0],
+					   cpsw_dev->host_port, vlan_id);
 	}
 
 	return 0;
+
 }
 
 int cpsw_add_vid(void *intf_priv, int vid)
 {
-	struct cpsw_priv *cpsw_dev = intf_priv;
+	struct cpsw_intf *cpsw_intf = intf_priv;
+	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+
+	set_bit(vid, cpsw_intf->active_vlans);
 
 	cpsw_ale_add_vlan(cpsw_dev->ale, vid, CPSW_MASK_ALL_PORTS,
 			  CPSW_MASK_ALL_PORTS, CPSW_MASK_PHYS_PORTS,
@@ -766,54 +815,89 @@ int cpsw_add_vid(void *intf_priv, int vid)
 
 int cpsw_del_vid(void *intf_priv, int vid)
 {
-	struct cpsw_priv *cpsw_dev = intf_priv;
+	struct cpsw_intf *cpsw_intf = intf_priv;
+	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 
 	cpsw_ale_del_vlan(cpsw_dev->ale, vid);
+
+	clear_bit(vid, cpsw_intf->active_vlans);
 
 	return 0;
 }
 
+int cpsw_ioctl(void *intf_priv, struct ifreq *req, int cmd)
+{
+	struct cpsw_intf *cpsw_intf = intf_priv;
+	struct cpsw_slave *slave = cpsw_intf->slaves;
+	struct phy_device *phy = slave->phy;
+	struct netcp_priv *netcp = netdev_priv(cpsw_intf->ndev);
+	struct hwtstamp_config cfg;
+	int ret = 0;
+
+	netcp->pa_ts_req = 1;
+
+	if (!phy)
+		return -EOPNOTSUPP;
+
+	if (copy_from_user(&cfg, req->ifr_data, sizeof(cfg)))
+		return -EFAULT;
+
+	ret = phy_mii_ioctl(phy, req, cmd);
+	if (ret == 0)
+		netcp->pa_ts_req = 0;
+
+	return ret;
+}
+
 static void cpsw_timer(unsigned long arg)
 {
-	struct cpsw_priv *cpsw_dev = (struct cpsw_priv *)arg;
-	uint64_t data[128];
+	struct cpsw_intf *cpsw_intf = (struct cpsw_intf *)arg;
+	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 	
-	cpsw_dev->sgmii_link = keystone_sgmii_link_status(cpsw_dev->sgmii_port_regs,
-						cpsw_dev->num_slaves);
-	for_each_slave(cpsw_dev, cpsw_slave_link, cpsw_dev);
+	if (cpsw_dev->multi_if)
+		cpsw_intf->sgmii_link =
+			keystone_sgmii_get_port_link(cpsw_dev->sgmii_port_regs,
+						     cpsw_intf->slave_port);
+	else
+		cpsw_intf->sgmii_link =
+			keystone_sgmii_link_status(cpsw_dev->sgmii_port_regs,
+						   cpsw_intf->num_slaves);
 
-	if (cpsw_dev->sgmii_link) {
+	for_each_slave(cpsw_intf, cpsw_slave_link, cpsw_intf);
+
+	/* FIXME: Don't aggregate link statuses in multi-interface case */
+	if (cpsw_intf->sgmii_link) {
 		/* link ON */
-		if (!netif_carrier_ok(cpsw_dev->ndev))
-			netif_carrier_on(cpsw_dev->ndev);
+		if (!netif_carrier_ok(cpsw_intf->ndev))
+			netif_carrier_on(cpsw_intf->ndev);
 		/*
 		 * reactivate the transmit queue if
 		 * it is stopped
 		 */
-		if (netif_running(cpsw_dev->ndev) &&
-			netif_queue_stopped(cpsw_dev->ndev))
-			netif_wake_queue(cpsw_dev->ndev);
+		if (netif_running(cpsw_intf->ndev) &&
+		    netif_queue_stopped(cpsw_intf->ndev))
+			netif_wake_queue(cpsw_intf->ndev);
 	} else {
 		/* link OFF */
-		if (netif_carrier_ok(cpsw_dev->ndev))
-			netif_carrier_off(cpsw_dev->ndev);
-		if (!netif_queue_stopped(cpsw_dev->ndev))
-			netif_stop_queue(cpsw_dev->ndev);
+		if (netif_carrier_ok(cpsw_intf->ndev))
+			netif_carrier_off(cpsw_intf->ndev);
+		if (!netif_queue_stopped(cpsw_intf->ndev))
+			netif_stop_queue(cpsw_intf->ndev);
 	}
 
-	cpsw_update_stats(cpsw_dev, data);
+	cpsw_update_stats(cpsw_dev, NULL);
 
-	cpsw_dev->timer.expires = jiffies + (HZ/10);
-	add_timer(&cpsw_dev->timer);
+	cpsw_intf->timer.expires = jiffies + (HZ/10);
+	add_timer(&cpsw_intf->timer);
 
 	return;
 }
 
 static int cpsw_tx_hook(int order, void *data, struct netcp_packet *p_info)
 {
-	struct cpsw_priv *cpsw_priv = data;
+	struct cpsw_intf *cpsw_intf = data;
 
-	p_info->tx_pipe = &cpsw_priv->tx_pipe;
+	p_info->tx_pipe = &cpsw_intf->tx_pipe;
 	return 0;
 }
 
@@ -821,20 +905,25 @@ static int cpsw_tx_hook(int order, void *data, struct netcp_packet *p_info)
 
 static int cpsw_open(void *intf_priv, struct net_device *ndev)
 {
-	struct cpsw_priv *cpsw_dev = intf_priv;
+	struct cpsw_intf *cpsw_intf = intf_priv;
+	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 	struct netcp_priv *netcp = netdev_priv(ndev);
 	struct cpsw_ale_params ale_params;
-	int i, ret = 0;
+	int ret = 0;
 	u32 reg;
 
 	cpsw_dev->cpgmac = clk_get(cpsw_dev->dev, "clk_cpgmac");
-	if (IS_ERR_OR_NULL(cpsw_dev->cpgmac)) {
-		dev_warn(cpsw_dev->dev, "unable to get Keystone CPGMAC clock\n");
+	if (IS_ERR(cpsw_dev->cpgmac)) {
+		ret = PTR_ERR(cpsw_dev->cpgmac);
 		cpsw_dev->cpgmac = NULL;
+		dev_err(cpsw_dev->dev, "unable to get Keystone CPGMAC"
+			" clock: %d\n", ret);
+		return ret;
 	}
 
-	if (cpsw_dev->cpgmac)
-		clk_prepare_enable(cpsw_dev->cpgmac);
+	ret = clk_prepare_enable(cpsw_dev->cpgmac);
+	if (ret)
+		goto clk_fail;
 
 	reg = __raw_readl(&cpsw_dev->regs->id_ver);
 
@@ -843,56 +932,43 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 		 CPSW_MAJOR_VERSION(reg), CPSW_MINOR_VERSION(reg),
 		 CPSW_RTL_VERSION(reg), CPSW_SGMII_IDENT(reg));
 
-	cpsw_dev->ndev = ndev;
-
-	ret = netcp_txpipe_open(&cpsw_dev->tx_pipe);
+	ret = netcp_txpipe_open(&cpsw_intf->tx_pipe);
 	if (ret)
-		return ret;
+		goto txpipe_fail;
 
-	dev_dbg(cpsw_dev->dev, "opened TX channel %s: %p\n",
-		cpsw_dev->tx_pipe.dma_chan_name,
-		cpsw_dev->tx_pipe.dma_channel);
+	dev_dbg(cpsw_dev->dev, "opened TX channel %s: %p with psflags %d\n",
+		cpsw_intf->tx_pipe.dma_chan_name,
+		cpsw_intf->tx_pipe.dma_channel,
+		cpsw_intf->tx_pipe.dma_psflags);
 
-	memset(&ale_params, 0, sizeof(ale_params));
+	cpsw_dev->ale_refcnt++;
+	if (cpsw_dev->ale_refcnt == 1) {
+		memset(&ale_params, 0, sizeof(ale_params));
 
-	ale_params.dev			= cpsw_dev->dev;
-	ale_params.ale_regs		= (void *)((u32)priv->ale_reg);
-	ale_params.ale_ageout		= cpsw_dev->ale_ageout;
-	ale_params.ale_entries		= cpsw_dev->ale_entries;
-	ale_params.ale_ports		= cpsw_dev->ale_ports;
+		ale_params.dev			= cpsw_dev->dev;
+		ale_params.ale_regs		= (void *)((u32)priv->ale_reg);
+		ale_params.ale_ageout		= cpsw_dev->ale_ageout;
+		ale_params.ale_entries		= cpsw_dev->ale_entries;
+		ale_params.ale_ports		= cpsw_dev->ale_ports;
 
-	cpsw_dev->ale = cpsw_ale_create(&ale_params);
-	if (!cpsw_dev->ale) {
-		dev_err(cpsw_dev->dev, "error initializing ale engine\n");
-		ret = -ENODEV;
-		goto out;
-	} else
-		dev_info(cpsw_dev->dev, "Created a cpsw ale engine\n");
-
-	cpsw_dev->slaves = kzalloc(sizeof(struct cpsw_slave) *
-				   cpsw_dev->num_slaves, GFP_KERNEL);
-
-	if (!cpsw_dev->slaves) {
-		ret = -EBUSY;
-		goto clean_ale;
+		cpsw_dev->ale = cpsw_ale_create(&ale_params);
+		if (!cpsw_dev->ale) {
+			dev_err(cpsw_dev->dev, "error initializing ale engine\n");
+			ret = -ENODEV;
+			goto ale_fail;
+		} else
+			dev_info(cpsw_dev->dev, "Created a cpsw ale engine\n");
 	}
 
-	for (i = 0; i < cpsw_dev->num_slaves; i++) {
-		cpsw_dev->slaves[i].slave_num = i;
-		cpsw_dev->slaves[i].link_interface = cpsw_dev->link[i];
-	}
+	for_each_slave(cpsw_intf, cpsw_slave_init, cpsw_dev);
 
-	memcpy(cpsw_dev->mac_addr, ndev->dev_addr, ETH_ALEN);
-
-	for_each_slave(cpsw_dev, cpsw_slave_init, cpsw_dev);
-
-	for_each_slave(cpsw_dev, cpsw_slave_stop, cpsw_dev);
+	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_dev);
 
 	/* Serdes init */
 	serdes_init();
 
 	/* initialize host and slave ports */
-	cpsw_init_host_port(cpsw_dev);	
+	cpsw_init_host_port(cpsw_dev, cpsw_intf);
 
 	/* disable priority elevation and enable statistics on all ports */
 	__raw_writel(0, &cpsw_dev->regs->ptype);
@@ -905,53 +981,60 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 	__raw_writel(CPSW_REG_VAL_STAT_ENABLE_ALL,
 		     &cpsw_dev->regs->stat_port_en);
 
-	for_each_slave(cpsw_dev, cpsw_slave_open, cpsw_dev);
+	for_each_slave(cpsw_intf, cpsw_slave_open, cpsw_intf);
 
-	init_timer(&cpsw_dev->timer);
-	cpsw_dev->timer.data		= (unsigned long)cpsw_dev;
-	cpsw_dev->timer.function	= cpsw_timer;
-	cpsw_dev->timer.expires		= jiffies + CPSW_TIMER_INTERVAL;
-	add_timer(&cpsw_dev->timer);
-	dev_dbg(cpsw_dev->dev, "%s(): cpsw_timer = %p\n", __func__, cpsw_timer );
+	init_timer(&cpsw_intf->timer);
+	cpsw_intf->timer.data		= (unsigned long)cpsw_intf;
+	cpsw_intf->timer.function	= cpsw_timer;
+	cpsw_intf->timer.expires	= jiffies + CPSW_TIMER_INTERVAL;
+	add_timer(&cpsw_intf->timer);
+	dev_dbg(cpsw_dev->dev, "%s(): cpsw_timer = %p\n", __func__, cpsw_timer);
 
-	netcp_register_txhook(netcp, CPSW_TXHOOK_ORDER, cpsw_tx_hook, cpsw_dev);
-	
+	netcp_register_txhook(netcp, CPSW_TXHOOK_ORDER,
+			      cpsw_tx_hook, cpsw_intf);
+
 	/* Configure the streaming switch */
 #define	PSTREAM_ROUTE_DMA	6
-	netcp_set_streaming_switch(cpsw_dev->netcp_device, 0, PSTREAM_ROUTE_DMA);
+	netcp_set_streaming_switch(cpsw_dev->netcp_device, netcp->cpsw_port,
+				   PSTREAM_ROUTE_DMA);
 
 	return 0;
 
-clean_ale:
-	cpsw_ale_destroy(cpsw_dev->ale);
-out:
-	netcp_txpipe_close(&cpsw_dev->tx_pipe);
+ale_fail:
+	netcp_txpipe_close(&cpsw_intf->tx_pipe);
+txpipe_fail:
+	clk_disable_unprepare(cpsw_dev->cpgmac);
+clk_fail:
+	clk_put(cpsw_dev->cpgmac);
+	cpsw_dev->cpgmac = NULL;
 	return ret;
 }
 
 static int cpsw_close(void *intf_priv, struct net_device *ndev)
 {
-	struct cpsw_priv *cpsw_dev = intf_priv;
+	struct cpsw_intf *cpsw_intf = intf_priv;
+	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 	struct netcp_priv *netcp = netdev_priv(ndev);
 
-	del_timer_sync(&cpsw_dev->timer);
+	del_timer_sync(&cpsw_intf->timer);
 
-	cpsw_ale_stop(cpsw_dev->ale);
+	cpsw_dev->ale_refcnt--;
+	if (!cpsw_dev->ale_refcnt)
+		cpsw_ale_stop(cpsw_dev->ale);
 	
-	for_each_slave(cpsw_dev, cpsw_slave_stop, cpsw_dev);
+	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_dev);
 
-	if (cpsw_dev->cpgmac) {
-		clk_disable_unprepare(cpsw_dev->cpgmac);
-		clk_put(cpsw_dev->cpgmac);
-	}
+	if (!cpsw_dev->ale_refcnt)
+		cpsw_ale_destroy(cpsw_dev->ale);
 
-	cpsw_ale_destroy(cpsw_dev->ale);
+	netcp_unregister_txhook(netcp, CPSW_TXHOOK_ORDER, cpsw_tx_hook,
+				cpsw_intf);
+	netcp_txpipe_close(&cpsw_intf->tx_pipe);
 
-	netcp_unregister_txhook(netcp, CPSW_TXHOOK_ORDER, cpsw_tx_hook, cpsw_dev);
-	netcp_txpipe_close(&cpsw_dev->tx_pipe);
+	kfree(cpsw_intf->slaves);
 
-	kfree(cpsw_dev->slaves);
-	cpsw_dev->cpgmac = NULL;
+	clk_disable_unprepare(cpsw_dev->cpgmac);
+	clk_put(cpsw_dev->cpgmac);
 
 	return 0;
 }
@@ -959,9 +1042,15 @@ static int cpsw_close(void *intf_priv, struct net_device *ndev)
 static int cpsw_remove(struct netcp_device *netcp_device, void *inst_priv)
 {
 	struct cpsw_priv *cpsw_dev = inst_priv;
+	struct cpsw_intf *cpsw_intf, *tmp;
 
-	SET_ETHTOOL_OPS(cpsw_dev->ndev, NULL);
-	netcp_delete_interface(netcp_device, cpsw_dev->ndev);
+	of_node_put(cpsw_dev->interfaces);
+
+	list_for_each_entry_safe(cpsw_intf, tmp, &cpsw_dev->cpsw_intf_head,
+				 cpsw_intf_list) {
+		netcp_delete_interface(netcp_device, cpsw_intf->ndev);
+	}
+	BUG_ON(!list_empty(&cpsw_dev->cpsw_intf_head));
 
 	iounmap(cpsw_dev->ss_regs);
 	memset(cpsw_dev, 0x00, sizeof(*cpsw_dev));	/* FIXME: Poison */
@@ -993,16 +1082,16 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 			void **inst_priv)
 {
 	struct cpsw_priv *cpsw_dev;
-	struct device_node *slaves, *slave;
+	struct device_node *slaves, *slave, *interfaces;
 	void __iomem *regs;
+	struct net_device *ndev;
 	int slave_num = 0;
-	int ret = 0;
+	int i, ret = 0;
 
 	cpsw_dev = devm_kzalloc(dev, sizeof(struct cpsw_priv), GFP_KERNEL);
 	if (!cpsw_dev) {
-		dev_err(dev, "memory allocation failed\n");
-		ret = -ENOMEM;
-		goto exit;
+		dev_err(dev, "cpsw_dev memory allocation failed\n");
+		return -ENOMEM;
 	}
 	*inst_priv = cpsw_dev;
 	dev_dbg(dev, "%s(): cpsw_priv = %p\n", __func__, cpsw_dev);
@@ -1017,24 +1106,6 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	cpsw_dev->netcp_device = netcp_device;
 	
 	priv = cpsw_dev;	/* FIXME: Remove this!! */
-
-	regs = ioremap(TCI6614_SS_BASE, 0xf00);
-	BUG_ON(!regs);
-
-	/* Parameters related to the tx_pipe */
-	ret = of_property_read_string(node, "tx-channel", &cpsw_dev->tx_chan_name);
-	if (ret < 0) {
-		dev_err(dev, "missing \"tx-channel\" parameter, err %d\n", ret);
-		cpsw_dev->tx_chan_name = "nettx";
-	}
-	dev_dbg(dev, "dma_chan_name %s\n", cpsw_dev->tx_chan_name);
-
-	ret = of_property_read_u32(node, "tx_queue_depth", &cpsw_dev->tx_queue_depth);
-	if (ret < 0) {
-		dev_err(dev, "missing tx_queue_depth parameter, err %d\n", ret);
-		cpsw_dev->tx_queue_depth = 32;
-	}
-	dev_dbg(dev, "tx_queue_depth %u\n", cpsw_dev->tx_queue_depth);
 
 	ret = of_property_read_u32(node, "sgmii_module_ofs",
 				   &cpsw_dev->sgmii_module_ofs);
@@ -1102,21 +1173,42 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 		cpsw_dev->intf_tx_queues = 1;
 	}
 
+	if (of_find_property(node, "multi-interface", NULL))
+		cpsw_dev->multi_if = 1;
+
+	ret = of_property_read_u32(node, "num-interfaces",
+				   &cpsw_dev->num_interfaces);
+	if (ret < 0) {
+		dev_err(dev, "missing num-interfaces parameter\n");
+		cpsw_dev->num_interfaces = 1;
+	}
+
+	ret = of_property_read_u32(node, "slaves-per-interface",
+				   &cpsw_dev->slaves_per_interface);
+	if (ret < 0) {
+		dev_err(dev, "missing slaves-per_interface parameter\n");
+		cpsw_dev->slaves_per_interface = 2;
+	}
+
+	/* FIXME: TCI6614_SS_BASE needs to come from the device tree */
+	regs = ioremap(TCI6614_SS_BASE, 0xf00);
+	BUG_ON(!regs);
+
 	cpsw_dev->ss_regs = regs;
 	cpsw_dev->sgmii_port_regs	= regs + cpsw_dev->sgmii_module_ofs;
 	cpsw_dev->regs = regs + cpsw_dev->switch_module_ofs;
 	cpsw_dev->host_port_regs = regs + cpsw_dev->host_port_reg_ofs;
-	cpsw_dev->hw_stats[0] = regs + cpsw_dev->hw_stats_reg_ofs;
-	cpsw_dev->hw_stats[1] = regs + cpsw_dev->hw_stats_reg_ofs + 0x100;
+	cpsw_dev->hw_stats_regs[0] = regs + cpsw_dev->hw_stats_reg_ofs;
+	cpsw_dev->hw_stats_regs[1] = regs + cpsw_dev->hw_stats_reg_ofs + 0x100;
 	cpsw_dev->ale_reg	  = regs + cpsw_dev->ale_reg_ofs;
 
 	cpsw_dev->host_port = 0;
 	cpsw_dev->rx_packet_max = 9500;
 
-	dev_info(dev, "num_slaves = %d\n", cpsw_dev->num_slaves);
-	dev_info(dev, "ale_ageout = %d\n", cpsw_dev->ale_ageout);
-	dev_info(dev, "ale_entries = %d\n", cpsw_dev->ale_entries);
-	dev_info(dev, "ale_ports = %d\n", cpsw_dev->ale_ports);
+	dev_dbg(dev, "num_slaves = %d\n", cpsw_dev->num_slaves);
+	dev_dbg(dev, "ale_ageout = %d\n", cpsw_dev->ale_ageout);
+	dev_dbg(dev, "ale_entries = %d\n", cpsw_dev->ale_entries);
+	dev_dbg(dev, "ale_ports = %d\n", cpsw_dev->ale_ports);
 
 	slaves = of_get_child_by_name(node, "slaves");
 	if (!slaves) {
@@ -1132,34 +1224,140 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 
 	of_node_put(slaves);
 
-	/* Configure the streaming switch */
-#define	PSTREAM_ROUTE_DMA	6
-	netcp_set_streaming_switch(netcp_device, 0, PSTREAM_ROUTE_DMA);
+	interfaces = of_find_child_by_name(node, "interfaces");
+	if (!interfaces)
+		dev_err(dev, "could not find interfaces\n");
+
+	cpsw_dev->interfaces = interfaces;
 
 	/* Create the interface */
-	netcp_create_interface(netcp_device, &cpsw_dev->ndev, NULL,
-			cpsw_dev->intf_tx_queues, 1);
-	SET_ETHTOOL_OPS(cpsw_dev->ndev, &keystone_ethtool_ops);
+	INIT_LIST_HEAD(&cpsw_dev->cpsw_intf_head);
+	if (cpsw_dev->multi_if)
+		for (i = 0; i < cpsw_dev->num_interfaces; i++)
+			netcp_create_interface(netcp_device, &ndev,
+					       NULL, cpsw_dev->intf_tx_queues,
+					       1, (i + 1));
+	else
+		netcp_create_interface(netcp_device, &ndev,
+					       NULL, cpsw_dev->intf_tx_queues,
+					       1, 0);
 
 	return 0;
+
 exit:
+	if (cpsw_dev->ss_regs)
+		iounmap(cpsw_dev->ss_regs);
 	*inst_priv = NULL;
+	kfree(cpsw_dev);
 	return ret;
 }
 
-static int cpsw_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
+static int cpsw_attach(void *inst_priv, struct net_device *ndev,
+		       void **intf_priv)
 {
 	struct cpsw_priv *cpsw_dev = inst_priv;
+	struct cpsw_intf *cpsw_intf;
+	struct netcp_priv *netcp = netdev_priv(ndev);
+	struct device_node *interface;
+	int i = 0, ret = 0;
+	char node_name[24];
 
-	netcp_txpipe_init(&cpsw_dev->tx_pipe, netdev_priv(ndev),
-			  cpsw_dev->tx_chan_name, cpsw_dev->tx_queue_depth);
+	cpsw_intf = devm_kzalloc(cpsw_dev->dev,
+				 sizeof(struct cpsw_intf), GFP_KERNEL);
+	if (!cpsw_intf) {
+		dev_err(cpsw_dev->dev, "cpsw interface memory "
+			"allocation failed\n");
+		return -ENOMEM;
+	}
+	cpsw_intf->ndev = ndev;
+	cpsw_intf->dev = cpsw_dev->dev;
+	cpsw_intf->cpsw_priv = cpsw_dev;
+	cpsw_intf->multi_if = cpsw_dev->multi_if;
 
-	*intf_priv = cpsw_dev;
+	if (cpsw_dev->multi_if)
+		snprintf(node_name, sizeof(node_name), "interface-%d",
+			 netcp->cpsw_port - 1);
+	else
+		snprintf(node_name, sizeof(node_name), "interface-%d",
+			 0);
+
+	interface = of_find_child_by_name(cpsw_dev->interfaces, node_name);
+	if (!interface) {
+		dev_err(cpsw_dev->dev, "interface data not available\n");
+		devm_kfree(cpsw_dev->dev, cpsw_intf);
+		return -ENODEV;
+	}
+	ret = of_property_read_u32(interface, "slave_port",
+				   &cpsw_intf->slave_port);
+	if (ret < 0) {
+		dev_err(cpsw_dev->dev, "missing slave_port paramater\n");
+		return -EINVAL;
+	}
+
+	ret = of_property_read_string(interface, "tx-channel",
+				      &cpsw_intf->tx_chan_name);
+	if (ret < 0) {
+		dev_err(cpsw_dev->dev, "missing tx-channel "
+			"parameter, err %d\n", ret);
+		cpsw_intf->tx_chan_name = "nettx";
+	}
+	dev_info(cpsw_dev->dev, "dma_chan_name %s\n", cpsw_intf->tx_chan_name);
+
+	ret = of_property_read_u32(interface, "tx_queue_depth",
+				   &cpsw_intf->tx_queue_depth);
+	if (ret < 0) {
+		dev_err(cpsw_dev->dev, "missing tx_queue_depth "
+			"parameter, err %d\n", ret);
+		cpsw_intf->tx_queue_depth = 32;
+	}
+	dev_dbg(cpsw_dev->dev, "tx_queue_depth %u\n",
+		cpsw_intf->tx_queue_depth);
+
+	cpsw_intf->num_slaves = cpsw_dev->slaves_per_interface;
+
+	cpsw_intf->slaves = devm_kzalloc(cpsw_dev->dev,
+					 sizeof(struct cpsw_slave) *
+					 cpsw_intf->num_slaves, GFP_KERNEL);
+
+	if (!cpsw_intf->slaves) {
+		dev_err(cpsw_dev->dev, "cpsw interface slave memory "
+			"allocation failed\n");
+		devm_kfree(cpsw_dev->dev, cpsw_intf);
+		return -ENOMEM;
+	}
+
+	if (cpsw_dev->multi_if) {
+		cpsw_intf->slaves[i].slave_num = cpsw_intf->slave_port;
+		cpsw_intf->slaves[i].link_interface =
+			cpsw_dev->link[cpsw_intf->slave_port];
+	} else {
+		for (i = 0; i < cpsw_intf->num_slaves; i++) {
+			cpsw_intf->slaves[i].slave_num = i;
+			cpsw_intf->slaves[i].link_interface = cpsw_dev->link[i];
+		}
+	}
+
+	netcp_txpipe_init(&cpsw_intf->tx_pipe, netdev_priv(ndev),
+			  cpsw_intf->tx_chan_name, cpsw_intf->tx_queue_depth);
+
+	cpsw_intf->tx_pipe.dma_psflags	= netcp->cpsw_port;
+
+	SET_ETHTOOL_OPS(ndev, &keystone_ethtool_ops);
+
+	list_add(&cpsw_intf->cpsw_intf_list, &cpsw_dev->cpsw_intf_head);
+
+	*intf_priv = cpsw_intf;
 	return 0;
 }
 
-static int cpsw_release(void *inst_priv)
+static int cpsw_release(void *intf_priv)
 {
+	struct cpsw_intf *cpsw_intf = intf_priv;
+
+	SET_ETHTOOL_OPS(cpsw_intf->ndev, NULL);
+
+	list_del(&cpsw_intf->cpsw_intf_list);
+	devm_kfree(cpsw_intf->dev, cpsw_intf);
 	return 0;
 }
 
@@ -1173,10 +1371,11 @@ static struct netcp_module cpsw_module = {
 	.remove		= cpsw_remove,
 	.attach		= cpsw_attach,
 	.release	= cpsw_release,
-	.add_mcast	= cpsw_add_mcast,
-	.add_ucast	= cpsw_add_ucast,
+	.add_addr	= cpsw_add_addr,
+	.del_addr	= cpsw_del_addr,
 	.add_vid	= cpsw_add_vid,
 	.del_vid	= cpsw_del_vid,
+	.ioctl		= cpsw_ioctl,
 };
 
 int __init keystone_cpsw_init(void)
