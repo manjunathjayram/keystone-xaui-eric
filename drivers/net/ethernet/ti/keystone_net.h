@@ -31,7 +31,8 @@
 
 int serdes_init(void);
 int keystone_sgmii_reset(void __iomem *sgmii_ofs, int port);
-int keystone_sgmii_link_status(void __iomem *sgmii_ofs, int port);
+int keystone_sgmii_link_status(void __iomem *sgmii_ofs, int ports);
+int keystone_sgmii_get_port_link(void __iomem *sgmii_ofs, int port);
 int keystone_sgmii_config(void __iomem *sgmii_ofs,
 			  int port, u32 interface);
 
@@ -56,7 +57,8 @@ struct netcp_tx_pipe {
 	struct netcp_priv		*netcp_priv;
 	struct dma_chan			*dma_channel;
 	const char			*dma_chan_name;
-	u16				 dma_flow;
+	u8				 dma_psflags;
+	u8				 filler1;
 	u16				 dma_queue;
 	unsigned int			 dma_queue_depth;
 	unsigned int			 dma_poll_threshold;
@@ -67,6 +69,20 @@ struct netcp_tx_pipe {
 	enum netcp_tx_state		 dma_poll_state;
 };
 
+#define	ADDR_DEV	BIT(0)
+#define ADDR_UCAST	BIT(1)
+#define ADDR_MCAST	BIT(2)
+#define ADDR_BCAST	BIT(3)
+#define	ADDR_INVALID	BIT(4)
+#define ADDR_VALID	BIT(5)
+#define ADDR_NEW	BIT(6)
+
+struct netcp_addr_list {
+	unsigned char		addr[MAX_ADDR_LEN];
+	unsigned int		flags;
+	struct list_head	node;
+};
+
 struct netcp_priv {
 	spinlock_t			 lock;
 	struct netcp_device		*netcp_device;
@@ -74,6 +90,7 @@ struct netcp_priv {
 	struct net_device		*ndev;
 	struct napi_struct		 napi;
 	struct device			*dev;
+	int				 cpsw_port;
 	u32				 msg_enable;
 	struct net_device_stats		 stats;
 	int				 rx_packet_max;
@@ -84,17 +101,17 @@ struct netcp_priv {
 	int				 hwts_tx_en;
 	int				 hwts_rx_en;
 
-	u64				 hw_stats[72];
-
 	u32				 link_state;
-
-	unsigned long			 active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
 
 	enum netcp_rx_state		 rx_state;
 	struct list_head		 module_head;
 	struct list_head		 interface_list;
 	struct list_head		 txhook_list_head;
 	struct list_head		 rxhook_list_head;
+	struct list_head		 addr_list_head;
+
+	u32				 add_bcast;
+	u32				 pa_ts_req;
 
 	/* PktDMA configuration data */
 	u32				 rx_queue_depths[KEYSTONE_QUEUES_PER_CHAN];
@@ -147,14 +164,15 @@ struct netcp_module {
 
 	int			(*open)(void *intf_priv, struct net_device *ndev);
 	int			(*close)(void *intf_priv, struct net_device *ndev);
-	int			(*add_mcast)(void *intf_priv, u8 *mc_list,
-						int mc_count, int vid);
-	int			(*add_ucast)(void *intf_priv, u8 *uc_list,
-						int uc_count, int vid);
+	int			(*add_addr)(void *intf_priv, u8 *addr,
+					    unsigned int flags);
+	int			(*del_addr)(void *intf_priv, u8 *addr,
+					    unsigned int flags);
 	int			(*add_vid)(void *intf_priv, int vid);
 	int			(*del_vid)(void *intf_priv, int vid);
+	int			(*ioctl)(void *intf_priv, struct ifreq *req,
+					 int cmd);
 };
-
 
 int netcp_register_module(struct netcp_module *module);
 void netcp_unregister_module(struct netcp_module *module);
@@ -166,7 +184,8 @@ u32 netcp_set_streaming_switch(struct netcp_device *netcp_device,
 int netcp_create_interface(struct netcp_device *netcp_device,
 			   struct net_device **ndev_p,
 			   const char *ifname_proto,
-			   int tx_queues, int rx_queues);
+			   int tx_queues, int rx_queues,
+			   int cpsw_port);
 void netcp_delete_interface(struct netcp_device *netcp_device,
 			    struct net_device *ndev);
 
