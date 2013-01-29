@@ -252,6 +252,7 @@ void netcp_unregister_module(struct netcp_module *module)
 		struct netcp_priv *netcp_priv, *netcp_tmp;
 		struct netcp_inst_modpriv *inst_modpriv, *inst_tmp;
 
+		/* Release the module from each interface */
 		list_for_each_entry_safe(netcp_priv, netcp_tmp, 
 				&netcp_device->interface_head, interface_list) {
 			struct netcp_intf_modpriv *intf_modpriv, *intf_tmp;
@@ -261,19 +262,25 @@ void netcp_unregister_module(struct netcp_module *module)
 				if (intf_modpriv->netcp_module == module) {
 					module->release(intf_modpriv->module_priv);
 					list_del(&intf_modpriv->intf_list);
+					kfree(intf_modpriv);
+					break;
 				}
 			}
 		}
 
+		/* Remove the module from each instance */
 		list_for_each_entry_safe(inst_modpriv, inst_tmp,
 				&netcp_device->modpriv_head, inst_list) {
 			if (inst_modpriv->netcp_module == module) {
 				module->remove(netcp_device, inst_modpriv->module_priv);
 				list_del(&inst_modpriv->inst_list);
+				kfree(inst_modpriv);
+				break;
 			}
 		}
 	}
 
+	/* Remove the module from the module list */
 	for_each_netcp_module(module_tmp) {
 		if (module == module_tmp) {
 			list_del(&module->module_list);
@@ -944,7 +951,8 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 
 	desc = dmaengine_prep_slave_sg(tx_pipe->dma_channel, p_info->sg,
 				       p_info->sg_ents, DMA_MEM_TO_DEV,
-				       DMA_HAS_EPIB | DMA_HAS_PSINFO);
+				       (DMA_HAS_EPIB | DMA_HAS_PSINFO |
+					tx_pipe->dma_psflags));
 
 	if (IS_ERR_OR_NULL(desc)) {
 		ndev->stats.tx_dropped++;
@@ -957,6 +965,9 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 		ret = -ENOBUFS;
 		goto out;
 	}
+
+	if (!netcp->pa_ts_req)
+		skb_tx_timestamp(skb);
 
 	desc->callback_param = p_info;
 	desc->callback = netcp_tx_complete;
@@ -1048,7 +1059,6 @@ int netcp_txpipe_open(struct netcp_tx_pipe *tx_pipe)
 	dmaengine_pause(tx_pipe->dma_channel);
 	netcp_set_txpipe_state(tx_pipe, TX_STATE_POLL);
 
-	tx_pipe->dma_flow = 0;
 	tx_pipe->dma_queue = dma_get_tx_queue(tx_pipe->dma_channel);
 	atomic_set(&tx_pipe->dma_poll_count, tx_pipe->dma_queue_depth);
 	tasklet_enable(&tx_pipe->dma_poll_tasklet);
@@ -1065,6 +1075,8 @@ int netcp_txpipe_init(struct netcp_tx_pipe *tx_pipe,
 		const char *chan_name,
 		int queue_depth)
 {
+	memset(tx_pipe, 0, sizeof(*tx_pipe));
+
 	tx_pipe->netcp_priv = netcp_priv;
 	tx_pipe->dma_chan_name = chan_name;
 	tx_pipe->dma_queue_depth = queue_depth;
@@ -1085,123 +1097,149 @@ int netcp_txpipe_init(struct netcp_tx_pipe *tx_pipe,
 }
 EXPORT_SYMBOL(netcp_txpipe_init);
 
-
-static void netcp_uc_list_set(struct net_device *ndev, int vid)
+static int netcp_alloc_new_addr_node(struct net_device *ndev, u8 *addr,
+				     unsigned int flags)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
-	struct netcp_intf_modpriv *intf_modpriv;
-	struct netcp_module *module;
-	struct netdev_hw_addr *uc_addr;
-	int i = 0, err;
-	int uc_count;
-	u8 *uc_list;
+	struct netcp_addr_list *new_addr;
 
-	uc_count = netdev_uc_count(ndev);
-	dev_dbg(netcp->dev, "uc count is = %d\n", uc_count);
+	new_addr = kmalloc(sizeof(struct netcp_addr_list), GFP_KERNEL);
+	if (!new_addr)
+		return -ENOMEM;
+	new_addr->flags = ADDR_NEW | ADDR_VALID | flags;
+	new_addr->flags &= ~ADDR_INVALID;
+	memcpy(&new_addr->addr[0], &addr[0], ETH_ALEN);
 
-	uc_list = kzalloc(uc_count * ETH_ALEN, GFP_ATOMIC);
-	if (!uc_list)
-		goto out;
+	list_add_tail(&new_addr->node, &netcp->addr_list_head);
 
-	netdev_for_each_uc_addr(uc_addr, ndev) {
-		memcpy(&uc_list[i * ETH_ALEN], &uc_addr->addr[0], ETH_ALEN);
-		i++;
+	return 0;
+}
 
-		dev_dbg(netcp->dev, "uc address %x:%x:%x:%x:%x:%x\n",
-			uc_addr->addr[0], uc_addr->addr[1], uc_addr->addr[2],
-			uc_addr->addr[3], uc_addr->addr[4], uc_addr->addr[5]);
+static int netcp_find_address(struct net_device *ndev, u8 *addr,
+			       unsigned int flags)
+{
+	struct netcp_priv *netcp = netdev_priv(ndev);
+	struct netcp_addr_list *hw_addr;
+	int found, ret = 0;
 
-	}
-
-	for_each_module(netcp, intf_modpriv) {
-		module = intf_modpriv->netcp_module;
-		if (module->add_ucast != NULL) {
-			err = module->add_ucast(intf_modpriv->module_priv,
-					(u8 *)uc_list, uc_count, vid);
-			if (err != 0) {
-				dev_err(netcp->dev, "Could not add "
-					"unicast entries\n");
-				return;
-			}
+	found = 0;
+	list_for_each_entry(hw_addr, &netcp->addr_list_head, node) {
+		if (memcmp(&addr[0], &hw_addr->addr[0],
+			   ETH_ALEN) == 0) {
+			found = 1;
+			break;
 		}
 	}
 
-	kfree(uc_list);
-out:
-	return;
-}
-
-static void netcp_mc_list_set(struct net_device *ndev, int vid)
-{
-	struct netcp_priv *netcp = netdev_priv(ndev);
-	struct netcp_intf_modpriv *intf_modpriv;
-	struct netcp_module *module;
-	struct netdev_hw_addr *mc_addr;
-	int i = 0, err;
-	int mc_count;
-	u8 *mc_list;
-
-	mc_count = netdev_mc_count(ndev);
-	dev_dbg(netcp->dev, "mc count is = %d\n", mc_count);
-
-	mc_list = kzalloc(mc_count * ETH_ALEN, GFP_ATOMIC);
-	if (!mc_list)
-		goto out;
-
-	netdev_for_each_mc_addr(mc_addr, ndev) {
-		memcpy(&mc_list[i * ETH_ALEN], &mc_addr->addr[0], ETH_ALEN);
-		i++;
-
-		dev_dbg(netcp->dev, "mc address %x:%x:%x:%x:%x:%x\n",
-			mc_addr->addr[0], mc_addr->addr[1], mc_addr->addr[2],
-			mc_addr->addr[3], mc_addr->addr[4], mc_addr->addr[5]);
-
+	if (found) {
+		hw_addr->flags |= ADDR_VALID;
+		hw_addr->flags &= ~ADDR_NEW;
+		hw_addr->flags &= ~ADDR_INVALID;
+	} else {
+		ret = netcp_alloc_new_addr_node(ndev, &addr[0], flags);
+		if (ret < 0)
+			dev_err(netcp->dev, "Allocating memory failed\n");
+		return ret;
 	}
 
-	for_each_module(netcp, intf_modpriv) {
-		module = intf_modpriv->netcp_module;
-		if (module->add_mcast != NULL) {
-			err = module->add_mcast(intf_modpriv->module_priv,
-					(u8 *)mc_list, mc_count, vid);
-			if (err != 0) {
-				dev_err(netcp->dev, "Could not add "
-					"multicast entries\n");
-				return;
-			}
-		}
-	}
-
-	kfree(mc_list);
-out:
-	return;
-}
-
-static void __netcp_set_rx_mode(struct net_device *ndev, int vid)
-{
-	if (!netdev_mc_empty(ndev))
-		netcp_mc_list_set(ndev, vid);
-
-	if (!netdev_uc_empty(ndev))
-		netcp_uc_list_set(ndev, vid);
+	return 0;
 }
 
 static void netcp_set_rx_mode(struct net_device *ndev)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
-	unsigned long flags;
-	u16 vid;
+	struct netcp_addr_list *hw_addr, *tmp;
+	struct netcp_intf_modpriv *intf_modpriv;
+	struct netdev_hw_addr *ndev_addr;
+	struct netcp_module *module;
+	int err = 0;
 
-	spin_lock_irqsave(&netcp->lock, flags);
+	spin_lock(&netcp->lock);
 
-	__netcp_set_rx_mode(ndev, -1);
+	list_for_each_entry(hw_addr, &netcp->addr_list_head, node) {
+		if (hw_addr->flags & ADDR_BCAST) {
+			hw_addr->flags &= ~ADDR_INVALID;
+			hw_addr->flags &= ~ADDR_NEW;
+		} else {
+			hw_addr->flags |= ADDR_INVALID;
+			hw_addr->flags &= ~ADDR_VALID;
+		}
+	}
 
-	for_each_set_bit(vid, netcp->active_vlans, VLAN_N_VID)
-		__netcp_set_rx_mode(ndev, vid);
+	if (!netcp->add_bcast) {
+		err = netcp_alloc_new_addr_node(ndev, ndev->broadcast,
+						ADDR_BCAST);
+		BUG_ON(err < 0);
+	}
 
-	spin_unlock_irqrestore(&netcp->lock, flags);
+	for_each_dev_addr(ndev, ndev_addr) {
+		err = netcp_find_address(ndev, ndev_addr->addr, ADDR_DEV);
+		BUG_ON(err < 0);
+	}
+
+	netdev_for_each_uc_addr(ndev_addr, ndev) {
+		err = netcp_find_address(ndev, ndev_addr->addr, ADDR_UCAST);
+		BUG_ON(err < 0);
+	}
+
+	netdev_for_each_mc_addr(ndev_addr, ndev) {
+		err = netcp_find_address(ndev, ndev_addr->addr, ADDR_MCAST);
+		BUG_ON(err < 0);
+	}
+
+	list_for_each_entry_safe(hw_addr, tmp, &netcp->addr_list_head, node) {
+		dev_dbg(netcp->dev, "address %x:%x:%x:%x:%x:%x %s%s\n",
+			hw_addr->addr[0], hw_addr->addr[1], hw_addr->addr[2],
+			hw_addr->addr[3], hw_addr->addr[4], hw_addr->addr[5],
+			(hw_addr->flags & ADDR_NEW) ? "add" : "",
+			((hw_addr->flags & ADDR_INVALID) &&
+			 !(hw_addr->flags & ADDR_BCAST)) ? "del" : "");
+
+		if (hw_addr->flags & ADDR_NEW) {
+			for_each_module(netcp, intf_modpriv) {
+				module = intf_modpriv->netcp_module;
+				if (module->add_addr != NULL) {
+					err = module->add_addr(
+						intf_modpriv->module_priv,
+						&hw_addr->addr[0],
+						hw_addr->flags);
+					if (err != 0) {
+						dev_err(netcp->dev, "Could not"
+							" add address\n");
+						goto out;
+					}
+				}
+			}
+		}
+
+		if ((hw_addr->flags & ADDR_INVALID) &&
+		    !(hw_addr->flags & ADDR_BCAST)) {
+			for_each_module(netcp, intf_modpriv) {
+				module = intf_modpriv->netcp_module;
+				if (module->del_addr != NULL) {
+					err = module->del_addr(
+						intf_modpriv->module_priv,
+						&hw_addr->addr[0],
+						hw_addr->flags);
+					if (err != 0) {
+						dev_err(netcp->dev, "Could not"
+							" delete address\n");
+						goto out;
+					}
+				}
+			}
+			list_del(&hw_addr->node);
+			kfree(hw_addr);
+		}
+	}
+
+	netcp->add_bcast = 1;
+out:
+	spin_unlock(&netcp->lock);
 
 	return;
 }
+
 struct dma_chan *netcp_get_rx_chan(struct netcp_priv *netcp)
 {
 	return netcp->rx_channel;
@@ -1347,52 +1385,33 @@ out:
 	return 0;
 }
 
-static int netcp_hwtstamp_ioctl(struct net_device *ndev,
-				struct ifreq *ifr, int cmd)
-{
-	struct netcp_priv *netcp = netdev_priv(ndev);
-	struct hwtstamp_config cfg;
-
-	if (copy_from_user(&cfg, ifr->ifr_data, sizeof(cfg)))
-		return -EFAULT;
-
-	if (cfg.flags)
-		return -EINVAL;
-
-	switch (cfg.tx_type) {
-	case HWTSTAMP_TX_OFF:
-		netcp->hwts_tx_en = 0;
-		break;
-	case HWTSTAMP_TX_ON:
-		netcp->hwts_tx_en = 1;
-		break;
-	default:
-		return -ERANGE;
-	}
-
-	switch (cfg.rx_filter) {
-	case HWTSTAMP_FILTER_NONE:
-		netcp->hwts_rx_en = 0;
-		break;
-	default:
-		netcp->hwts_rx_en = 1;
-		cfg.rx_filter = HWTSTAMP_FILTER_ALL;
-		break;
-	}
-
-	return copy_to_user(ifr->ifr_data, &cfg, sizeof(cfg)) ? -EFAULT : 0;
-}
-
 static int netcp_ndo_ioctl(struct net_device *ndev,
 			   struct ifreq *req, int cmd)
 {
+	struct netcp_priv *netcp = netdev_priv(ndev);
+	struct netcp_intf_modpriv *intf_modpriv;
+	struct netcp_module *module;
+	int ret = -EOPNOTSUPP;
+
 	if (!netif_running(ndev))
 		return -EINVAL;
 
-	if (cmd == SIOCSHWTSTAMP)
-		return netcp_hwtstamp_ioctl(ndev, req, cmd);
+	for_each_module(netcp, intf_modpriv) {
+		int err;
 
-	return -EOPNOTSUPP;
+		module = intf_modpriv->netcp_module;
+		if (!module->ioctl)
+			continue;
+
+		err = module->ioctl(intf_modpriv->module_priv, req, cmd);
+		ret = err;
+		if (err < 0)
+			continue;
+		if (err == 0)
+			break;
+	}
+
+	return ret;
 }
 
 static int netcp_ndo_change_mtu(struct net_device *ndev, int new_mtu)
@@ -1471,8 +1490,6 @@ static int netcp_rx_add_vid(struct net_device *ndev, u16 vid)
 
 	spin_lock_irqsave(&netcp->lock, flags);
 
-	set_bit(vid, netcp->active_vlans);
-
 	for_each_module(netcp, intf_modpriv) {
 		module = intf_modpriv->netcp_module;
 		if ((module->add_vid != NULL) && (vid != 0)) {
@@ -1510,8 +1527,6 @@ static int netcp_rx_kill_vid(struct net_device *ndev, u16 vid)
 			}
 		}
 	}
-
-	clear_bit(vid, netcp->active_vlans);
 
 	return 0;
 }
@@ -1596,10 +1611,12 @@ static const struct net_device_ops netcp_netdev_ops = {
 int netcp_create_interface(struct netcp_device *netcp_device,
 			   struct net_device **ndev_p,
 			   const char *ifname_proto,
-			   int tx_queues, int rx_queues)
+			   int tx_queues, int rx_queues, int cpsw_port)
 {
 	struct platform_device *pdev = netcp_device->platform_device;
 	struct device_node *node = pdev->dev.of_node;
+	struct device_node *node_ifgroup;
+	struct device_node *node_interface;
 	struct netcp_inst_modpriv *inst_modpriv;
 	struct netcp_priv *netcp;
 	struct net_device *ndev;
@@ -1639,15 +1656,36 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 	INIT_LIST_HEAD(&netcp->module_head);
 	INIT_LIST_HEAD(&netcp->txhook_list_head);
 	INIT_LIST_HEAD(&netcp->rxhook_list_head);
+	INIT_LIST_HEAD(&netcp->addr_list_head);
 	netcp->netcp_device = netcp_device;
 	netcp->pdev = netcp_device->platform_device;
 	netcp->ndev = ndev;
 	netcp->dev  = &ndev->dev;
+	netcp->cpsw_port = cpsw_port;
 	netcp->msg_enable = netif_msg_init(netcp_debug_level, NETCP_DEBUG);
 	netcp->rx_packet_max = netcp_rx_packet_max;
 	netcp_set_rx_state(netcp, RX_STATE_INVALID);
 
-	ret = of_property_read_u32(node, "efuse-mac", &efuse_mac);
+	node_ifgroup = of_find_child_by_name(node, "interfaces");
+	if (!node_ifgroup) {
+		dev_info(&pdev->dev, "could not find group \"interfaces\", "
+				     "defaulting to parent\n");
+		node_interface = node;
+	} else {
+		char node_name[24];
+		snprintf(node_name, sizeof(node_name), "interface-%d",
+			 (cpsw_port == 0) ? 0 : (cpsw_port - 1));
+		node_interface = of_find_child_by_name(node_ifgroup, node_name);
+		if (!node_interface) {
+			dev_err(&pdev->dev, "could not find %s\n", node_name);
+			of_node_put(node_ifgroup);
+			ret = -ENODEV;
+			goto probe_quit;
+		}
+		dev_dbg(&pdev->dev, "Using node \"%s\"\n", node_name);
+	}
+
+	ret = of_property_read_u32(node_interface, "efuse-mac", &efuse_mac);
 	if (efuse_mac) {
 		if (of_address_to_resource(node, 1, &res)) {
 			dev_err(&pdev->dev, "could not find resource\n");
@@ -1657,7 +1695,7 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 		size = resource_size(&res);
 
 		if (!devm_request_mem_region(&pdev->dev, res.start, size,
-					     dev_name(netcp->dev))) {
+					     dev_name(&pdev->dev))) {
 			dev_err(&pdev->dev, "could not reserve resource\n");
 			ret = -ENOMEM;
 			goto probe_quit;
@@ -1666,40 +1704,53 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 		efuse = devm_ioremap_nocache(&pdev->dev, res.start, size);
 		if (!efuse) {
 			dev_err(&pdev->dev, "could not map resource\n");
+			devm_release_mem_region(&pdev->dev, res.start, size);
 			ret = -ENOMEM;
 			goto probe_quit;
 		}
+
+		emac_arch_get_mac_addr(efuse_mac_addr, efuse);
+		if (is_valid_ether_addr(efuse_mac_addr))
+			memcpy(ndev->dev_addr, efuse_mac_addr, ETH_ALEN);
+		else
+			random_ether_addr(ndev->dev_addr);
+
+		devm_iounmap(&pdev->dev, efuse);
+		devm_release_mem_region(&pdev->dev, res.start, size);
+	} else {
+		mac_addr = of_get_mac_address(node_interface);
+		if (mac_addr)
+			memcpy(ndev->dev_addr, mac_addr, ETH_ALEN);
+		else
+			random_ether_addr(ndev->dev_addr);
 	}
 
-	ret = of_property_read_string(node, "rx-channel", &netcp->rx_chan_name);
-	if (ret < 0)
+	ret = of_property_read_string(node_interface, "rx-channel",
+				      &netcp->rx_chan_name);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "missing \"rx-channel\" parameter\n");
 		netcp->rx_chan_name = "netrx";
+	}
 
-	ret = of_property_read_u32_array(node, "rx-queue-depth",
+	ret = of_property_read_u32_array(node_interface, "rx-queue-depth",
 			netcp->rx_queue_depths, KEYSTONE_QUEUES_PER_CHAN);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "missing \"rx-queue-depth\" parameter\n");
 		netcp->rx_queue_depths[0] = 128;
 	}
 
-	ret = of_property_read_u32_array(node, "rx-buffer-size",
+	ret = of_property_read_u32_array(node_interface, "rx-buffer-size",
 			netcp->rx_buffer_sizes, KEYSTONE_QUEUES_PER_CHAN);
 	if (ret) {
 		dev_err(&pdev->dev, "missing \"rx-buffer-size\" parameter\n");
 		netcp->rx_buffer_sizes[0] = 1500;
 	}
 
-
-	if (efuse_mac == 1) {
-		emac_arch_get_mac_addr(efuse_mac_addr, efuse);
-		if (is_valid_ether_addr(efuse_mac_addr))
-			memcpy(ndev->dev_addr, efuse_mac_addr, ETH_ALEN);
-	} else {
-		mac_addr = of_get_mac_address(node);
-		if (mac_addr)
-			memcpy(ndev->dev_addr, mac_addr, ETH_ALEN);
-		else
-			random_ether_addr(ndev->dev_addr);
+	if (node_ifgroup) {
+		of_node_put(node_interface);
+		of_node_put(node_ifgroup);
+		node_interface = NULL;
+		node_ifgroup = NULL;
 	}
 
 	/* NAPI register */
@@ -1765,6 +1816,9 @@ void netcp_delete_interface(struct netcp_device *netcp_device,
 	struct netcp_priv *netcp = netdev_priv(ndev);
 	struct netcp_module *module;
 
+	dev_info(&netcp_device->platform_device->dev,
+			"Removing interface \"%s\"\n", ndev->name);
+
 	/* Notify each of the modules that the interface is going away */
 	list_for_each_entry_safe(intf_modpriv, tmp, &netcp->module_head, intf_list) {
 		module = intf_modpriv->netcp_module;
@@ -1775,11 +1829,13 @@ void netcp_delete_interface(struct netcp_device *netcp_device,
 		list_del(&intf_modpriv->intf_list);
 		kfree(intf_modpriv);
 	}
-	WARN(!list_empty(&intf_modpriv->intf_list),
-			"%s interface list is not empty!\n", ndev->name);
+	WARN(!list_empty(&netcp->module_head),
+			"%s interface module list is not empty!\n", ndev->name);
 
 	list_del(&netcp->interface_list);
+
 	unregister_netdev(ndev);
+	netif_napi_del(&netcp->napi);
 	free_netdev(ndev);
 }
 EXPORT_SYMBOL(netcp_delete_interface);
@@ -1815,6 +1871,7 @@ static int netcp_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, netcp_device);
 
 	/* Map the Streaming Switch */
+	/* FIXME: Hard-coded register address! */
 	netcp_device->streaming_switch = devm_ioremap_nocache(&pdev->dev, 0x02000604, 4);
 	if (!netcp_device->streaming_switch) {
 		dev_err(&pdev->dev, "can't map streaming switch\n");
@@ -1913,19 +1970,19 @@ static int __init netcp_init(void)
 	if (!netcp_pinfo_cache)
 		return -ENOMEM;
 
-	err = keystone_cpsw_init();
-	if (err)
-		goto cpsw_fail;
-
 	err = platform_driver_register(&netcp_driver);
 	if (err)
 		goto netcp_fail;
 
+	err = keystone_cpsw_init();
+	if (err)
+		goto cpsw_fail;
+
 	return 0;
 
-netcp_fail:
-	keystone_cpsw_exit();
 cpsw_fail:
+	platform_driver_unregister(&netcp_driver);
+netcp_fail:
 	kmem_cache_destroy(netcp_pinfo_cache);
 	netcp_pinfo_cache = NULL;
 	return err;
@@ -1934,9 +1991,8 @@ module_init(netcp_init);
 
 static void __exit netcp_exit(void)
 {
-	platform_driver_unregister(&netcp_driver);
 	keystone_cpsw_exit();
-
+	platform_driver_unregister(&netcp_driver);
 	kmem_cache_destroy(netcp_pinfo_cache);
 	netcp_pinfo_cache = NULL;
 }
