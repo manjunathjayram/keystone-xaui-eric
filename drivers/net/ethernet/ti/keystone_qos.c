@@ -51,6 +51,8 @@ struct qos_device {
 	struct device			*dev;
 	int				 num_channels;
 	struct qos_channel		 channels[MAX_CHANNELS];
+	struct device_node		*node;
+	u32				 multi_if;
 };
 
 static int qos_tx_hook(int order, void *data, struct netcp_packet *p_info)
@@ -120,26 +122,36 @@ fail:
 
 static int qos_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 {
+	struct netcp_priv *netcp = netdev_priv(ndev);
 	struct qos_device *qos_dev = inst_priv;
+	char node_name[24];
 	int i;
+
+	snprintf(node_name, sizeof(node_name), "interface-%d",
+		 (qos_dev->multi_if) ? (netcp->cpsw_port - 1) : 0);
 
 	qos_dev->net_device = ndev;
 	*intf_priv = qos_dev;
 
-	/* Initialize the QoS input queues */
-	for (i = 0; i < qos_dev->num_channels; ++i) {
-		struct qos_channel *qchan = &qos_dev->channels[i];
+	if (of_find_property(qos_dev->node, node_name, NULL)) {
+		/* Initialize the QoS input queues */
+		for (i = 0; i < qos_dev->num_channels; ++i) {
+			struct qos_channel *qchan = &qos_dev->channels[i];
 
-		netcp_txpipe_init(&qchan->tx_pipe, netdev_priv(ndev),
-				  qchan->tx_chan_name, qchan->tx_queue_depth);
-	}
+			netcp_txpipe_init(&qchan->tx_pipe, netdev_priv(ndev),
+					  qchan->tx_chan_name,
+					  qchan->tx_queue_depth);
 
-	return 0;
+			qchan->tx_pipe.dma_psflags = netcp->cpsw_port;
+		}
+		return 0;
+	} else
+		return -ENODEV;
 }
 
-static int qos_release(void *inst_priv)
+static int qos_release(void *intf_priv)
 {
-	struct qos_device *qos_dev = inst_priv;
+	struct qos_device *qos_dev = intf_priv;
 
 	qos_dev->net_device = NULL;
 	return 0;
@@ -202,7 +214,10 @@ static int qos_probe(struct netcp_device *netcp_device,
 
 	qos_dev->netcp_device = netcp_device;
 	qos_dev->dev = dev;
+	qos_dev->node = node;
 
+	if (of_find_property(node, "multi-interface", NULL))
+		qos_dev->multi_if = 1;
 
 	channels = of_get_child_by_name(node, "input-channels");
 	if (!channels) {
