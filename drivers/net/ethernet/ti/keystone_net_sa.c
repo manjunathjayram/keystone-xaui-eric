@@ -72,15 +72,29 @@ static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	if (!ctx_info)
 		return 0;
 
+	iph = ip_hdr(p_info->skb);
+
+	if (iph->version != IPVERSION)
+		return 0;
+
+	ihl = iph->ihl * 4;
+
+	if (iph->protocol == IPPROTO_UDP) {
+		/* UDP encapsulation for IPSec NAT-T */
+		offset = (ulong)(skb_network_header(p_info->skb) -
+			p_info->skb->data) + ihl + sizeof(struct udphdr);
+		len = ntohs(iph->tot_len) - ihl - sizeof(struct udphdr);
+	} else if (iph->protocol == IPPROTO_ESP) {
+		offset = (ulong)(skb_network_header(p_info->skb) -
+			p_info->skb->data) + ihl;
+		len = ntohs(iph->tot_len) - ihl;
+	} else {
+	    return 0;
+	}
+
 	psdata = netcp_push_psdata(p_info, (2 * sizeof(u32)));
 	if (!psdata)
 		return -ENOMEM;
-
-	iph = ip_hdr(p_info->skb);
-	ihl = iph->ihl * 4;
-	offset = ((ulong)skb_network_header(p_info->skb) -
-				(ulong)p_info->skb->data) + ihl;
-	len = ntohs(iph->tot_len) - ihl;
 
 	psdata[0] = PASAHO_SINFO_FORMAT_CMD(offset, len);
 	psdata[1] = 0;
