@@ -597,6 +597,9 @@ static struct davinci_nand_pdata
 		if (of_find_property(pdev->dev.of_node,
 			"ti,davinci-nand-use-bbt", &len))
 			pdata->bbt_options = NAND_BBT_USE_FLASH;
+		if (of_find_property(pdev->dev.of_node,
+			"ti,davinci-no-subpage-write", &len))
+			pdata->options |= NAND_NO_SUBPAGE_WRITE;
 	}
 
 	return pdev->dev.platform_data;
