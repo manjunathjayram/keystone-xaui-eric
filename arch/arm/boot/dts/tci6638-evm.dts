@@ -946,11 +946,11 @@
 			interrupts			= <0 292 0xf01>;
 			clocks				= <&clkspi>;
 
-			flash: n25q032@0 {
+			flash: n25q128@0 {
 				#address-cells = <1>;
 				#size-cells = <1>;
-				compatible = "st,m25p32";
-				spi-max-frequency = <25000000>;
+				compatible = "st,n25q128","st,m25p";
+				spi-max-frequency = <30000000>;
 				reg = <0>;
 
 				partition@0 {
@@ -961,7 +961,7 @@
 
 				partition@1 {
 					label = "test";
-					reg = <0x80000 0x380000>;
+					reg = <0x80000 0xf80000>;
 				};
 			};
 		};
