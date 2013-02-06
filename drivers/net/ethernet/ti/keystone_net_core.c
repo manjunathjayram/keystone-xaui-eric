@@ -135,7 +135,7 @@ int netcp_register_module(struct netcp_module *module)
 	}
 
 	list_add_tail(&module->module_list, &netcp_modules);
-	
+
 	list_for_each_entry(netcp_device, &netcp_devices, device_list) {
 		struct platform_device *pdev = netcp_device->platform_device;
 		struct device_node *node = pdev->dev.of_node;
@@ -149,7 +149,7 @@ int netcp_register_module(struct netcp_module *module)
 			if (!strcasecmp(module->name, name))
 				break;
 		}
-		
+
 		/* If module not used for this device, skip it */
 		if (child == NULL)
 			continue;
@@ -173,7 +173,7 @@ int netcp_register_module(struct netcp_module *module)
 			kfree(inst_modpriv);
 			continue;
 		}
-		
+
 		/* Attach module to interfaces */
 		list_for_each_entry(netcp_priv, &netcp_device->interface_head, interface_list) {
 			struct netcp_intf_modpriv *intf_modpriv;
@@ -309,7 +309,7 @@ int netcp_register_txhook(struct netcp_priv *netcp_priv, int order,
 {
 	struct netcp_hook_list	*entry;
 	struct netcp_hook_list	*next;
-	
+
 	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry)
 		return -ENOMEM;
@@ -332,7 +332,7 @@ int netcp_unregister_txhook(struct netcp_priv *netcp_priv, int order,
 		netcp_hook_rtn *hook_rtn, void *hook_data)
 {
 	struct netcp_hook_list	*next;
-	
+
 	list_for_each_entry(next, &netcp_priv->txhook_list_head, list) {
 		if ((next->order     == order) &&
 		    (next->hook_rtn  == hook_rtn) &&
@@ -352,7 +352,7 @@ int netcp_register_rxhook(struct netcp_priv *netcp_priv, int order,
 {
 	struct netcp_hook_list	*entry;
 	struct netcp_hook_list	*next;
-	
+
 	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
 	if (!entry)
 		return -ENOMEM;
@@ -375,7 +375,7 @@ int netcp_unregister_rxhook(struct netcp_priv *netcp_priv, int order,
 		netcp_hook_rtn *hook_rtn, void *hook_data)
 {
 	struct netcp_hook_list	*next;
-	
+
 	list_for_each_entry(next, &netcp_priv->rxhook_list_head, list) {
 		if ((next->order     == order) &&
 		    (next->hook_rtn  == hook_rtn) &&
@@ -398,7 +398,7 @@ u32 *netcp_push_psdata(struct netcp_packet *p_info, unsigned bytes)
 	if ((bytes & 0x03) != 0)
 		return NULL;
 	words = bytes >> 2;
-	
+
 	if ((p_info->psdata_len + words) > NETCP_PSDATA_LEN)
 		return NULL;
 
@@ -406,7 +406,7 @@ u32 *netcp_push_psdata(struct netcp_packet *p_info, unsigned bytes)
 	buf = &p_info->psdata[NETCP_PSDATA_LEN - p_info->psdata_len];
 
 	memset(buf, 0, bytes);
-	
+
 	return buf;
 }
 EXPORT_SYMBOL(netcp_push_psdata);
@@ -426,7 +426,7 @@ int netcp_align_psdata(struct netcp_packet *p_info, unsigned byte_align)
 		padding = (p_info->psdata_len << 2) % byte_align;
 		break;
 	}
-	
+
 	return padding;
 }
 EXPORT_SYMBOL(netcp_align_psdata);
@@ -695,13 +695,13 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		/* Allocate a secondary receive queue entry */
 		struct scatterlist sg[1];
 		void *bufptr;
-		
+
 		bufptr = (void *)__get_free_page(GFP_ATOMIC);
 		if (!bufptr) {
 			dev_warn(netcp->dev, "page alloc failed for pool %d\n", q_num);
 			return NULL;
 		}
-		
+
 		sg_init_table(sg, 1);
 		sg_set_buf(&sg[0], bufptr, PAGE_SIZE);
 
@@ -730,7 +730,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		desc->callback_param = bufptr;
 		desc->callback = netcp_rx_complete2nd;
 	}
-	
+
 	return desc;
 }
 
@@ -1097,147 +1097,153 @@ int netcp_txpipe_init(struct netcp_tx_pipe *tx_pipe,
 }
 EXPORT_SYMBOL(netcp_txpipe_init);
 
-static int netcp_alloc_new_addr_node(struct net_device *ndev, u8 *addr,
-				     unsigned int flags)
+static struct netcp_addr *
+netcp_addr_find(struct netcp_priv *netcp, const u8 *addr,
+	       enum netcp_addr_type type)
 {
-	struct netcp_priv *netcp = netdev_priv(ndev);
-	struct netcp_addr_list *new_addr;
+	struct netcp_addr *naddr;
 
-	new_addr = kmalloc(sizeof(struct netcp_addr_list), GFP_KERNEL);
-	if (!new_addr)
-		return -ENOMEM;
-	new_addr->flags = ADDR_NEW | ADDR_VALID | flags;
-	new_addr->flags &= ~ADDR_INVALID;
-	memcpy(&new_addr->addr[0], &addr[0], ETH_ALEN);
+	list_for_each_entry(naddr, &netcp->addr_list, node) {
+		if (naddr->type != type)
+			continue;
+		if (addr && memcmp(addr, naddr->addr, ETH_ALEN))
+			continue;
+		return naddr;
+	}
 
-	list_add_tail(&new_addr->node, &netcp->addr_list_head);
-
-	return 0;
+	return NULL;
 }
 
-static int netcp_find_address(struct net_device *ndev, u8 *addr,
-			       unsigned int flags)
+static struct netcp_addr *
+netcp_addr_add(struct netcp_priv *netcp, const u8 *addr,
+	       enum netcp_addr_type type)
 {
-	struct netcp_priv *netcp = netdev_priv(ndev);
-	struct netcp_addr_list *hw_addr;
-	int found, ret = 0;
+	struct netcp_addr *naddr;
 
-	found = 0;
-	list_for_each_entry(hw_addr, &netcp->addr_list_head, node) {
-		if (memcmp(&addr[0], &hw_addr->addr[0],
-			   ETH_ALEN) == 0) {
-			found = 1;
-			break;
+	naddr = kmalloc(sizeof(struct netcp_addr), GFP_KERNEL);
+	if (!naddr)
+		return NULL;
+
+	naddr->type = type;
+	naddr->flags = 0;
+	naddr->netcp = netcp;
+	if (addr)
+		memcpy(naddr->addr, addr, ETH_ALEN);
+	else
+		memset(naddr->addr, 0, ETH_ALEN);
+	list_add_tail(&naddr->node, &netcp->addr_list);
+
+	return naddr;
+}
+
+static void netcp_addr_del(struct netcp_addr *naddr)
+{
+	list_del(&naddr->node);
+	kfree(naddr);
+}
+
+static void netcp_addr_clear_mark(struct netcp_priv *netcp)
+{
+	struct netcp_addr *naddr;
+
+	list_for_each_entry(naddr, &netcp->addr_list, node)
+		naddr->flags = 0;
+}
+
+static void netcp_addr_add_mark(struct netcp_priv *netcp, const u8 *addr,
+				enum netcp_addr_type type)
+{
+	struct netcp_addr *naddr;
+
+	naddr = netcp_addr_find(netcp, addr, type);
+	if (naddr) {
+		naddr->flags |= ADDR_VALID;
+		return;
+	}
+
+	naddr = netcp_addr_add(netcp, addr, type);
+	if (!WARN_ON(!naddr))
+		naddr->flags |= ADDR_NEW;
+}
+
+static void netcp_addr_sweep_del(struct netcp_priv *netcp)
+{
+	struct netcp_addr *naddr, *tmp;
+	struct netcp_intf_modpriv *priv;
+	struct netcp_module *module;
+	int error;
+
+	list_for_each_entry_safe(naddr, tmp, &netcp->addr_list, node) {
+		if (naddr->flags & (ADDR_VALID | ADDR_NEW))
+			continue;
+		dev_dbg(netcp->dev, "deleting address %pM, type %x\n",
+			naddr->addr, naddr->type);
+		for_each_module(netcp, priv) {
+			module = priv->netcp_module;
+			if (!module->del_addr)
+				continue;
+			error = module->del_addr(priv->module_priv,
+						 naddr);
+			WARN_ON(error);
+		}
+		netcp_addr_del(naddr);
+	}
+}
+
+static void netcp_addr_sweep_add(struct netcp_priv *netcp)
+{
+	struct netcp_addr *naddr, *tmp;
+	struct netcp_intf_modpriv *priv;
+	struct netcp_module *module;
+	int error;
+
+	list_for_each_entry_safe(naddr, tmp, &netcp->addr_list, node) {
+		if (!(naddr->flags & ADDR_NEW))
+			continue;
+		dev_dbg(netcp->dev, "adding address %pM, type %x\n",
+			naddr->addr, naddr->type);
+		for_each_module(netcp, priv) {
+			module = priv->netcp_module;
+			if (!module->add_addr)
+				continue;
+			error = module->add_addr(priv->module_priv, naddr);
+			WARN_ON(error);
 		}
 	}
-
-	if (found) {
-		hw_addr->flags |= ADDR_VALID;
-		hw_addr->flags &= ~ADDR_NEW;
-		hw_addr->flags &= ~ADDR_INVALID;
-	} else {
-		ret = netcp_alloc_new_addr_node(ndev, &addr[0], flags);
-		if (ret < 0)
-			dev_err(netcp->dev, "Allocating memory failed\n");
-		return ret;
-	}
-
-	return 0;
 }
 
 static void netcp_set_rx_mode(struct net_device *ndev)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
-	struct netcp_addr_list *hw_addr, *tmp;
-	struct netcp_intf_modpriv *intf_modpriv;
 	struct netdev_hw_addr *ndev_addr;
-	struct netcp_module *module;
-	int err = 0;
+	bool promisc;
+
+	promisc = (ndev->flags & IFF_PROMISC ||
+		   ndev->flags & IFF_ALLMULTI ||
+		   netdev_mc_count(ndev) > NETCP_MAX_MCAST_ADDR);
 
 	spin_lock(&netcp->lock);
 
-	list_for_each_entry(hw_addr, &netcp->addr_list_head, node) {
-		if (hw_addr->flags & ADDR_BCAST) {
-			hw_addr->flags &= ~ADDR_INVALID;
-			hw_addr->flags &= ~ADDR_NEW;
-		} else {
-			hw_addr->flags |= ADDR_INVALID;
-			hw_addr->flags &= ~ADDR_VALID;
-		}
-	}
+	/* first clear all marks */
+	netcp_addr_clear_mark(netcp);
 
-	if (!netcp->add_bcast) {
-		err = netcp_alloc_new_addr_node(ndev, ndev->broadcast,
-						ADDR_BCAST);
-		BUG_ON(err < 0);
-	}
+	/* next add new entries, mark existing ones */
+	netcp_addr_add_mark(netcp, ndev->broadcast, ADDR_BCAST);
+	for_each_dev_addr(ndev, ndev_addr)
+		netcp_addr_add_mark(netcp, ndev_addr->addr, ADDR_DEV);
+	netdev_for_each_uc_addr(ndev_addr, ndev)
+		netcp_addr_add_mark(netcp, ndev_addr->addr, ADDR_UCAST);
+	netdev_for_each_mc_addr(ndev_addr, ndev)
+		netcp_addr_add_mark(netcp, ndev_addr->addr, ADDR_MCAST);
 
-	for_each_dev_addr(ndev, ndev_addr) {
-		err = netcp_find_address(ndev, ndev_addr->addr, ADDR_DEV);
-		BUG_ON(err < 0);
-	}
+	if (promisc)
+		netcp_addr_add_mark(netcp, NULL, ADDR_ANY);
 
-	netdev_for_each_uc_addr(ndev_addr, ndev) {
-		err = netcp_find_address(ndev, ndev_addr->addr, ADDR_UCAST);
-		BUG_ON(err < 0);
-	}
+	/* finally sweep and callout into modules */
+	netcp_addr_sweep_del(netcp);
+	netcp_addr_sweep_add(netcp);
 
-	netdev_for_each_mc_addr(ndev_addr, ndev) {
-		err = netcp_find_address(ndev, ndev_addr->addr, ADDR_MCAST);
-		BUG_ON(err < 0);
-	}
-
-	list_for_each_entry_safe(hw_addr, tmp, &netcp->addr_list_head, node) {
-		dev_dbg(netcp->dev, "address %x:%x:%x:%x:%x:%x %s%s\n",
-			hw_addr->addr[0], hw_addr->addr[1], hw_addr->addr[2],
-			hw_addr->addr[3], hw_addr->addr[4], hw_addr->addr[5],
-			(hw_addr->flags & ADDR_NEW) ? "add" : "",
-			((hw_addr->flags & ADDR_INVALID) &&
-			 !(hw_addr->flags & ADDR_BCAST)) ? "del" : "");
-
-		if (hw_addr->flags & ADDR_NEW) {
-			for_each_module(netcp, intf_modpriv) {
-				module = intf_modpriv->netcp_module;
-				if (module->add_addr != NULL) {
-					err = module->add_addr(
-						intf_modpriv->module_priv,
-						&hw_addr->addr[0],
-						hw_addr->flags);
-					if (err != 0) {
-						dev_err(netcp->dev, "Could not"
-							" add address\n");
-						goto out;
-					}
-				}
-			}
-		}
-
-		if ((hw_addr->flags & ADDR_INVALID) &&
-		    !(hw_addr->flags & ADDR_BCAST)) {
-			for_each_module(netcp, intf_modpriv) {
-				module = intf_modpriv->netcp_module;
-				if (module->del_addr != NULL) {
-					err = module->del_addr(
-						intf_modpriv->module_priv,
-						&hw_addr->addr[0],
-						hw_addr->flags);
-					if (err != 0) {
-						dev_err(netcp->dev, "Could not"
-							" delete address\n");
-						goto out;
-					}
-				}
-			}
-			list_del(&hw_addr->node);
-			kfree(hw_addr);
-		}
-	}
-
-	netcp->add_bcast = 1;
-out:
 	spin_unlock(&netcp->lock);
-
-	return;
 }
 
 struct dma_chan *netcp_get_rx_chan(struct netcp_priv *netcp)
@@ -1575,7 +1581,7 @@ u32 netcp_set_streaming_switch(struct netcp_device *netcp_device,
 	u32	old_value;
 
 	reg = __raw_readl(netcp_device->streaming_switch);
-	
+
 	if (port == 0) {
 		old_value = reg;
 		reg = (new_value << 8) | new_value;
@@ -1656,7 +1662,7 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 	INIT_LIST_HEAD(&netcp->module_head);
 	INIT_LIST_HEAD(&netcp->txhook_list_head);
 	INIT_LIST_HEAD(&netcp->rxhook_list_head);
-	INIT_LIST_HEAD(&netcp->addr_list_head);
+	INIT_LIST_HEAD(&netcp->addr_list);
 	netcp->netcp_device = netcp_device;
 	netcp->pdev = netcp_device->platform_device;
 	netcp->ndev = ndev;
@@ -1771,12 +1777,12 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 	}
 	dev_info(&pdev->dev, "Created interface \"%s\"\n", ndev->name);
 	list_add_tail(&netcp->interface_list, &netcp_device->interface_head);
-	
+
 	/* Notify each registered module of the new interface */
 	list_for_each_entry(inst_modpriv, &netcp_device->modpriv_head, inst_list) {
 		struct netcp_module *module = inst_modpriv->netcp_module;
 		struct netcp_intf_modpriv *intf_modpriv;
-		
+
 		intf_modpriv = kzalloc(sizeof(*intf_modpriv), GFP_KERNEL);
 		if (!intf_modpriv) {
 			dev_err(&pdev->dev, "Error allocating intf_modpriv for %s\n",
