@@ -47,7 +47,7 @@
 		#size-cells = <1>;
 		compatible = "ti,keystone","simple-bus";
 		interrupt-parent = <&gic>;
-		ranges = <0x0 0x0 0x0 0x80000000>;
+		ranges = <0x0 0x0 0x0 0xc0000000>;
 
 		rstctrl:rstctrl@23100e8 {
 			compatible = "ti,keystone-reset";
@@ -418,6 +418,17 @@
 				reg = <0x02350000 4096>;
 				lpsc = <21>;
 				pd = <14>;
+			};
+
+			clkgem7: clkgem7 {
+				#clock-cells = <0>;
+				compatible = "davinci,psc-clk";
+				clocks = <&chipclk1>;
+				clock-output-names = "gem7";
+				base-flags = "ignore-unused";
+				reg = <0x02350000 4096>;
+				lpsc = <22>;
+				pd = <15>;
 			};
 
 			clkddr30: clkddr30 {
@@ -848,6 +859,18 @@
 			      <0x02562000 0x2000>;
 		};
 
+		ipcirq0: ipcirq0@26202bc {	/* ipc irq chip */
+			compatible = "ti,keystone-ipc-irq";
+			reg  = <0x026202a0 4	/* host ack register */
+			        0x02620260 4>;	/* ipc host interrupt generation register */
+			interrupts = <0 4 0x101>;/* it should match the value in irqs.h */
+						 /* following is the source id to irq mapping
+						   SRCS0 <-> ipc hw irq 0 ... SRCS27 <-> ipc hw irq 27
+						   note that SRCS0 is bit 4 in ipc register */
+			interrupt-controller;
+			#interrupt-cells = <2>;
+		};
+
 		timer {
 			compatible = "arm,armv7-timer";
 			interrupts = <1 13 0xf08 1 14 0xf08>;
@@ -1011,6 +1034,181 @@
 			clock-names = "usb";
 			interrupt-controller;
 			#interrupt-cells = <2>;
+		};
+
+		ipcgpio0: gpio@2620240 {
+			compatible = "ti,keystone-ipc-gpio";
+			reg = <0x02620240 4>;
+			gpio-controller;
+			#gpio-cells = <2>;
+		};
+
+		ipcgpio1: gpio@2620244 {
+			compatible = "ti,keystone-ipc-gpio";
+			reg = <0x02620244 4>;
+			gpio-controller;
+			#gpio-cells = <2>;
+		};
+
+		ipcgpio2: gpio@2620248 {
+			compatible = "ti,keystone-ipc-gpio";
+			reg = <0x02620248 4>;
+			gpio-controller;
+			#gpio-cells = <2>;
+		};
+
+		ipcgpio3: gpio@262024c {
+			compatible = "ti,keystone-ipc-gpio";
+			reg = <0x0262024c 4>;
+			gpio-controller;
+			#gpio-cells = <2>;
+		};
+
+		ipcgpio4: gpio@2620250 {
+			compatible = "ti,keystone-ipc-gpio";
+			reg = <0x02620250 4>;
+			gpio-controller;
+			#gpio-cells = <2>;
+		};
+
+		ipcgpio5: gpio@2620254 {
+			compatible = "ti,keystone-ipc-gpio";
+			reg = <0x02620254 4>;
+			gpio-controller;
+			#gpio-cells = <2>;
+		};
+
+		ipcgpio6: gpio@2620258 {
+			compatible = "ti,keystone-ipc-gpio";
+			reg = <0x02620258 4>;
+			gpio-controller;
+			#gpio-cells = <2>;
+		};
+
+		ipcgpio7: gpio@262025C {
+			compatible = "ti,keystone-ipc-gpio";
+			reg = <0x0262025C 4>;
+			gpio-controller;
+			#gpio-cells = <2>;
+		};
+
+		dsp0: dsp0 {
+			compatible = "linux,rproc-user";
+			reg = <0x02620040 4
+			       0x0235083c 4
+			       0x02350a3c 4
+			       0x02620240 4
+			       0x10800000 0x00100000>;
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l2ram";
+			interrupt-parent = <&ipcirq0>;
+			interrupts = <8 0 0 0>;
+			kick-gpio = <&ipcgpio0 27 0>;
+			clocks = <&clkgem0>;
+		};
+
+		dsp1: dsp1 {
+			compatible = "linux,rproc-user";
+			reg = <0x02620044 4
+			       0x02350840 4
+			       0x02350a40 4
+			       0x02620244 4
+			       0x11800000 0x00100000>;
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l2ram";
+			interrupt-parent = <&ipcirq0>;
+			interrupts = <9 0 1 0>;
+			kick-gpio = <&ipcgpio1 27 0>;
+			clocks = <&clkgem1>;
+		};
+
+		dsp2: dsp2 {
+			compatible = "linux,rproc-user";
+			reg = <0x02620048 4
+			       0x02350844 4
+			       0x02350a44 4
+			       0x02620248 4
+			       0x12800000 0x00100000>;
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l2ram";
+			interrupt-parent = <&ipcirq0>;
+			interrupts = <10 0 2 0>;
+			kick-gpio = <&ipcgpio2 27 0>;
+			clocks = <&clkgem2>;
+		};
+
+		dsp3: dsp3 {
+			compatible = "linux,rproc-user";
+			reg = <0x0262004c 4
+			       0x02350848 4
+			       0x02350a48 4
+			       0x0262024c 4
+			       0x13800000 0x00100000>;
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l2ram";
+			interrupt-parent = <&ipcirq0>;
+			interrupts = <11 0 3 0>;
+			kick-gpio = <&ipcgpio3 27 0>;
+			clocks = <&clkgem3>;
+		};
+
+		dsp4: dsp4 {
+			compatible = "linux,rproc-user";
+			reg = <0x02620050 4
+			       0x0235084C 4
+			       0x02350a4C 4
+			       0x02620250 4
+			       0x14800000 0x00100000>;
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l2ram";
+			interrupt-parent = <&ipcirq0>;
+			interrupts = <12 0 4 0>;
+			kick-gpio = <&ipcgpio4 27 0>;
+			clocks = <&clkgem4>;
+		};
+
+		dsp5: dsp5 {
+			compatible = "linux,rproc-user";
+			reg = <0x02620054 4
+			       0x02350850 4
+			       0x02350a50 4
+			       0x02620254 4
+			       0x15800000 0x00100000>;
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l2ram";
+			interrupt-parent = <&ipcirq0>;
+			interrupts = <13 0 5 0>;
+			kick-gpio = <&ipcgpio5 27 0>;
+			clocks = <&clkgem5>;
+		};
+
+		dsp6: dsp6 {
+			compatible = "linux,rproc-user";
+			reg = <0x02620058 4
+			       0x02350854 4
+			       0x02350a54 4
+			       0x02620258 4
+			       0x16800000 0x00100000>;
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l2ram";
+			interrupt-parent = <&ipcirq0>;
+			interrupts = <14 0 6 0>;
+			kick-gpio = <&ipcgpio6 27 0>;
+			clocks = <&clkgem6>;
+		};
+
+		dsp7: dsp7 {
+			compatible = "linux,rproc-user";
+			reg = <0x0262005C 4
+			       0x02350858 4
+			       0x02350a58 4
+			       0x0262025C 4
+			       0x17800000 0x00100000>;
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l2ram";
+			interrupt-parent = <&ipcirq0>;
+			interrupts = <15 0 7 0>;
+			kick-gpio = <&ipcgpio7 27 0>;
+			clocks = <&clkgem7>;
+		};
+
+		dspmem: dspmem {
+			compatible = "linux,uio";
+			reg  = <0x0c000000 0x00200000	/* msmc ram */
+				0xa0000000 0x20000000>;	/* corepac's ddr3 */
+			reg-names = "msmcram", "ddr3";
 		};
 	};
 };
