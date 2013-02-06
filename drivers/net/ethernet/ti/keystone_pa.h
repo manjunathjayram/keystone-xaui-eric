@@ -237,6 +237,8 @@ enum {
 /* LUT1_0: MAC and SRIO (L0-l2): The following bit fields are used */
 #define PAFRM_LUT1_KEY_SRIO	(1 << 7)
 
+#define PAFRM_LUT1_KEY_MAC    (1 << 0)
+
 struct pa_frm_com_l1_standard {
 
 	/* LUT1 view 1 */
