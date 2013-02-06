@@ -737,66 +737,107 @@ static void cpsw_slave_init(struct cpsw_slave *slave, struct cpsw_priv *priv)
 	slave->sliver	= regs + priv->sliver_reg_ofs + (0x40 * slave_num);
 }
 
-int cpsw_add_addr(void *intf_priv, u8 *addr, unsigned int flags)
+static void cpsw_add_mcast_addr(struct cpsw_intf *cpsw_intf, u8 *addr)
 {
-	struct cpsw_intf *cpsw_intf = intf_priv;
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 	u16 vlan_id;
 
-	dev_dbg(cpsw_dev->dev, "adding address %x:%x:%x:%x:%x:%x flags = %x\n",
-		 addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], flags);
-
-	if (flags & (ADDR_MCAST | ADDR_BCAST)) {
-		cpsw_ale_add_mcast(cpsw_dev->ale, &addr[0], CPSW_MASK_ALL_PORTS,
-				   0, ALE_MCAST_FWD_2, -1);
-
-		for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID)
-			cpsw_ale_add_mcast(cpsw_dev->ale, &addr[0],
-					   CPSW_MASK_ALL_PORTS, 0,
-					   ALE_MCAST_FWD_2, vlan_id);
+	cpsw_ale_add_mcast(cpsw_dev->ale, addr, CPSW_MASK_ALL_PORTS, 0,
+			   ALE_MCAST_FWD_2, -1);
+	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID) {
+		cpsw_ale_add_mcast(cpsw_dev->ale, addr, CPSW_MASK_ALL_PORTS, 0,
+				   ALE_MCAST_FWD_2, vlan_id);
 	}
+}
 
-	if (flags & (ADDR_UCAST | ADDR_DEV)) {
-		cpsw_ale_add_ucast(cpsw_dev->ale, &addr[0],
-				   cpsw_dev->host_port, 0, -1);
+static void cpsw_add_ucast_addr(struct cpsw_intf *cpsw_intf, u8 *addr)
+{
+	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+	u16 vlan_id;
 
-		for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID)
-			cpsw_ale_add_ucast(cpsw_dev->ale, &addr[0],
-					   cpsw_dev->host_port, 0, vlan_id);
+	cpsw_ale_add_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port, 0, -1);
+
+	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID)
+		cpsw_ale_add_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port, 0,
+				   vlan_id);
+}
+
+static void cpsw_del_mcast_addr(struct cpsw_intf *cpsw_intf, u8 *addr)
+{
+	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+	u16 vlan_id;
+
+	cpsw_ale_del_mcast(cpsw_dev->ale, addr, CPSW_MASK_ALL_PORTS, -1);
+
+	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID) {
+		cpsw_ale_del_mcast(cpsw_dev->ale, addr, CPSW_MASK_ALL_PORTS,
+				   vlan_id);
+	}
+}
+
+static void cpsw_del_ucast_addr(struct cpsw_intf *cpsw_intf, u8 *addr)
+{
+	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+	u16 vlan_id;
+
+	cpsw_ale_del_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port, -1);
+
+	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID) {
+		cpsw_ale_del_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port,
+				   vlan_id);
+	}
+}
+
+int cpsw_add_addr(void *intf_priv, struct netcp_addr *naddr)
+{
+	struct cpsw_intf *cpsw_intf = intf_priv;
+	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+
+	dev_dbg(cpsw_dev->dev, "ethss adding address %pM, type %d\n",
+		naddr->addr, naddr->type);
+
+	switch (naddr->type) {
+	case ADDR_MCAST:
+	case ADDR_BCAST:
+		cpsw_add_mcast_addr(cpsw_intf, naddr->addr);
+		break;
+	case ADDR_UCAST:
+	case ADDR_DEV:
+		cpsw_add_ucast_addr(cpsw_intf, naddr->addr);
+		break;
+	case ADDR_ANY:
+		/* nothing to do for promiscuous */
+	default:
+		break;
 	}
 
 	return 0;
 }
 
-int cpsw_del_addr(void *intf_priv, u8 *addr, unsigned int flags)
+int cpsw_del_addr(void *intf_priv, struct netcp_addr *naddr)
 {
 	struct cpsw_intf *cpsw_intf = intf_priv;
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-	u16 vlan_id;
 
-	dev_dbg(cpsw_dev->dev, "deleting address %x:%x:%x:%x:%x:%x flags =%x\n",
-		 addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], flags);
+	dev_dbg(cpsw_dev->dev, "ethss deleting address %pM, type %d\n",
+		naddr->addr, naddr->type);
 
-	if (flags & (ADDR_MCAST | ADDR_BCAST)) {
-		cpsw_ale_del_mcast(cpsw_dev->ale, &addr[0],
-				   CPSW_MASK_ALL_PORTS, -1);
-
-		for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID)
-			cpsw_ale_del_mcast(cpsw_dev->ale, &addr[0],
-					   CPSW_MASK_ALL_PORTS, vlan_id);
-	}
-
-	if (flags & (ADDR_UCAST | ADDR_DEV)) {
-		cpsw_ale_del_ucast(cpsw_dev->ale, &addr[0],
-				   cpsw_dev->host_port, -1);
-
-		for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID)
-			cpsw_ale_del_ucast(cpsw_dev->ale, &addr[0],
-					   cpsw_dev->host_port, vlan_id);
+	switch (naddr->type) {
+	case ADDR_MCAST:
+	case ADDR_BCAST:
+		cpsw_del_mcast_addr(cpsw_intf, naddr->addr);
+		break;
+	case ADDR_UCAST:
+	case ADDR_DEV:
+		cpsw_del_ucast_addr(cpsw_intf, naddr->addr);
+		break;
+	case ADDR_ANY:
+		/* nothing to do for promiscuous */
+	default:
+		break;
 	}
 
 	return 0;
-
 }
 
 int cpsw_add_vid(void *intf_priv, int vid)
@@ -1030,8 +1071,6 @@ static int cpsw_close(void *intf_priv, struct net_device *ndev)
 	netcp_unregister_txhook(netcp, CPSW_TXHOOK_ORDER, cpsw_tx_hook,
 				cpsw_intf);
 	netcp_txpipe_close(&cpsw_intf->tx_pipe);
-
-	kfree(cpsw_intf->slaves);
 
 	clk_disable_unprepare(cpsw_dev->cpgmac);
 	clk_put(cpsw_dev->cpgmac);
@@ -1357,7 +1396,10 @@ static int cpsw_release(void *intf_priv)
 	SET_ETHTOOL_OPS(cpsw_intf->ndev, NULL);
 
 	list_del(&cpsw_intf->cpsw_intf_list);
+
+	devm_kfree(cpsw_intf->dev, cpsw_intf->slaves);
 	devm_kfree(cpsw_intf->dev, cpsw_intf);
+
 	return 0;
 }
 
