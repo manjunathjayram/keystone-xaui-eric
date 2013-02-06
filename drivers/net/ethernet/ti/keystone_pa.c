@@ -53,6 +53,8 @@
 #define PA_PDSP_NO_RESTART	2
 #define PA_MAX_PDSP_ENABLE_LOOP_COUNT	100000
 
+#define PA_INVALID_PORT			0xff
+
 #define PA_STATE_RESET			0  /* Sub-system state reset */
 #define PA_STATE_ENABLE			1  /* Sub-system state enable  */
 #define PA_STATE_QUERY			2  /* Query the Sub-system state */
@@ -215,19 +217,11 @@ struct pa_statistics_regs {
 #define	PA_RXHOOK_ORDER	10
 
 static DEFINE_MUTEX(pa_modules_lock);
-/**
- * struct pa_lut_range_map lut range map entry
- */
-struct pa_lut_range_map {
-	int start;
-	int end;
-	struct list_head node;
-};
 
 struct pa_lut_entry {
-	int in_use;
-	int used_by;
-	u8 mac_addr[6];
+	int			index;
+	bool			valid, in_use;
+	struct netcp_addr	*naddr;
 };
 
 struct pa_intf {
@@ -260,13 +254,13 @@ struct pa_device {
 	struct pa_statistics_regs   __iomem	*reg_stats;
 	void __iomem				*pa_sram;
 	void __iomem				*pa_iram;
-	
+
 
 	u8				*mc_list;
 	u8				 addr_count;
 	struct tasklet_struct		 task;
 	spinlock_t			 lock;
-	
+
 	u32				 tx_cmd_queue_depth;
 	u32				 tx_data_queue_depth;
 	u32				 rx_pool_depth;
@@ -278,9 +272,8 @@ struct pa_device {
 	u32				 multi_if;
 	u32				 inuse_if_count;
 	u32				 lut_inuse_count;
-	u32				 lut_max_count;
-	struct list_head		 pa_lut_range_map;
-	struct pa_lut_entry		 *pa_lut_entry;
+	struct pa_lut_entry		 *lut;
+	u32				 lut_size;
 
 	u32				 ts_not_req;
 };
@@ -556,7 +549,7 @@ static u64 tstamp_raw_to_ns(u64 raw)
 }
 
 static u64 pa_to_sys_time(u64 offset, u64 pa_ticks)
-{	
+{
 	s64 temp;
 	u64 result;
 
@@ -871,7 +864,7 @@ static struct tstamp_pending *tstamp_remove_pending(u32 context)
 		}
 	}
 	spin_unlock(&tstamp_lock);
-	
+
 	return NULL;
 }
 
@@ -894,7 +887,7 @@ static void tstamp_purge_pending(struct pa_device *pa_dev)
 			}
 		}
 		spin_unlock(&tstamp_lock);
-		
+
 		if (found)
 			tstamp_complete(pend->context, NULL);
 	} while(found);
@@ -934,7 +927,7 @@ static void tstamp_complete(u32 context, struct pa_packet *p_info)
 	if (!pend)
 		return;
 
-	
+
 	skb = pend->skb;
 	if (!p_info) {
 		dev_warn(pend->pa_dev->dev, "Timestamp completion timeout\n");
@@ -1078,7 +1071,7 @@ static struct dma_async_tx_descriptor *pa_rxpool_alloc(void *arg,
 			dev_err(pa_dev->dev,
 				"dma prep failed, error %d\n", err);
 		}
-		
+
 		return NULL;
 	}
 
@@ -1089,8 +1082,9 @@ static struct dma_async_tx_descriptor *pa_rxpool_alloc(void *arg,
 	return desc;
 }
 
-static int keystone_pa_add_mac(struct pa_intf *pa_intf, const u8 *mac,
-			int rule, unsigned etype, int index, int cpsw_port)
+static int keystone_pa_add_mac(struct pa_intf *pa_intf, int index,
+			       const u8 *smac, const u8 *dmac, int rule,
+			       unsigned etype, int port)
 {
 	struct pa_route_info route_info, fail_info;
 	struct pa_frm_command *fcmd;
@@ -1099,6 +1093,9 @@ static int keystone_pa_add_mac(struct pa_intf *pa_intf, const u8 *mac,
 	struct pa_device *priv = pa_intf->pa_device;
 	u32 context = PA_CONTEXT_CONFIG;
 	int size, ret;
+
+	dev_dbg(priv->dev, "add mac, index %d, smac %pM, dmac %pM, rule %d, type %x, port %d\n",
+		index, smac, dmac, rule, etype, port);
 
 	memset(&fail_info, 0, sizeof(fail_info));
 
@@ -1157,26 +1154,33 @@ static int keystone_pa_add_mac(struct pa_intf *pa_intf, const u8 *mac,
 
 	al1->u.eth_ip.vlan	= 0;
 	al1->u.eth_ip.pm.mpls	= 0;
-	al1->u.eth_ip.inport    = cpsw_port;
-	if (cpsw_port)
+	if (port) {
+		al1->u.eth_ip.inport    = port;
 		al1->u.eth_ip.match_flags |= PAFRM_LUT1_MATCH_PORT;
-
-	if (mac) {
-		al1->u.eth_ip.dmac[0] = mac[0];
-		al1->u.eth_ip.dmac[1] = mac[1];
-		al1->u.eth_ip.dmac[2] = mac[2];
-		al1->u.eth_ip.dmac[3] = mac[3];
-		al1->u.eth_ip.dmac[4] = mac[4];
-		al1->u.eth_ip.dmac[5] = mac[5];
-		al1->u.eth_ip.key |= PAFRM_LUT1_MATCH_DMAC;
 	}
 
-	al1->u.eth_ip.smac[0] = 0;
-	al1->u.eth_ip.smac[1] = 0;
-	al1->u.eth_ip.smac[2] = 0;
-	al1->u.eth_ip.smac[3] = 0;
-	al1->u.eth_ip.smac[4] = 0;
-	al1->u.eth_ip.smac[5] = 0;
+	if (dmac) {
+		al1->u.eth_ip.dmac[0] = dmac[0];
+		al1->u.eth_ip.dmac[1] = dmac[1];
+		al1->u.eth_ip.dmac[2] = dmac[2];
+		al1->u.eth_ip.dmac[3] = dmac[3];
+		al1->u.eth_ip.dmac[4] = dmac[4];
+		al1->u.eth_ip.dmac[5] = dmac[5];
+		al1->u.eth_ip.match_flags |= PAFRM_LUT1_MATCH_DMAC;
+	}
+	if (smac) {
+		al1->u.eth_ip.smac[0] = smac[0];
+		al1->u.eth_ip.smac[1] = smac[1];
+		al1->u.eth_ip.smac[2] = smac[2];
+		al1->u.eth_ip.smac[3] = smac[3];
+		al1->u.eth_ip.smac[4] = smac[4];
+		al1->u.eth_ip.smac[5] = smac[5];
+		al1->u.eth_ip.match_flags |= PAFRM_LUT1_MATCH_SMAC;
+	}
+
+	al1->u.eth_ip.key |= PAFRM_LUT1_KEY_MAC;
+	al1->u.eth_ip.match_flags |= PAFRM_LUT1_CUSTOM_MATCH_KEY;
+
 	ret = pa_conv_routing_info(&al1->match, &route_info, 0, 0);
 	if (ret != 0)
 		dev_err(priv->dev, "route info config failed\n");
@@ -1334,7 +1338,7 @@ static int pa_fmtcmd_next_route(struct netcp_packet *p_info, const struct pa_cmd
 	struct pasaho_next_route	*nr;
 	int	size;
 	u16	pdest;
-	
+
 	/* Make sure the destination is valid */
 	switch (route->dest) {
 	case PA_DEST_HOST:
@@ -1375,7 +1379,7 @@ static int pa_fmtcmd_next_route(struct netcp_packet *p_info, const struct pa_cmd
 
 	nr->sw_info0 = route->sw_info_0;
 	nr->sw_info1 = route->sw_info_1;
-	
+
 	return size;
 }
 
@@ -1393,7 +1397,7 @@ static int pa_fmtcmd_tx_timestamp(struct netcp_packet *p_info, const struct pa_c
 	PASAHO_SET_REPORT_FLOW(rt_info, (u8)tx_ts->flow_id);
 	PASAHO_SET_REPORT_QUEUE(rt_info, tx_ts->dest_queue);
 	rt_info->sw_info0 = tx_ts->sw_info0;
-	
+
 	return size;
 }
 
@@ -1401,17 +1405,17 @@ static int pa_fmtcmd_align(struct netcp_packet *p_info, const unsigned bytes)
 {
 	struct pasaho_cmd_info	*paCmdInfo;
 	int i;
-	
+
 	if ((bytes & 0x03) != 0)
 		return -EINVAL;
-	
+
 	paCmdInfo = (struct pasaho_cmd_info *)netcp_push_psdata(p_info, bytes);
 
 	for (i = bytes/sizeof(u32); i > 0; --i ) {
 		PASAHO_SET_CMDID(paCmdInfo, PASAHO_PAMOD_DUMMY);
 		++paCmdInfo;
 	}
-	
+
 	return bytes;
 }
 
@@ -1473,7 +1477,7 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	    p_info->skb->sk && (netcp_priv->pa_ts_req == 1) &&
 	    (netcp_priv->hwts_tx_en == 1)) {
 		struct tstamp_pending	*pend;
-		
+
 		pend = kzalloc(sizeof(*pend), GFP_ATOMIC);
 		if (pend) {
 			pend->skb = skb_clone(p_info->skb, GFP_ATOMIC);
@@ -1522,7 +1526,7 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 			size = 0;
 			break;
 		}
-		
+
 		if (unlikely(size < 0))
 			return size;
 		total += size;
@@ -1775,8 +1779,6 @@ static int pa_close(void *intf_priv, struct net_device *ndev)
 		pa_dev->clk = NULL;
 	}
 
-	kfree(pa_intf);
-
 	mutex_unlock(&pa_modules_lock);
 	return 0;
 }
@@ -1786,15 +1788,12 @@ static int pa_open(void *intf_priv, struct net_device *ndev)
 	struct pa_intf *pa_intf = intf_priv;
 	struct pa_device *pa_dev = pa_intf->pa_device;
 	struct netcp_priv *netcp_priv = netdev_priv(ndev);
+	struct dma_keystone_info config;
 	const struct firmware *fw;
 	struct dma_chan *chan;
-	struct dma_keystone_info config;
-	struct pa_lut_range_map *lutrange;
-	struct pa_lut_entry *tableentry;
 	dma_cap_mask_t mask;
-	u8 invalid_port = 0xff;
 	int i, factor;
-	int ret, err, entry_id;
+	int ret, err;
 
 	/* The first time an open is being called */
 	mutex_lock(&pa_modules_lock);
@@ -1935,19 +1934,13 @@ static int pa_open(void *intf_priv, struct net_device *ndev)
 		ret = pa_config_crc_engine(pa_dev);
 		if (ret < 0)
 			goto fail;
-		/* Write entries to PA with INVALID for all entries owned by
-		 * linux
-		 */
 
-		list_for_each_entry(lutrange, &pa_dev->pa_lut_range_map, node)
-		{
-			for (entry_id = lutrange->start;
-			     entry_id <= lutrange->end; entry_id++) {
-				tableentry = pa_dev->pa_lut_entry + entry_id;
-				tableentry->used_by = invalid_port;
-				keystone_pa_add_mac(pa_intf, NULL, PACKET_DROP,
-						    0, entry_id, invalid_port);
-			}
+		/* make lut entries invalid */
+		for (i = 0; i < pa_dev->lut_size; i++) {
+			if (!pa_dev->lut[i].valid)
+				continue;
+			keystone_pa_add_mac(pa_intf, i, NULL, NULL, PACKET_DROP,
+					    0, PA_INVALID_PORT);
 		}
 	}
 	mutex_unlock(&pa_modules_lock);
@@ -1990,205 +1983,98 @@ fail:
 	return ret;
 }
 
-static int pa_find_lut_entry_with_mac(struct pa_device *pa_dev, u8 *addr, int
-				      cpsw_port)
+static struct pa_lut_entry *pa_lut_alloc(struct pa_device *pa_dev,
+					 bool backwards)
 {
-	struct pa_lut_range_map *lutrange;
-	struct pa_lut_entry *tableentry;
-	int entry_id;
+	struct pa_lut_entry *entry;
+	int i;
 
-	list_for_each_entry(lutrange, &pa_dev->pa_lut_range_map, node)
-	{
-		for (entry_id = lutrange->start;
-		     entry_id <= lutrange->end; entry_id++) {
-			tableentry = pa_dev->pa_lut_entry + entry_id;
-			if (tableentry->in_use &&
-			    (tableentry->used_by == cpsw_port) &&
-			    (!memcmp(tableentry->mac_addr, addr, ETH_ALEN))) {
-				dev_dbg(pa_dev->dev, "pa found lut entry with"
-					" mac, returning entry_id:%d\n",
-					entry_id);
-				return entry_id;
-			}
-		}
-	}
-	return -EINVAL;
-
-}
-
-static int pa_find_free_entry(struct pa_device *pa_dev)
-{
-	struct pa_lut_range_map *lutrange;
-	struct pa_lut_entry *tableentry;
-	int entry_id;
-
-	list_for_each_entry(lutrange, &pa_dev->pa_lut_range_map, node)
-	{
-		for (entry_id = lutrange->start;
-		     entry_id <= lutrange->end; entry_id++) {
-			tableentry = pa_dev->pa_lut_entry + entry_id;
-			if (tableentry->in_use)
+	if (!backwards) {
+		for (i = 0; i < pa_dev->lut_size; i++) {
+			entry = pa_dev->lut + i;
+			if (!entry->valid || entry->in_use)
 				continue;
-			else {
-				dev_dbg(pa_dev->dev, "pa_find_free_entry()"
-					" returning entry_id:%d\n", entry_id);
-				return entry_id;
-			}
+			entry->in_use = true;
+			return entry;
+		}
+	} else {
+		for (i = pa_dev->lut_size - 1; i >= 0; i--) {
+			entry = pa_dev->lut + i;
+			if (!entry->valid || entry->in_use)
+				continue;
+			entry->in_use = true;
+			return entry;
 		}
 	}
-	return -EINVAL;
-
+	return NULL;
 }
 
-static int pa_remove_lut_entry(struct pa_intf *pa_intf, u8 *addr,
-			       int num_entries)
+static inline int pa_lut_entry_count(enum netcp_addr_type type)
 {
-	struct pa_device *pa_dev = pa_intf->pa_device;
-	struct netcp_priv *netcp_priv = netdev_priv(pa_intf->net_device);
-	struct pa_lut_entry *tableentry;
-	int entry_id, count, ret;
-	u8 invalid_port = 0xff;
-
-	dev_dbg(pa_dev->dev, "pa: rm_lut_entry, num_entry:%d\n", num_entries);
-
-	for (count = 0; count < num_entries; count++) {
-		entry_id = pa_find_lut_entry_with_mac(pa_dev, addr,
-						      netcp_priv->cpsw_port);
-		if (entry_id < 0) {
-			dev_err(pa_dev->dev, "pa: invalid lut entry\n");
-			return -ENOENT;
-		}
-
-		ret = keystone_pa_add_mac(pa_intf, NULL, PACKET_DROP, 0,
-					  entry_id, invalid_port);
-		if (ret != 0)
-			/* Add mac entry returned error */
-			return ret;
-
-		/*Mark the entry id in our local lut entry table */
-		tableentry = pa_dev->pa_lut_entry + entry_id;
-		tableentry->in_use = 0;
-		pa_dev->lut_inuse_count--;
-		tableentry->used_by = invalid_port;
-
-		dev_dbg(pa_dev->dev, "pa: deleted lutentry to port %d, id %d\n",
-			tableentry->used_by, entry_id);
-	}
-
-	dev_dbg(pa_dev->dev, "pa: lut-in-use-count %d\n",
-		pa_dev->lut_inuse_count);
-
-	return 0;
+	return (type == ADDR_DEV || type == ADDR_UCAST) ? 3 : 1;
 }
 
-static int pa_add_lut_entry(struct pa_intf *pa_intf, u8 *addr, int num_entries)
-{
-	struct pa_device *pa_dev = pa_intf->pa_device;
-	struct netcp_priv *netcp_priv = netdev_priv(pa_intf->net_device);
-	struct pa_lut_entry *tableentry;
-	int fwd_info[3] = { PACKET_PARSE, PACKET_PARSE, PACKET_HST };
-	int port_info[3] = { 0x0800, 0x86dd, 0 };
-	int entry_id, count, ret;
-
-	/* Make sure we have enough entries first */
-	if ((pa_dev->lut_max_count - pa_dev->lut_inuse_count) < num_entries) {
-		dev_err(pa_dev->dev, "pa: no lut entries avail to add\n");
-		return -ENOENT;
-	}
-
-	dev_dbg(pa_dev->dev, "pa: add_lut_entry, num_entry:%d port %d\n",
-		num_entries, netcp_priv->cpsw_port);
-	for (count = 0; count < num_entries; count++) {
-		entry_id = pa_find_free_entry(pa_dev);
-		if (entry_id < 0) {
-			/*Should not reach this point, coz we already
-			 * confirmed availability
-			 */
-			dev_err(pa_dev->dev, "pa: no free lut entry\n");
-			return -ENOENT;
-		}
-
-		ret = keystone_pa_add_mac(pa_intf, addr, fwd_info[count],
-					  port_info[count], entry_id,
-					  netcp_priv->cpsw_port);
-		if (ret != 0)
-			/* Add mac entry returned error */
-			return ret;
-
-		/*Mark the entry id in our local lut entry table */
-		tableentry = pa_dev->pa_lut_entry + entry_id;
-		tableentry->in_use = 1;
-		pa_dev->lut_inuse_count++;
-		tableentry->used_by = netcp_priv->cpsw_port;
-		memcpy(&tableentry->mac_addr[0], &addr[0], ETH_ALEN);
-
-		dev_dbg(pa_dev->dev, "pa: Added lut-entry for port %d, id %d"
-			" address %x:%x:%x:%x:%x:%x\n",
-			tableentry->used_by, entry_id,
-			tableentry->mac_addr[0], tableentry->mac_addr[1],
-			tableentry->mac_addr[2], tableentry->mac_addr[3],
-			tableentry->mac_addr[4], tableentry->mac_addr[5]);
-	}
-
-	dev_dbg(pa_dev->dev, "pa: lut-in-use-count %d\n",
-		pa_dev->lut_inuse_count);
-
-	return 0;
-}
-
-int pa_add_addr(void *intf_priv, u8 *addr, unsigned int flags)
+int pa_add_addr(void *intf_priv, struct netcp_addr *naddr)
 {
 	struct pa_intf *pa_intf = intf_priv;
 	struct pa_device *pa_dev = pa_intf->pa_device;
 	struct netcp_priv *netcp_priv = netdev_priv(pa_intf->net_device);
-	int num_entries = 0;
-	int ret = 0;
+	int count = pa_lut_entry_count(naddr->type);
+	struct pa_lut_entry *entries[count];
+	int port = netcp_priv->cpsw_port;
+	int idx, error;
+	const u8 *addr;
 
-	dev_dbg(pa_dev->dev, "pa:adding address %x:%x:%x:%x:%x:%x port:%d"
-		" flags 0x%x\n",
-		addr[0], addr[1], addr[2], addr[3], addr[4], addr[5],
-		netcp_priv->cpsw_port, flags);
+	for (idx = 0; idx < count; idx++) {
+		entries[idx] = pa_lut_alloc(pa_dev, naddr->type == ADDR_ANY);
+		entries[idx]->naddr = naddr;
+		if (!entries[idx])
+			goto fail_alloc;
+	}
 
-	mutex_lock(&pa_modules_lock);
+	addr = (naddr->type == ADDR_ANY) ? NULL : naddr->addr;
+	idx = 0;
 
-	if (flags & (ADDR_MCAST | ADDR_BCAST))
-		num_entries = 1;
-	else if (flags & (ADDR_UCAST | ADDR_DEV))
-		num_entries = 3;
+	if (count > 1) {
+		error = keystone_pa_add_mac(pa_intf, entries[idx++]->index,
+					    NULL, addr, PACKET_PARSE,
+					    0x0800, port);
+		if (error)
+			return error;
+		error = keystone_pa_add_mac(pa_intf, entries[idx++]->index,
+					    NULL, addr, PACKET_PARSE,
+					    0x86dd, port);
+		if (error)
+			return error;
+	}
 
-	ret = pa_add_lut_entry(pa_intf, addr, num_entries);
+	error = keystone_pa_add_mac(pa_intf, entries[idx++]->index,
+				    NULL, addr, PACKET_HST, 0, port);
+	return error;
 
-	mutex_unlock(&pa_modules_lock);
-
-	return ret;
-
+fail_alloc:
+	for (idx--; idx >= 0; idx--)
+		entries[idx]->in_use = false;
+	return -ENOMEM;
 }
 
-int pa_del_addr(void *intf_priv, u8 *addr, unsigned int flags)
+static int pa_del_addr(void *intf_priv, struct netcp_addr *naddr)
 {
 	struct pa_intf *pa_intf = intf_priv;
 	struct pa_device *pa_dev = pa_intf->pa_device;
-	struct netcp_priv *netcp_priv = netdev_priv(pa_intf->net_device);
-	int num_entries = 0;
-	int ret = 0;
+	struct pa_lut_entry *entry;
+	int idx;
 
-	dev_dbg(pa_dev->dev, "pa:deleting address %x:%x:%x:%x:%x:%x port:%d"
-		" flags 0x%x\n",
-		addr[0], addr[1], addr[2], addr[3], addr[4], addr[5],
-		netcp_priv->cpsw_port, flags);
+	for (idx = 0; idx < pa_dev->lut_size; idx++) {
+		entry = pa_dev->lut + idx;
+		if (!entry->valid || !entry->in_use || entry->naddr != naddr)
+			continue;
+		keystone_pa_add_mac(pa_intf, entry->index, NULL, NULL,
+				    PACKET_DROP, 0, PA_INVALID_PORT);
+		entry->in_use = false;
+	}
 
-	mutex_lock(&pa_modules_lock);
-
-	if (flags & (ADDR_MCAST | ADDR_BCAST))
-		num_entries = 1;
-	else if (flags & (ADDR_UCAST | ADDR_DEV))
-		num_entries = 3;
-
-	ret = pa_remove_lut_entry(pa_intf, addr, num_entries);
-
-	mutex_unlock(&pa_modules_lock);
-
-	return ret;
+	return 0;
 }
 
 static int pa_hwtstamp_ioctl(struct net_device *ndev,
@@ -2331,11 +2217,9 @@ static int pa_probe(struct netcp_device *netcp_device,
 		    struct device_node *node,
 		    void **inst_priv)
 {
-	struct pa_lut_range_map *lutrange;
 	struct pa_device *pa_dev;
-	int i, ret, len = 0;
-	int table_size = 0;
-	int num_ranges = 0;
+	int ret, len = 0, start, end, i, j;
+	int table_size, num_ranges;
 	u32 *prange;
 
 	if (!node) {
@@ -2451,7 +2335,6 @@ static int pa_probe(struct netcp_device *netcp_device,
 	}
 	dev_dbg(dev, "rxhook-order %u\n", pa_dev->rxhook_order);
 
-	INIT_LIST_HEAD(&pa_dev->pa_lut_range_map);
 	if (!of_get_property(node, "lut-ranges", &len)) {
 		dev_err(dev, "No lut-entry array in dt bindings for PA\n");
 		return -ENODEV;
@@ -2468,38 +2351,35 @@ static int pa_probe(struct netcp_device *netcp_device,
 		return -EINVAL;
 	}
 	num_ranges = len / 2;
-	if (of_property_read_u32_array(node, "lut-ranges",
-				       (u32 *)prange, len)) {
+	if (of_property_read_u32_array(node, "lut-ranges", prange, len)) {
 		dev_err(dev, "No range-map array  in dt bindings\n");
 		return -ENODEV;
 	}
-	lutrange  = devm_kzalloc(dev,
-				sizeof(struct pa_lut_range_map) * num_ranges,
-				GFP_KERNEL);
-	if (!lutrange) {
-		dev_err(dev, "devm_kzalloc mapping failed\n");
-		return -ENOMEM;
-	}
-	for (i = 0; i < num_ranges; i++) {
-		lutrange->start		= *prange++;
-		lutrange->end		= *prange++;
-		list_add_tail(&lutrange->node, &pa_dev->pa_lut_range_map);
-		if (lutrange->end > table_size)
-			table_size = lutrange->end;
-		lutrange++;
-	}
+
+	table_size = prange[2 * num_ranges - 1] + 1;
+	dev_dbg(dev, "lut size = %d\n", table_size);
 
 	/* Initialize a table for storing entry listings locally */
-	pa_dev->pa_lut_entry  = devm_kzalloc(dev,
-				sizeof(struct pa_lut_entry) * table_size,
-				GFP_KERNEL);
-	if (!pa_dev->pa_lut_entry) {
+	len = table_size * sizeof(struct pa_lut_entry);
+	pa_dev->lut  = devm_kzalloc(dev, len, GFP_KERNEL);
+	if (!pa_dev->lut) {
 		dev_err(dev, "devm_kzalloc mapping failed\n");
 		return -ENOMEM;
 	}
-	pa_dev->lut_max_count = table_size;
-	dev_dbg(dev, "initialized pa lut table with %d entries, used %d\n",
-		pa_dev->lut_max_count, pa_dev->lut_inuse_count);
+	pa_dev->lut_size = table_size;
+	dev_dbg(dev, "lut size = %d\n", table_size);
+
+	for (i = 0; i < num_ranges; i++) {
+		start = prange[i * 2];
+		end   = prange[i * 2 + 1];
+		for (j = start; j <= end; j++) {
+			pa_dev->lut[j].valid = true;
+			pa_dev->lut[j].index = j;
+			dev_dbg(dev, "setting entry %d to valid\n", j);
+		}
+	}
+
+	devm_kfree(pa_dev->dev, prange);
 
 	spin_lock_init(&pa_dev->lock);
 	spin_lock_init(&tstamp_lock);
