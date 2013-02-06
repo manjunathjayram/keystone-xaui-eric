@@ -23,6 +23,7 @@
 
 /* Maximum Ethernet frame size supported by Keystone switch */
 #define NETCP_MAX_FRAME_SIZE	9504
+#define NETCP_MAX_MCAST_ADDR	16
 
 #define SGMII_LINK_MAC_MAC_AUTONEG	0
 #define SGMII_LINK_MAC_PHY		1
@@ -69,18 +70,23 @@ struct netcp_tx_pipe {
 	enum netcp_tx_state		 dma_poll_state;
 };
 
-#define	ADDR_DEV	BIT(0)
-#define ADDR_UCAST	BIT(1)
-#define ADDR_MCAST	BIT(2)
-#define ADDR_BCAST	BIT(3)
-#define	ADDR_INVALID	BIT(4)
-#define ADDR_VALID	BIT(5)
-#define ADDR_NEW	BIT(6)
+#define ADDR_NEW	BIT(0)
+#define ADDR_VALID	BIT(1)
 
-struct netcp_addr_list {
-	unsigned char		addr[MAX_ADDR_LEN];
-	unsigned int		flags;
-	struct list_head	node;
+enum netcp_addr_type {
+	ADDR_ANY,
+	ADDR_DEV,
+	ADDR_UCAST,
+	ADDR_MCAST,
+	ADDR_BCAST
+};
+
+struct netcp_addr {
+	struct netcp_priv	*netcp;
+	unsigned char		 addr[MAX_ADDR_LEN];
+	enum netcp_addr_type	 type;
+	unsigned int		 flags;
+	struct list_head	 node;
 };
 
 struct netcp_priv {
@@ -108,9 +114,8 @@ struct netcp_priv {
 	struct list_head		 interface_list;
 	struct list_head		 txhook_list_head;
 	struct list_head		 rxhook_list_head;
-	struct list_head		 addr_list_head;
+	struct list_head		 addr_list;
 
-	u32				 add_bcast;
 	u32				 pa_ts_req;
 
 	/* PktDMA configuration data */
@@ -164,10 +169,10 @@ struct netcp_module {
 
 	int			(*open)(void *intf_priv, struct net_device *ndev);
 	int			(*close)(void *intf_priv, struct net_device *ndev);
-	int			(*add_addr)(void *intf_priv, u8 *addr,
-					    unsigned int flags);
-	int			(*del_addr)(void *intf_priv, u8 *addr,
-					    unsigned int flags);
+	int			(*add_addr)(void *intf_priv,
+					    struct netcp_addr *naddr);
+	int			(*del_addr)(void *intf_priv,
+					    struct netcp_addr *naddr);
 	int			(*add_vid)(void *intf_priv, int vid);
 	int			(*del_vid)(void *intf_priv, int vid);
 	int			(*ioctl)(void *intf_priv, struct ifreq *req,
