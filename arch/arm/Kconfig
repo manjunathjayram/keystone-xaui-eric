@@ -1629,6 +1629,7 @@ config LOCAL_TIMERS
 config ARCH_NR_GPIO
 	int
 	default 1024 if ARCH_SHMOBILE || ARCH_TEGRA
+	default 512 if ARCH_KEYSTONE
 	default 512 if SOC_OMAP5
 	default 392 if ARCH_U8500
 	default 352 if ARCH_VT8500
