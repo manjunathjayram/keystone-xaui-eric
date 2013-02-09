@@ -1672,7 +1672,7 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 	netcp->rx_packet_max = netcp_rx_packet_max;
 	netcp_set_rx_state(netcp, RX_STATE_INVALID);
 
-	node_ifgroup = of_find_child_by_name(node, "interfaces");
+	node_ifgroup = of_get_child_by_name(node, "interfaces");
 	if (!node_ifgroup) {
 		dev_info(&pdev->dev, "could not find group \"interfaces\", "
 				     "defaulting to parent\n");
@@ -1681,7 +1681,7 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 		char node_name[24];
 		snprintf(node_name, sizeof(node_name), "interface-%d",
 			 (cpsw_port == 0) ? 0 : (cpsw_port - 1));
-		node_interface = of_find_child_by_name(node_ifgroup, node_name);
+		node_interface = of_get_child_by_name(node_ifgroup, node_name);
 		if (!node_interface) {
 			dev_err(&pdev->dev, "could not find %s\n", node_name);
 			of_node_put(node_ifgroup);
