@@ -1263,7 +1263,7 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 
 	of_node_put(slaves);
 
-	interfaces = of_find_child_by_name(node, "interfaces");
+	interfaces = of_get_child_by_name(node, "interfaces");
 	if (!interfaces)
 		dev_err(dev, "could not find interfaces\n");
 
@@ -1320,7 +1320,7 @@ static int cpsw_attach(void *inst_priv, struct net_device *ndev,
 		snprintf(node_name, sizeof(node_name), "interface-%d",
 			 0);
 
-	interface = of_find_child_by_name(cpsw_dev->interfaces, node_name);
+	interface = of_get_child_by_name(cpsw_dev->interfaces, node_name);
 	if (!interface) {
 		dev_err(cpsw_dev->dev, "interface data not available\n");
 		devm_kfree(cpsw_dev->dev, cpsw_intf);
@@ -1351,6 +1351,8 @@ static int cpsw_attach(void *inst_priv, struct net_device *ndev,
 	}
 	dev_dbg(cpsw_dev->dev, "tx_queue_depth %u\n",
 		cpsw_intf->tx_queue_depth);
+
+	of_node_put(interface);
 
 	cpsw_intf->num_slaves = cpsw_dev->slaves_per_interface;
 
