@@ -1579,10 +1579,10 @@ static __wsum skb_sctp_csum(struct sk_buff *skb, int offset,
 
 			if (copy > len)
 				copy = len;
-			vaddr = kmap_skb_frag(frag);
+			vaddr = kmap_atomic(skb_frag_page(frag));
 			csum = sctp_update_cksum(vaddr + frag->page_offset +
 					 offset - start, copy, csum);
-			kunmap_skb_frag(vaddr);
+			kunmap_atomic(vaddr);
 			if (!(len -= copy))
 				return csum;
 			offset += copy;
