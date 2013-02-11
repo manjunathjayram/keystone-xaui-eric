@@ -718,14 +718,6 @@ static void cpsw_init_host_port(struct cpsw_priv *priv,
 	cpsw_ale_control_set(priv->ale, 0,
 			     ALE_PORT_UNTAGGED_EGRESS,
 			     CPSW_MASK_ALL_PORTS);
-
-
-	cpsw_ale_add_ucast(priv->ale, cpsw_intf->ndev->dev_addr,
-			   priv->host_port, 0, CPSW_NON_VLAN_ADDR);
-
-	cpsw_ale_add_mcast(priv->ale, cpsw_intf->ndev->broadcast,
-			   1 << priv->host_port, 0,
-			   ALE_MCAST_FWD_2, CPSW_NON_VLAN_ADDR);
 }
 
 static void cpsw_slave_init(struct cpsw_slave *slave, struct cpsw_priv *priv)
