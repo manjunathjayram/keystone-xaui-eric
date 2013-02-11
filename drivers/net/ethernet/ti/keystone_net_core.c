@@ -1375,6 +1375,9 @@ static int netcp_ndo_stop(struct net_device *ndev)
 
 	netcp_set_rx_state(netcp, RX_STATE_INVALID);
 
+	netcp_addr_clear_mark(netcp);
+	netcp_addr_sweep_del(netcp);
+
 	for_each_module(netcp, intf_modpriv) {
 		module = intf_modpriv->netcp_module;
 		if (module->close != NULL) {
