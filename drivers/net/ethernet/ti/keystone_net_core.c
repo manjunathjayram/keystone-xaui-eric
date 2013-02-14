@@ -1587,7 +1587,8 @@ u32 netcp_set_streaming_switch(struct netcp_device *netcp_device,
 
 	if (port == 0) {
 		old_value = reg;
-		reg = (new_value << 8) | new_value;
+		reg = (new_value << 24) | (new_value << 16) |
+			(new_value << 8) | new_value;
 	} else {
 		int shift = (port - 1) * 8;
 		old_value = (reg >> shift) & 0xff;
