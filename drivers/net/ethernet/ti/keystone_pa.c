@@ -2011,7 +2011,7 @@ static struct pa_lut_entry *pa_lut_alloc(struct pa_device *pa_dev,
 
 static inline int pa_lut_entry_count(enum netcp_addr_type type)
 {
-	return (type == ADDR_DEV || type == ADDR_UCAST) ? 3 : 1;
+	return (type == ADDR_DEV || type == ADDR_UCAST || type == ADDR_ANY) ? 3 : 1;
 }
 
 int pa_add_addr(void *intf_priv, struct netcp_addr *naddr)
@@ -2035,12 +2035,20 @@ int pa_add_addr(void *intf_priv, struct netcp_addr *naddr)
 	addr = (naddr->type == ADDR_ANY) ? NULL : naddr->addr;
 	idx = 0;
 
+	if (naddr->type == ADDR_ANY) {
+		error = keystone_pa_add_mac(pa_intf, entries[idx++]->index,
+					    NULL, addr, PACKET_HST, 0, port);
+		if (error)
+			return error;
+	}
+
 	if (count > 1) {
 		error = keystone_pa_add_mac(pa_intf, entries[idx++]->index,
 					    NULL, addr, PACKET_PARSE,
 					    0x0800, port);
 		if (error)
 			return error;
+
 		error = keystone_pa_add_mac(pa_intf, entries[idx++]->index,
 					    NULL, addr, PACKET_PARSE,
 					    0x86dd, port);
@@ -2048,8 +2056,13 @@ int pa_add_addr(void *intf_priv, struct netcp_addr *naddr)
 			return error;
 	}
 
-	error = keystone_pa_add_mac(pa_intf, entries[idx++]->index,
-				    NULL, addr, PACKET_HST, 0, port);
+	if (naddr->type != ADDR_ANY) {
+		error = keystone_pa_add_mac(pa_intf, entries[idx++]->index,
+					    NULL, addr, PACKET_HST, 0, port);
+		if (error)
+			return error;
+	}
+
 	return error;
 
 fail_alloc:
