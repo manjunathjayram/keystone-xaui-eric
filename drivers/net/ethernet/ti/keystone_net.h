@@ -31,6 +31,7 @@
 #define SGMII_LINK_MAC_FIBER		3
 
 int serdes_init(void);
+void serdes_init_6638_156p25Mhz(void);
 int keystone_sgmii_reset(void __iomem *sgmii_ofs, int port);
 int keystone_sgmii_link_status(void __iomem *sgmii_ofs, int ports);
 int keystone_sgmii_get_port_link(void __iomem *sgmii_ofs, int port);
