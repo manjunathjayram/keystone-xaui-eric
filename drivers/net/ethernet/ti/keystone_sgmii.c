@@ -203,3 +203,104 @@ int keystone_sgmii_config(void __iomem *sgmii_ofs,
 	kfree(config);
 	return 0;
 }
+
+#define reg_rmw(addr, value, mask) \
+	__raw_writel(((__raw_readl(addr) & (~(mask))) | (value) ), (addr) )
+
+void serdes_init_6638_156p25Mhz()
+{
+	void __iomem *regs;
+	unsigned int cnt;
+
+	regs = ioremap(0x0232a000, 0x2000);
+
+	reg_rmw(regs + 0x000, 0x00800000, 0xffff0000);
+	reg_rmw(regs + 0x014, 0x00008282, 0x0000ffff);
+	reg_rmw(regs + 0x060, 0x00142438, 0x00ffffff);
+	reg_rmw(regs + 0x064, 0x00c3c700, 0x00ffff00);
+	reg_rmw(regs + 0x078, 0x0000c000, 0x0000ff00);
+	reg_rmw(regs + 0x204, 0x38000080, 0xff0000ff);
+	reg_rmw(regs + 0x208, 0x00000000, 0x000000ff);
+	reg_rmw(regs + 0x20c, 0x02000000, 0xff000000);
+	reg_rmw(regs + 0x210, 0x1b000000, 0xff000000);
+	reg_rmw(regs + 0x214, 0x00006fb8, 0x0000ffff);
+	reg_rmw(regs + 0x218, 0x758000e4, 0xffff00ff);
+	reg_rmw(regs + 0x2ac, 0x00004400, 0x0000ff00);
+	reg_rmw(regs + 0x22c, 0x00100800, 0x00ffff00);
+	reg_rmw(regs + 0x280, 0x00820082, 0x00ff00ff);
+	reg_rmw(regs + 0x284, 0x1D0F0385, 0xFFFFFFFF);
+	reg_rmw(regs + 0x404, 0x38000080, 0xff0000ff);
+	reg_rmw(regs + 0x408, 0x00000000, 0x000000ff);
+	reg_rmw(regs + 0x40c, 0x02000000, 0xff000000);
+	reg_rmw(regs + 0x410, 0x1b000000, 0xff000000);
+	reg_rmw(regs + 0x414, 0x00006FB8, 0x0000FFFF);
+	reg_rmw(regs + 0x418, 0x758000E4, 0xFFFF00FF);
+	reg_rmw(regs + 0x4AC, 0x00004400, 0x0000FF00);
+	reg_rmw(regs + 0x42C, 0x00100800, 0x00FFFF00);
+	reg_rmw(regs + 0x480, 0x00820082, 0x00FF00FF);
+	reg_rmw(regs + 0x484, 0x1D0F0385, 0xFFFFFFFF);
+	reg_rmw(regs + 0x604, 0x38000080, 0xFF0000FF);
+	reg_rmw(regs + 0x608, 0x00000000, 0x000000FF);
+	reg_rmw(regs + 0x60C, 0x02000000, 0xFF000000);
+	reg_rmw(regs + 0x610, 0x1B000000, 0xFF000000);
+	reg_rmw(regs + 0x614, 0x00006FB8, 0x0000FFFF);
+	reg_rmw(regs + 0x618, 0x758000E4, 0xFFFF00FF);
+	reg_rmw(regs + 0x6AC, 0x00004400, 0x0000FF00);
+	reg_rmw(regs + 0x62C, 0x00100800, 0x00FFFF00);
+	reg_rmw(regs + 0x680, 0x00820082, 0x00FF00FF);
+	reg_rmw(regs + 0x684, 0x1D0F0385, 0xFFFFFFFF);
+	reg_rmw(regs + 0x804, 0x38000080, 0xFF0000FF);
+	reg_rmw(regs + 0x808, 0x00000000, 0x000000FF);
+	reg_rmw(regs + 0x80C, 0x02000000, 0xFF000000);
+	reg_rmw(regs + 0x810, 0x1B000000, 0xFF000000);
+	reg_rmw(regs + 0x814, 0x00006FB8, 0x0000FFFF);
+	reg_rmw(regs + 0x818, 0x758000E4, 0xFFFF00FF);
+	reg_rmw(regs + 0x8AC, 0x00004400, 0x0000FF00);
+	reg_rmw(regs + 0x82C, 0x00100800, 0x00FFFF00);
+	reg_rmw(regs + 0x880, 0x00820082, 0x00FF00FF);
+	reg_rmw(regs + 0x884, 0x1D0F0385, 0xFFFFFFFF);
+	reg_rmw(regs + 0xa00, 0x00000800, 0x0000FF00);
+	reg_rmw(regs + 0xa08, 0x38A20000, 0xFFFF0000);
+	reg_rmw(regs + 0xa30, 0x008A8A00, 0x00FFFF00);
+	reg_rmw(regs + 0xa84, 0x00000600, 0x0000FF00);
+	reg_rmw(regs + 0xa94, 0x10000000, 0xFF000000);
+	reg_rmw(regs + 0xaa0, 0x81000000, 0xFF000000);
+	reg_rmw(regs + 0xabc, 0xFF000000, 0xFF000000);
+	reg_rmw(regs + 0xac0, 0x0000008B, 0x000000FF);
+	reg_rmw(regs + 0xb08, 0x583F0000, 0xFFFF0000);
+	reg_rmw(regs + 0xb0c, 0x0000004e, 0x000000FF);
+	reg_rmw(regs + 0x000, 0x00000003, 0x000000FF);
+	reg_rmw(regs + 0xa00, 0x0000005F, 0x000000FF);
+
+	/* Enable TX and RX via the LANExCTL_STS 0x0000 + x*4 */
+	__raw_writel(0xF800F8C0, regs + 0x1fe0);
+	__raw_writel(0xF800F8C0, regs + 0x1fe4);
+	__raw_writel(0xF800F8C0, regs + 0x1fe8);
+	__raw_writel(0xF800F8C0, regs + 0x1fec);
+
+	/*Enable pll via the pll_ctrl 0x0014*/
+	__raw_writel(0xe0000000, regs + 0x1ff4);
+
+	iounmap(regs);
+	regs = ioremap(0x02090000, 0x1000);
+
+	/*Waiting for SGMII Serdes PLL lock.*/
+	for (cnt = 10000;
+	     cnt > 0 && ((__raw_readl(regs + 0x114) & 0x10) == 0);
+	     cnt--);
+
+	for (cnt = 10000;
+	     cnt > 0 && ((__raw_readl(regs + 0x214) & 0x10) == 0);
+	     cnt--);
+
+	for (cnt = 10000;
+	     cnt > 0 && ((__raw_readl(regs + 0x414) & 0x10) == 0);
+	     cnt--);
+
+	for (cnt = 10000;
+	     cnt > 0 && ((__raw_readl(regs + 0x514) & 0x10) == 0);
+	     cnt--);
+
+	iounmap(regs);
+	udelay(200);
+}
