@@ -874,7 +874,7 @@
 		timer {
 			compatible = "arm,armv7-timer";
 			interrupts = <1 13 0xf08 1 14 0xf08>;
-			clock-frequency = <166666666>; /* Freq in Hz - optional */
+			clock-frequency = <133666666>; /* Freq in Hz - optional */
 		};
 
 		uart0:	serial@02530c00 {
@@ -1196,6 +1196,310 @@
 			reg  = <0x0c000000 0x00200000	/* msmc ram */
 				0xa0000000 0x20000000>;	/* corepac's ddr3 */
 			reg-names = "msmcram", "ddr3";
+		};
+
+		hwqueue0: hwqueue@2a00000 {
+			compatible = "ti,keystone-hwqueue";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges;
+			range		= <0 0x4000>;
+			linkram0	= <0x100000 0x8000>;
+			linkram1	= <0x0 0x10000>;
+
+			qmgrs {
+				#address-cells = <1>;
+				#size-cells = <1>;
+				ranges;
+				qmgr0 {
+					managed-queues = <0 0x2000>;	/* managed queues */
+					reg = <0x2a40000 0x20000	/* 0 - peek	*/
+					       0x2a06000 0x400		/* 1 - status	*/
+					       0x2a02000 0x1000		/* 2 - config	*/
+					       0x2a03000 0x1000		/* 3 - region	*/
+					       0x2a80000 0x20000	/* 4 - push	*/
+					       0x2a80000 0x20000>;	/* 5 - pop	*/
+				};
+
+				qmgr1 {
+					managed-queues = <0x2000 0x2000>;	/* managed queues */
+					reg = <0x2a60000 0x20000	/* 0 - peek	*/
+					       0x2a06400 0x400		/* 1 - status	*/
+					       0x2a04000 0x1000		/* 2 - config	*/
+					       0x2a05000 0x1000		/* 3 - region	*/
+					       0x2aa0000 0x20000	/* 4 - push	*/
+					       0x2aa0000 0x20000>;	/* 5 - pop	*/
+				};
+			};
+			queues {
+				qpend-arm-low {
+					values = <652 20>;
+					interrupts = <0 40 0xf04 0 41 0xf04 0 42 0xf04 0 43 0xf04
+						      0 44 0xf04 0 45 0xf04 0 46 0xf04 0 47 0xf04>;
+					reserved;
+				};
+				qpend-arm-hi {
+					values = <8704 32>;
+					interrupts = <0 48 0xf04 0 49 0xf04 0 50 0xf04 0 51 0xf04
+						      0 52 0xf04 0 53 0xf04 0 54 0xf04 0 55 0xf04
+						      0 56 0xf04 0 57 0xf04 0 58 0xf04 0 59 0xf04
+						      0 60 0xf04 0 61 0xf04 0 62 0xf04 0 63 0xf04
+						      0 64 0xf04 0 65 0xf04 0 66 0xf04 0 59 0xf04
+						      0 68 0xf04 0 69 0xf04 0 70 0xf04 0 71 0xf04
+						      0 72 0xf04 0 73 0xf04 0 74 0xf04 0 75 0xf04
+						      0 76 0xf04 0 77 0xf04 0 78 0xf04 0 79 0xf04>;
+					reserved;
+				};
+				general {
+					values = <4000 64>;
+				};
+				pa {
+					values = <640 9>;
+					reserved;
+				};
+			};
+			regions {
+				#address-cells = <1>;
+				#size-cells = <1>;
+				ranges;
+				region-12 {
+					id = <12>;
+					values	= <2048 128>;	/* num_desc desc_size */
+					link-index = <0x4000>;
+				};
+				region-13 {
+					id = <13>;
+					values	= <2048 256>;	/* num_desc desc_size */
+					link-index = <0x4800>;
+				};
+			};
+			descriptors {
+				pool-net {
+					values = <2048 128>;	/* num_desc desc_size */
+					region-id = <12>;
+				};
+				pool-rio {
+					values = <128 256>;
+					region-id = <13>;
+				};
+				pool-udma {
+					values = <1636 256>;	/* num_desc desc_size */
+					region-id = <13>;
+				};
+			};
+		}; /* hwqueue0 */
+
+		padma: pktdma@2004000 {
+			compatible = "ti,keystone-pktdma";
+			reg = <0x2004000 0x100		/* 0 - global  */
+			       0x2004400 0x120		/* 1 - txchan  */
+			       0x2004800 0x300		/* 2 - rxchan  */
+			       0x2004c00 0x120		/* 3 - txsched */
+			       0x2005000 0x400>;	/* 4 - rxflow  */
+			/* loop-back;  */
+			/* bigendian; */
+			enable-all;
+			debug;
+			/* rx-priority = <0>; */
+			/* tx-priority = <0>; */
+			logical-queue-managers	= <4>;
+			queues-per-queue-manager = <4096>;
+			qm-base-address = <0x23a80000 0x23a90000
+					   0x23aa0000 0x23ab0000>;
+
+			channels {
+				nettx0 {
+					transmit;
+					label		= "nettx0";
+					pool		= "pool-net";
+					submit-queue	= <648>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <0>; */
+					/* priority = <1>; */
+				};
+				nettx1 {
+					transmit;
+					label		= "nettx1";
+					pool		= "pool-net";
+					submit-queue	= <648>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <0>; */
+					/* priority = <1>; */
+				};
+				netrx0 {
+					receive;
+					label		= "netrx0";
+					pool		= "pool-net";
+					/* submit-queue   = <xx>; */
+					complete-queue = <8704>;
+					/* debug; */
+					/* channel = <0>; */
+					flow		= <22>;
+				};
+				netrx1 {
+					receive;
+					label		= "netrx1";
+					pool		= "pool-net";
+					/* submit-queue   = <xx>; */
+					complete-queue = <8705>;
+					/* debug; */
+					/* channel = <0>; */
+					flow		= <23>;
+				};
+				patx-pdsp0 {
+					transmit;
+					label		= "patx-pdsp0";
+					pool		= "pool-net";
+					submit-queue	= <640>;
+					complete-queue = <8706>;
+					/* debug; */
+					/* channel = <xx>; */
+					/* priority = <1>; */
+				};
+				patx-pdsp5-0 {
+					transmit;
+					label		= "patx-pdsp5-0";
+					pool		= "pool-net";
+					submit-queue	= <645>;
+					complete-queue = <8707>;
+					/* debug; */
+					/* channel = <xx>; */
+					/* priority = <1>; */
+				};
+				patx-pdsp5-1 {
+					transmit;
+					label		= "patx-pdsp5-1";
+					pool		= "pool-net";
+					submit-queue	= <645>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <xx>; */
+					/* priority = <1>; */
+				};
+				parx {
+					receive;
+					label		= "parx";
+					pool		= "pool-net";
+					/* submit-queue   = <xx>; */
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <0>; */
+					flow		= <31>;
+				};
+			};
+		};
+
+		mdio: mdio@2090300 {
+			compatible	= "ti,davinci_mdio";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg		= <0x2090300 0x100>;
+			bus_freq	= <500000>;
+			clocks		= <&clkcpgmac>;
+			clock-names	= "fck";
+
+			phy0: phy@0 {
+				compatible = "marvell,88e1111";
+				reg = <0>;
+			};
+			phy1: phy@1 {
+				compatible = "marvell,88e1111";
+				reg = <1>;
+			};
+		};
+
+		netcp: netcp@2090000 {
+			reg = <0x2090000 0xf00
+				0x2620110 0x8>;
+			compatible = "ti,keystone-netcp";
+
+			clocks = <&clkpa>, <&clkcpgmac>;
+			clock-names = "clk_pa", "clk_cpgmac";
+
+			interfaces {
+				interface-0 {
+					rx-channel = "netrx0";
+					rx-queue-depth = <128 0 0 0>;
+					rx-buffer-size = <1500 0 0 0>;
+					efuse-mac = <1>;
+					/*local-mac-address = [02 18 31 7e 3e 6e]; */
+				};
+				interface-1 {
+					rx-channel = "netrx1";
+					rx-queue-depth = <128 128 0 0>;
+					rx-buffer-size = <1500 4096 0 0>;
+					efuse-mac = <0>;
+					local-mac-address = [02 18 31 7e 3e 6f];
+				};
+			};
+
+			cpsw: cpsw@2090000 {
+				label = "keystone-cpsw";
+				serdes_at_probe = <1>;
+
+				intf_tx_queues = <4>;
+
+				sgmii_module_ofs  = <0x100>;
+				switch_module_ofs = <0x800>;
+				host_port_reg_ofs = <0x834>;
+				slave_reg_ofs	  = <0x860>;
+				sliver_reg_ofs	  = <0x900>;
+				hw_stats_reg_ofs  = <0xb00>;
+				ale_reg_ofs	  = <0xe00>;
+
+				num_slaves  = <2>;
+				ale_ageout  = <30>;
+				ale_entries = <1024>;
+				ale_ports   = <3>;
+
+				multi-interface;
+				num-interfaces = <2>;
+				slaves-per-interface = <1>;
+
+				interfaces {
+					interface-0 {
+						slave_port = <0>;
+						tx-channel = "nettx0";
+						tx_queue_depth = <32>;
+						intf_tx_queues = <6>;
+					};
+					interface-1 {
+						slave_port = <1>;
+						tx-channel = "nettx1";
+						tx_queue_depth = <32>;
+						intf_tx_queues = <6>;
+					};
+				};
+
+				slaves {
+					slave0 {
+						label		= "slave0";
+						link-interface	= <1>;
+						phy-handle = <&phy0>;
+					};
+					slave1 {
+						label		= "slave1";
+						link-interface	= <1>;
+						phy-handle = <&phy1>;
+					};
+
+				};
+			};
+			pa: pa@2000000 {
+				label = "keystone-pa";
+				checksum-offload	= <2>;
+				txhook-order		= <10>;
+				txhook-softcsum		= <40>;
+				rxhook-order		= <10>;
+
+				tx_cmd_queue_depth	= <32>;
+				tx_data_queue_depth	= <32>;
+				rx_pool_depth		= <64>;
+				rx_buffer_size		= <128>;
+				lut-ranges		= < 0 47 60 63>;
+			};
 		};
 	};
 };
