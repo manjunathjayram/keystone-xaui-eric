@@ -246,6 +246,7 @@ struct cpsw_priv {
 	struct list_head		 cpsw_intf_head;
 
 	u64				 hw_stats[72];
+	int				 init_serdes_at_probe;
 };
 
 struct cpsw_intf {
@@ -998,7 +999,9 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_dev);
 
 	/* Serdes init */
-	serdes_init();
+	if (cpsw_dev->init_serdes_at_probe == 0) {
+		serdes_init();
+	}
 
 	/* initialize host and slave ports */
 	cpsw_init_host_port(cpsw_dev, cpsw_intf);
@@ -1137,6 +1140,20 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	cpsw_dev->netcp_device = netcp_device;
 	
 	priv = cpsw_dev;	/* FIXME: Remove this!! */
+
+	regs = ioremap(TCI6614_SS_BASE, 0xf00);
+	BUG_ON(!regs);
+
+	ret = of_property_read_u32(node, "serdes_at_probe", &cpsw_dev->init_serdes_at_probe);
+	if (ret < 0) {
+		dev_err(dev, "missing serdes_at_probe parameter, err %d\n", ret);
+		cpsw_dev->init_serdes_at_probe = 0;
+	}
+	dev_dbg(dev, "serdes_at_probe %u\n", cpsw_dev->init_serdes_at_probe);
+
+	if (cpsw_dev->init_serdes_at_probe == 1) {
+		serdes_init_6638_156p25Mhz();
+	}
 
 	ret = of_property_read_u32(node, "sgmii_module_ofs",
 				   &cpsw_dev->sgmii_module_ofs);
