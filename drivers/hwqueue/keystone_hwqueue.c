@@ -219,14 +219,16 @@ static int khwq_push(struct hwqueue_instance *inst, dma_addr_t dma,
 		     unsigned size, unsigned flags)
 {
 	struct khwq_device *kdev = from_hdev(inst->hdev);
-	unsigned id = hwqueue_inst_to_id(inst);
 	struct khwq_qmgr_info *qmgr;
 	unsigned long irq_flags;
+	unsigned id;
 	u32 val;
 
 	qmgr = khwq_find_qmgr(inst);
 	if (!qmgr)
 		return -ENODEV;
+
+	id = hwqueue_inst_to_id(inst) - qmgr->start_queue;
 
 	spin_lock_irqsave(&kdev->lock, irq_flags);
 
@@ -248,20 +250,21 @@ static dma_addr_t khwq_pop(struct hwqueue_instance *inst, unsigned *size,
 {
 	struct khwq_instance *kq = hwqueue_inst_to_priv(inst);
 	struct khwq_device *kdev = from_hdev(inst->hdev);
-	unsigned id = hwqueue_inst_to_id(inst);
 	struct khwq_qmgr_info *qmgr;
 	u32 val, desc_size, idx;
 	dma_addr_t dma;
+	unsigned id;
 
 	qmgr = khwq_find_qmgr(inst);
 	if (unlikely(!qmgr))
 		return -ENODEV;
 
+	id = hwqueue_inst_to_id(inst) - qmgr->start_queue;
+
 	/* are we accumulated? */
 	if (kq->descs) {
 		if (unlikely(atomic_dec_return(&kq->desc_count) < 0)) {
 			atomic_inc(&kq->desc_count);
-			dev_dbg(kdev->dev, "acc-pop empty queue %d\n", id);
 			return 0;
 		}
 
@@ -269,9 +272,6 @@ static dma_addr_t khwq_pop(struct hwqueue_instance *inst, unsigned *size,
 		idx &= ACC_DESCS_MASK;
 
 		val = kq->descs[idx];
-
-		dev_dbg(kdev->dev, "acc-pop %08x (at %d) from queue %d\n",
-			val, idx, id);
 	} else {
 		val = __raw_readl(&qmgr->reg_pop[id].ptr_size_thresh);
 		if (unlikely(!val))
@@ -290,12 +290,14 @@ static dma_addr_t khwq_pop(struct hwqueue_instance *inst, unsigned *size,
 static int khwq_get_count(struct hwqueue_instance *inst)
 {
 	struct khwq_instance *kq = hwqueue_inst_to_priv(inst);
-	unsigned id = hwqueue_inst_to_id(inst);
 	struct khwq_qmgr_info *qmgr;
+	unsigned id;
 
 	qmgr = khwq_find_qmgr(inst);
 	if (unlikely(!qmgr))
 		return -EINVAL;
+
+	id = hwqueue_inst_to_id(inst) - qmgr->start_queue;
 
 	return (__raw_readl(&qmgr->reg_peek[id].entry_count) +
 		atomic_read(&kq->desc_count));
@@ -304,12 +306,14 @@ static int khwq_get_count(struct hwqueue_instance *inst)
 static int khwq_flush(struct hwqueue_instance *inst)
 {
 	struct khwq_instance *kq = hwqueue_inst_to_priv(inst);
-	unsigned id = hwqueue_inst_to_id(inst);
 	struct khwq_qmgr_info *qmgr;
+	unsigned id;
 
 	qmgr = khwq_find_qmgr(inst);
 	if (!qmgr)
 		return -ENODEV;
+
+	id = hwqueue_inst_to_id(inst) - qmgr->start_queue;
 
 	atomic_set(&kq->desc_count, 0);
 	__raw_writel(0, &qmgr->reg_push[id].ptr_size_thresh);
