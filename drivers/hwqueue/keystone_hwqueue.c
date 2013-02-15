@@ -218,9 +218,7 @@ khwq_find_region_by_dma(struct khwq_device *kdev, struct khwq_instance *kq,
 static int khwq_push(struct hwqueue_instance *inst, dma_addr_t dma,
 		     unsigned size, unsigned flags)
 {
-	struct khwq_device *kdev = from_hdev(inst->hdev);
 	struct khwq_qmgr_info *qmgr;
-	unsigned long irq_flags;
 	unsigned id;
 	u32 val;
 
@@ -230,17 +228,9 @@ static int khwq_push(struct hwqueue_instance *inst, dma_addr_t dma,
 
 	id = hwqueue_inst_to_id(inst) - qmgr->start_queue;
 
-	spin_lock_irqsave(&kdev->lock, irq_flags);
-
-	if (flags & HWQUEUE_HAS_PACKET_SIZE)
-		__raw_writel((flags & BITS(17)),
-			     &qmgr->reg_push[id].packet_size);
-
 	val = (u32)dma | ((size / 16) - 1);
 
 	__raw_writel(val, &qmgr->reg_push[id].ptr_size_thresh);
-
-	spin_unlock_irqrestore(&kdev->lock, irq_flags);
 
 	return 0;
 }
@@ -249,7 +239,6 @@ static dma_addr_t khwq_pop(struct hwqueue_instance *inst, unsigned *size,
 			   unsigned flags)
 {
 	struct khwq_instance *kq = hwqueue_inst_to_priv(inst);
-	struct khwq_device *kdev = from_hdev(inst->hdev);
 	struct khwq_qmgr_info *qmgr;
 	u32 val, desc_size, idx;
 	dma_addr_t dma;
@@ -1159,7 +1148,6 @@ static int khwq_probe(struct platform_device *pdev)
 	INIT_LIST_HEAD(&kdev->pools);
 	INIT_LIST_HEAD(&kdev->regions);
 	INIT_LIST_HEAD(&kdev->pdsps);
-	spin_lock_init(&kdev->lock);
 
 	if (of_property_read_u32_array(node, "range", temp, 2)) {
 		dev_err(dev, "hardware queue range not specified\n");

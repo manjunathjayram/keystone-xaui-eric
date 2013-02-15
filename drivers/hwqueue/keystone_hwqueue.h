@@ -21,8 +21,6 @@
 #define DESC_SIZE_MASK	0xful
 #define DESC_PTR_MASK	(~DESC_SIZE_MASK)
 
-#define HWQUEUE_HAS_PACKET_SIZE	BIT(31)
-
 #define BITS(x)		(BIT(x) - 1)
 
 #define THRESH_GTE	BIT(7)
@@ -231,8 +229,6 @@ struct khwq_device {
 	struct list_head		 pools;
 	struct list_head		 pdsps;
 	struct list_head		 qmgrs;
-
-	spinlock_t			 lock;
 };
 
 struct khwq_desc {
