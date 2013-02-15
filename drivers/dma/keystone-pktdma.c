@@ -1300,9 +1300,7 @@ static int chan_rxfree_refill(struct keystone_dma_chan *chan)
 			desc->status = DMA_IN_PROGRESS;
 			ret = hwqueue_push(chan->q_submit[i],
 					desc->hwdesc_dma_addr,
-					desc->hwdesc_dma_size,
-					((hwdesc->desc_info & BITS(17)) |
-					 HWQUEUE_HAS_PACKET_SIZE));
+					desc->hwdesc_dma_size, 0);
 			if (unlikely(ret < 0)) {
 				dev_warn(chan_dev(chan), "push error %d in %s\n",
 						ret, __func__);
