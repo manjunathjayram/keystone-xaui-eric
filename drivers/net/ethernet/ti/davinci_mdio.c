@@ -37,6 +37,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/davinci_emac.h>
 #include <linux/of.h>
+#include <linux/of_mdio.h>
 #include <linux/of_device.h>
 
 /*
@@ -142,6 +143,10 @@ static int davinci_mdio_reset(struct mii_bus *bus)
 	ver = __raw_readl(&data->regs->version);
 	dev_info(data->dev, "davinci mdio revision %d.%d\n",
 		 (ver >> 8) & 0xff, ver & 0xff);
+
+	/* OF explicitly registers phy devices without a bus scan */
+	if (data->dev->of_node)
+		return 0;
 
 	/* get phy mask from the alive register */
 	phy_mask = __raw_readl(&data->regs->alive);
@@ -313,6 +318,7 @@ static int davinci_mdio_probe_dt(struct mdio_platform_data *data,
 static int davinci_mdio_probe(struct platform_device *pdev)
 {
 	struct mdio_platform_data *pdata = pdev->dev.platform_data;
+	struct device_node *node = pdev->dev.of_node;
 	struct device *dev = &pdev->dev;
 	struct davinci_mdio_data *data;
 	struct resource *res;
@@ -348,6 +354,7 @@ static int davinci_mdio_probe(struct platform_device *pdev)
 	data->bus->reset	= davinci_mdio_reset,
 	data->bus->parent	= dev;
 	data->bus->priv		= data;
+	data->dev = dev;
 
 	pm_runtime_enable(&pdev->dev);
 	data->clk = clk_get(&pdev->dev, "fck");
@@ -361,7 +368,6 @@ static int davinci_mdio_probe(struct platform_device *pdev)
 	clk_prepare(data->clk);
 	pm_runtime_get_sync(&pdev->dev);
 	dev_set_drvdata(dev, data);
-	data->dev = dev;
 	spin_lock_init(&data->lock);
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -387,7 +393,7 @@ static int davinci_mdio_probe(struct platform_device *pdev)
 	}
 
 	/* register the mii bus */
-	ret = mdiobus_register(data->bus);
+	ret = of_mdiobus_register(data->bus, node);
 	if (ret)
 		goto bail_out;
 
