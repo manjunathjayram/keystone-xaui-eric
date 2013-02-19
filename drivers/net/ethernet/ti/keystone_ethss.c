@@ -21,6 +21,7 @@
 #include <linux/device.h>
 #include <linux/uaccess.h>
 #include <linux/if_vlan.h>
+#include <linux/of_mdio.h>
 #include <linux/ethtool.h>
 #include <linux/if_ether.h>
 #include <linux/net_tstamp.h>
@@ -236,6 +237,7 @@ struct cpsw_priv {
 	u32				 ale_refcnt;
 
 	u32				 link[5];
+	struct device_node		*phy_node[4];
 
 	u32				 intf_tx_queues;
 
@@ -253,6 +255,7 @@ struct cpsw_intf {
 	struct net_device	*ndev;
 	struct device		*dev;
 	struct cpsw_priv	*cpsw_priv;
+	struct device_node	*phy_node;
 	u32			 num_slaves;
 	u32			 slave_port;
 	struct cpsw_slave	*slaves;
@@ -595,16 +598,6 @@ static void cpsw_slave_stop(struct cpsw_slave *slave, struct cpsw_priv *priv)
 	slave->phy = NULL;
 }
 
-static int match_device(struct device *dev, void *data)
-{
-	struct cpsw_slave *slave = (struct cpsw_slave *)data;
-
-	if (slave->link_interface == SGMII_LINK_MAC_PHY)
-		return 1;
-	else
-		return 0;
-}
-
 static void cpsw_slave_link(struct cpsw_slave *slave,
 			    struct cpsw_intf *cpsw_intf)
 {
@@ -655,31 +648,20 @@ static void cpsw_slave_open(struct cpsw_slave *slave,
 			   CPSW_NON_VLAN_ADDR);
 
 	if (slave->link_interface == SGMII_LINK_MAC_PHY) {
-		if (!slave->phy_id) {
-			struct device *phy;
-
-			phy = bus_find_device(&mdio_bus_type, NULL, slave,
-				      match_device);
-			if (phy)
-				slave->phy_id = dev_name(phy);
-		}
-
-		if (slave->phy_id && *slave->phy_id) {
-			slave->phy = phy_connect(cpsw_intf->ndev, slave->phy_id,
-					&cpsw_adjust_link, 0,
-					PHY_INTERFACE_MODE_SGMII,
-					slave);
-			if (IS_ERR(slave->phy)) {
-				dev_err(priv->dev, "phy %s not found on"
-					" slave %d\n", slave->phy_id,
-					slave->slave_num);
-				slave->phy = NULL;
-			} else {
-				dev_info(priv->dev, "phy found: id is: 0x%s\n",
-					slave->phy_id);
-				cpsw_intf->ndev->phydev = slave->phy;
-				phy_start(slave->phy);
-			}
+		slave->phy = of_phy_connect(cpsw_intf->ndev,
+					    cpsw_intf->phy_node,
+					    &cpsw_adjust_link, 0,
+					    PHY_INTERFACE_MODE_SGMII,
+					    slave);
+		if (IS_ERR_OR_NULL(slave->phy)) {
+			dev_err(priv->dev, "phy not found on slave %d\n",
+				slave->slave_num);
+			slave->phy = NULL;
+		} else {
+			dev_info(priv->dev, "phy found: id is: 0x%s\n",
+				 dev_name(&slave->phy->dev));
+			cpsw_intf->ndev->phydev = slave->phy;
+			phy_start(slave->phy);
 		}
 	}
 }
@@ -1106,6 +1088,8 @@ static int init_slave(struct cpsw_priv *cpsw_dev,
 		cpsw_dev->link[slave_num] = 1;
 	}
 
+	cpsw_dev->phy_node[slave_num] = of_parse_phandle(node, "phy-handle", 0);
+
 	return 0;
 }
 
@@ -1380,6 +1364,7 @@ static int cpsw_attach(void *inst_priv, struct net_device *ndev,
 		cpsw_intf->slaves[i].slave_num = cpsw_intf->slave_port;
 		cpsw_intf->slaves[i].link_interface =
 			cpsw_dev->link[cpsw_intf->slave_port];
+		cpsw_intf->phy_node = cpsw_dev->phy_node[cpsw_intf->slave_port];
 	} else {
 		for (i = 0; i < cpsw_intf->num_slaves; i++) {
 			cpsw_intf->slaves[i].slave_num = i;
