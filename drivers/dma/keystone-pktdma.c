@@ -1492,6 +1492,7 @@ chan_prep_slave_sg(struct dma_chan *achan, struct scatterlist *_sg,
 	unsigned num_sg = _num_sg;
 	unsigned nsg;
 	unsigned packet_len;
+	u32 tag_info = chan->tag_info;
 	u32 packet_info, psflags;
 	u32 next_desc;
 	unsigned q_num = (options >> DMA_QNUM_SHIFT) & DMA_QNUM_MASK;
@@ -1536,6 +1537,11 @@ chan_prep_slave_sg(struct dma_chan *achan, struct scatterlist *_sg,
 		}
 		pslen /= sizeof(u32);
 	}
+
+	if (unlikely(options & DMA_HAS_FLOWTAG))
+		tag_info =
+			((options >> DMA_FLOWTAG_SHIFT) & DMA_FLOWTAG_MASK) <<
+				 DESC_FLOWTAG_SHIFT;
 
 	if (unlikely(!chan_is_alive(chan))) {
 		dev_err(chan_dev(chan), "cannot submit in state %s\n",
@@ -1601,7 +1607,7 @@ chan_prep_slave_sg(struct dma_chan *achan, struct scatterlist *_sg,
 		packet_len += buflen;
 		desc_fill(chan, hwdesc,
 			  packet_len,		/* desc_info	*/
-			  chan->tag_info,	/* tag_info	*/
+			  tag_info,		/* tag_info	*/
 			  packet_info,		/* packet_info	*/
 			  buflen,		/* buff_len	*/
 			  sg_dma_address(sg),	/* buff		*/
@@ -1658,7 +1664,8 @@ dma_get_regs(struct keystone_dma_device *dma, int index, const char *name,
 	}
 
 	dev_vdbg(dev, "index: %d, res:%s, size:%x, phys:%x, virt:%p\n",
-		 index, name, size, res.start, regs);
+		 index, name, (unsigned int)size, (unsigned int)res.start,
+		 regs);
 
 	if (_size)
 		*_size = size;
@@ -2040,7 +2047,7 @@ static int keystone_dma_probe(struct platform_device *pdev)
 		return -ENODEV;
 	if (size < sizeof(struct reg_global)) {
 		dev_err(dma_dev(dma), "bad size (%d) for global regs\n",
-			size);
+			(int) size);
 		return -ENODEV;
 	}
 
