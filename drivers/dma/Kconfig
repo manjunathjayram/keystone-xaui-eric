@@ -335,6 +335,7 @@ config KEYSTONE_UDMA
 	default y if KEYSTONE_DMA
 	select VIRTIO
 	select VIRTIO_RING
+	select CMA
 	help
 	  Simple user mode DMA client with zero copy semantics.  Say N unless
 	  you really know what you're doing.
