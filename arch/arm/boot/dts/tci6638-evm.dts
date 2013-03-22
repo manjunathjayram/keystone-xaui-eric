@@ -1191,7 +1191,7 @@
 
 		dspmem: dspmem {
 			compatible = "linux,uio";
-			reg  = <0x0c000000 0x00200000	/* msmc ram */
+			reg  = <0x0c000000 0x00600000	/* msmc ram */
 				0xa0000000 0x20000000>;	/* corepac's ddr3 */
 			reg-names = "msmcram", "ddr3";
 		};
