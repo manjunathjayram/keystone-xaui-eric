@@ -614,7 +614,7 @@ static void netcp_rxpool_free(void *arg, unsigned q_num, unsigned bufsize,
 
 		sg_init_table(sg, 1);
 		sg_set_buf(&sg[0], bufptr, PAGE_SIZE);
-		sg_dma_address(&sg[0]) = virt_to_phys(bufptr);
+		sg_dma_address(&sg[0]) = virt_to_dma(netcp->dev, bufptr);
 		dma_unmap_sg(netcp->dev, sg, 1, DMA_FROM_DEVICE);
 		free_page((unsigned long)bufptr);
 	}
