@@ -394,6 +394,8 @@ config ARCH_KEYSTONE
 	select ZONE_DMA if ARM_LPAE
 	select USB_ARCH_HAS_XHCI
 	select TI_KEYSTONE
+	select MIGHT_HAVE_PCI
+	select ARCH_SUPPORTS_MSI
 	help
 	  Support for boards based on the Texas Instruments Keystone family of
 	  SoCs.
