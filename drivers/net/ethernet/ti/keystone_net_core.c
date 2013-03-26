@@ -117,6 +117,10 @@ static struct kmem_cache *netcp_pinfo_cache;
 #define for_each_netcp_module(module)			\
 	list_for_each_entry(module, &netcp_modules, module_list)
 
+#define for_each_netcp_device_module(netcp_device, inst_modpriv) \
+	list_for_each_entry(inst_modpriv, \
+		&((netcp_device)->modpriv_head), inst_list)
+
 int netcp_register_module(struct netcp_module *module)
 {
 	struct netcp_module *tmp;
@@ -240,6 +244,30 @@ static struct netcp_module *netcp_find_module(const char *name)
 	mutex_unlock(&netcp_modules_lock);
 	return module;
 }
+
+static void *__netcp_device_find_module(struct netcp_device *netcp_device,
+					 const char *name)
+{
+	struct netcp_inst_modpriv *tmp;
+
+	for_each_netcp_device_module(netcp_device, tmp) {
+		if (!strcasecmp(tmp->netcp_module->name, name))
+			return tmp->module_priv;
+	}
+	return NULL;
+}
+
+void *netcp_device_find_module(struct netcp_device *netcp_device,
+		const char *name)
+{
+	void *module;
+
+	mutex_lock(&netcp_modules_lock);
+	module = __netcp_device_find_module(netcp_device, name);
+	mutex_unlock(&netcp_modules_lock);
+	return module;
+}
+EXPORT_SYMBOL(netcp_device_find_module);
 
 void netcp_unregister_module(struct netcp_module *module)
 {
