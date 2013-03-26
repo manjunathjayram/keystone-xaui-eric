@@ -1,0 +1,7 @@
+#
+# PCI Hist drivers
+#
+config TI_KEYSTONE_PCIE
+	tristate "TI Keystone TI's PCIe support"
+	help
+	  This driver supports TI's Keystone PCIe (root complex).
