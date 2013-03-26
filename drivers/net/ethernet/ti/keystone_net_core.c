@@ -1887,6 +1887,7 @@ static int netcp_probe(struct platform_device *pdev)
 	struct netcp_module *module;
 	struct netcp_inst_modpriv *inst_modpriv;
 	const char *name;
+	u32 temp[4];
 	int ret;
 
 	if (!node) {
@@ -1909,12 +1910,17 @@ static int netcp_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, netcp_device);
 
 	/* Map the Streaming Switch */
-	/* FIXME: Hard-coded register address! */
-	netcp_device->streaming_switch = devm_ioremap_nocache(&pdev->dev, 0x02000604, 4);
-	if (!netcp_device->streaming_switch) {
-		dev_err(&pdev->dev, "can't map streaming switch\n");
-		ret = -ENOMEM;
-		goto probe_quit;
+	if (of_property_read_u32_array(node, "streaming-regs",
+					(u32 *)&(temp[0]), 2)) {
+		dev_err(&pdev->dev, "No streaming regs defined\n");
+	} else {
+		netcp_device->streaming_switch =
+			devm_ioremap_nocache(&pdev->dev, temp[0], temp[1]);
+		if (!netcp_device->streaming_switch) {
+			dev_err(&pdev->dev, "can't map streaming switch\n");
+			ret = -ENOMEM;
+			goto probe_quit;
+		}
 	}
 
 	/* Add the device instance to the list */
@@ -1971,7 +1977,8 @@ static int netcp_remove(struct platform_device *pdev)
 			"%s interface list not empty!\n", pdev->name);
 
 	/* Unmap the Streaming Switch */
-	devm_iounmap(&pdev->dev, netcp_device->streaming_switch);
+	if (netcp_device->streaming_switch)
+		devm_iounmap(&pdev->dev, netcp_device->streaming_switch);
 
 	platform_set_drvdata(pdev, NULL);
 	kfree(netcp_device);
