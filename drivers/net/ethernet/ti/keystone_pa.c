@@ -35,6 +35,7 @@
 #include <linux/keystone-dma.h>
 #include <linux/errqueue.h>
 #include <net/sctp/checksum.h>
+#include <linux/clocksource.h>
 
 #include "keystone_net.h"
 #include "keystone_pa.h"
@@ -224,6 +225,12 @@ struct pa_lut_entry {
 	struct netcp_addr	*naddr;
 };
 
+struct pa_timestamp_info {
+	u32	mult;
+	u32	shift;
+	u64	system_offset;
+};
+
 struct pa_intf {
 	struct pa_device		*pa_device;
 	struct net_device		*net_device;
@@ -244,7 +251,7 @@ struct pa_device {
 	unsigned			 cmd_flow_num;
 	unsigned			 cmd_queue_num;
 
-	u64				 pa2system_offset;
+	struct pa_timestamp_info	timestamp_info;
 
 	struct pa_mailbox_regs __iomem		*reg_mailbox;
 	struct pa_packet_id_alloc_regs __iomem	*reg_packet_id;
@@ -535,20 +542,14 @@ static int keystone_pa_reset(struct pa_device *pa_dev)
 
 /*
  *  Convert a raw PA timer count to nanoseconds
- *
- *  This assumes the PA timer frequency is 163,840,000 Hz.
- *  This is true for the TCI6614 EVM with default PLL settings,
- *  but is NOT a good generic assumption! Fix this later.
  */
-static u64 tstamp_raw_to_ns(u64 raw)
+static inline u64 tstamp_raw_to_ns(struct pa_device *pa_dev, u64 raw)
 {
-	/* 100000/(2^14) = 6.103515625 nanoseconds per tick */
-	/* Take care not to exceed 64 bits! */
-
-	return (raw * 50000ULL) >> 13;
+	return (raw * pa_dev->timestamp_info.mult)
+		>> pa_dev->timestamp_info.shift;
 }
 
-static u64 pa_to_sys_time(u64 offset, u64 pa_ticks)
+static u64 pa_to_sys_time(struct pa_device *pa_dev, u64 pa_ticks)
 {
 	s64 temp;
 	u64 result;
@@ -560,7 +561,8 @@ static u64 pa_to_sys_time(u64 offset, u64 pa_ticks)
 	*/
 
 	temp = ktime_to_ns(ktime_get_monotonic_offset());
-	result = (u64)((s64)offset - temp + (s64)tstamp_raw_to_ns(pa_ticks));
+	result = (u64)((s64)pa_dev->timestamp_info.system_offset - temp +
+			(s64)tstamp_raw_to_ns(pa_dev, pa_ticks));
 
 	return result;
 }
@@ -604,30 +606,12 @@ static void pa_calibrate_with_system_timer(struct pa_device *pa_dev)
 
 	/* Convert both values to nanoseconds */
 	sys_ns1 = ktime_to_ns(ktime1);
-	pa_ns   = tstamp_raw_to_ns(pa_ticks);
+	pa_ns   = tstamp_raw_to_ns(pa_dev, pa_ticks);
 	sys_ns2 = ktime_to_ns(ktime2);
 
 	/* compute offset */
-	pa_dev->pa2system_offset = sys_ns1 + ((sys_ns2 - sys_ns1) / 2) - pa_ns;
-}
-
-static int pa_config_timestamp(struct pa_device *pa_dev, int factor)
-{
-	struct pa_pdsp_timer_regs __iomem *timer_reg = &pa_dev->reg_timer[0];
-
-	if (factor < PA_TIMESTAMP_SCALER_FACTOR_2 ||
-	    factor > PA_TIMESTAMP_SCALER_FACTOR_8192)
-		return -1;
-	else {
-		__raw_writel(0xffff, &timer_reg->timer_load);
-		__raw_writel((PA_SS_TIMER_CNTRL_REG_GO |
-			      PA_SS_TIMER_CNTRL_REG_MODE |
-			      PA_SS_TIMER_CNTRL_REG_PSE |
-			      (factor << PA_SS_TIMER_CNTRL_REG_PRESCALE_SHIFT)),
-			      &timer_reg->timer_control);
-	}
-
-	return 0;
+	pa_dev->timestamp_info.system_offset = sys_ns1 +
+		((sys_ns2 - sys_ns1) / 2) - pa_ns;
 }
 
 static void pa_get_version(struct pa_device *pa_dev)
@@ -936,11 +920,13 @@ static void tstamp_complete(u32 context, struct pa_packet *p_info)
 		tx_timestamp = p_info->epib[0];
 		tx_timestamp |= ((u64)(p_info->epib[2] & 0x0000ffff)) << 32;
 
-		sys_time = pa_to_sys_time(pend->pa_dev->pa2system_offset, tx_timestamp);
+		sys_time = pa_to_sys_time(pend->pa_dev, tx_timestamp);
 
 		sh_hw_tstamps = skb_hwtstamps(skb);
 		memset(sh_hw_tstamps, 0, sizeof(*sh_hw_tstamps));
-		sh_hw_tstamps->hwtstamp = ns_to_ktime(tstamp_raw_to_ns(tx_timestamp));
+		sh_hw_tstamps->hwtstamp =
+			ns_to_ktime(tstamp_raw_to_ns(pend->pa_dev,
+							tx_timestamp));
 		sh_hw_tstamps->syststamp = ns_to_ktime(sys_time);
 
 		serr = SKB_EXT_ERR(skb);
@@ -1720,11 +1706,12 @@ static int pa_rx_timestamp(int order, void *data, struct netcp_packet *p_info)
 	rx_timestamp = p_info->epib[0];
 	rx_timestamp |= ((u64)(p_info->psdata[5] & 0x0000ffff)) << 32;
 
-	sys_time = pa_to_sys_time(pa_dev->pa2system_offset, rx_timestamp);
+	sys_time = pa_to_sys_time(pa_dev, rx_timestamp);
 
 	sh_hw_tstamps = skb_hwtstamps(skb);
 	memset(sh_hw_tstamps, 0, sizeof(*sh_hw_tstamps));
-	sh_hw_tstamps->hwtstamp = ns_to_ktime(tstamp_raw_to_ns(rx_timestamp));
+	sh_hw_tstamps->hwtstamp = ns_to_ktime(tstamp_raw_to_ns(pa_dev,
+							rx_timestamp));
 	sh_hw_tstamps->syststamp = ns_to_ktime(sys_time);
 
 	return 0;
@@ -1789,11 +1776,13 @@ static int pa_open(void *intf_priv, struct net_device *ndev)
 	struct pa_device *pa_dev = pa_intf->pa_device;
 	struct netcp_priv *netcp_priv = netdev_priv(ndev);
 	struct dma_keystone_info config;
+	struct pa_pdsp_timer_regs __iomem *timer_reg = &pa_dev->reg_timer[0];
 	const struct firmware *fw;
 	struct dma_chan *chan;
 	dma_cap_mask_t mask;
-	int i, factor;
-	int ret, err;
+	int i, ret, err;
+	unsigned long pa_rate;
+	u64 max_sec;
 
 	/* The first time an open is being called */
 	mutex_lock(&pa_modules_lock);
@@ -1812,11 +1801,11 @@ static int pa_open(void *intf_priv, struct net_device *ndev)
 		pa_dev->clk = clk_get(pa_dev->dev, "clk_pa");
 		if (IS_ERR_OR_NULL(pa_dev->clk)) {
 			dev_warn(pa_dev->dev, "unable to get Packet Accelerator clock\n");
-			pa_dev->clk = NULL;
+			ret = -ENODEV;
+			goto fail;
 		}
 
-		if (pa_dev->clk)
-			clk_prepare_enable(pa_dev->clk);
+		clk_prepare_enable(pa_dev->clk);
 
 		keystone_pa_reset(pa_dev);
 
@@ -1857,17 +1846,31 @@ static int pa_open(void *intf_priv, struct net_device *ndev)
 
 		pa_get_version(pa_dev);
 
-		factor = PA_TIMESTAMP_SCALER_FACTOR_2;
+		/* Start PDSP timer at a prescaler of divide by 2 */
+		__raw_writel(0xffff, &timer_reg->timer_load);
+		__raw_writel((PA_SS_TIMER_CNTRL_REG_GO |
+			      PA_SS_TIMER_CNTRL_REG_MODE |
+			      PA_SS_TIMER_CNTRL_REG_PSE |
+			      (0 << PA_SS_TIMER_CNTRL_REG_PRESCALE_SHIFT)),
+			      &timer_reg->timer_control);
 
-		ret = pa_config_timestamp(pa_dev, factor);
-		if (ret != 0) {
-			dev_err(pa_dev->dev, "timestamp config fail, ret %d\n",
-				ret);
-			ret = -ENODEV;
-			goto fail;
-		}
+		/* calculate the multiplier/shift to
+		 * convert PA counter ticks to ns. */
+		pa_rate = clk_get_rate(pa_dev->clk) / 2;
 
-		pa_dev->pa2system_offset = 0;
+		max_sec = ((1ULL << 48) - 1) + (pa_rate - 1);
+		do_div(max_sec, pa_rate);
+
+		clocks_calc_mult_shift(&pa_dev->timestamp_info.mult,
+				&pa_dev->timestamp_info.shift, pa_rate,
+				NSEC_PER_SEC, max_sec);
+
+		dev_info(pa_dev->dev, "pa_clk_rate(%lu HZ),mult(%u),shift(%u)\n",
+				pa_rate, pa_dev->timestamp_info.mult,
+				pa_dev->timestamp_info.shift);
+
+		pa_dev->timestamp_info.system_offset = 0;
+
 		pa_calibrate_with_system_timer(pa_dev);
 
 		dma_cap_zero(mask);
