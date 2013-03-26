@@ -1700,6 +1700,7 @@
 			clocks = <&clkpa>, <&clkcpgmac>;
 			clock-names = "clk_pa", "clk_cpgmac";
 			dma-coherent;
+			streaming-regs = <0x02000604 0x4>;
 
 			interfaces {
 				interface-0 {
