@@ -53,6 +53,12 @@
 				0x02620328 4>;	/* rstmux8 register */
 		};
 
+		pcieks2cfg:pcieks2cfg@2320000 {
+			compatible = "ti,keystone2-pcie-cfg";
+			reg = <0x02320000 0x4000	/* Keystone2 serdes cfg */
+				0x0262014c 4>;		/* device cfg */
+		};
+
 		clocks {
 			#address-cells = <1>;
 			#size-cells = <1>;
@@ -1986,6 +1992,30 @@
 					};
 				};
 			};
+		};
+
+		pci-controller@21800000 {
+			device_type = "pci";
+			#address-cells = <3>;
+			#size-cells = <2>;
+			#interrupt-cells = <2>;
+			compatible = "ti,keystone2-pci";
+			reg = <0x21800000 0x8000>;	/* pcie-regs */
+
+			/* outbound pci resources */
+			ranges = <0x02000000 0 0x50000000 0x50000000 0 0x10000000
+				  0x01000000 0 0 0x24000000 0 0x4000>;
+
+			/* inbound dma range */
+			dma-ranges = <0x02000000 0 0x80000000 0x80000000 0 0x20000000>;
+
+			interrupt-parent = <&gic>;
+			/* First 4 are legacy IRQs, followed by 8 MSI IRQs */
+			interrupts = <0 26 0xf04 0 27 0xf04 0 28 0xf04 0 29 0xf04
+				      0 30 0xf04 0 31 0xf04 0 32 0xf04 0 33 0xf04
+				      0 34 0xf04 0 35 0xf04 0 34 0xf04 0 37 0xf04>;
+			clocks = <&clkpcie>;
+			clock-names = "pcie";
 		};
 	};
 };
