@@ -892,7 +892,6 @@
 		timer {
 			compatible = "arm,armv7-timer";
 			interrupts = <1 13 0xf08 1 14 0xf08>;
-			clock-frequency = <133120000>; /* Freq in Hz - optional */
 		};
 
 		uart0:	serial@02530c00 {
