@@ -139,7 +139,6 @@ static int keystone_platform_notifier(struct notifier_block *nb,
 {
 	struct device *dev = _dev;
 
-#ifdef CONFIG_ZONE_DMA
 	if (event == BUS_NOTIFY_ADD_DEVICE) {
 		dev->dma_mask = kmalloc(sizeof(*dev->dma_mask), GFP_KERNEL);
 		dev->coherent_dma_mask = arm_dma_limit;
@@ -152,13 +151,10 @@ static int keystone_platform_notifier(struct notifier_block *nb,
 		kfree(dev->dma_mask);
 		return NOTIFY_OK;
 	}
-#endif
 	return NOTIFY_DONE;
 }
 
-static struct notifier_block keystone_platform_nb = {
-	.notifier_call = keystone_platform_notifier,
-};
+static struct notifier_block keystone_platform_nb;
 
 static struct of_device_id keystone_dt_match_table[] __initdata = {
 	{ .compatible = "simple-bus",},
@@ -325,7 +321,9 @@ static void __init keystone_init(void)
 	const struct of_device_id *of_id;
 	void (*func)(struct device_node *);
 
-	bus_register_notifier(&platform_bus_type, &keystone_platform_nb);
+	if (keystone_platform_nb.notifier_call)
+		bus_register_notifier(&platform_bus_type, &keystone_platform_nb);
+
 	keystone_pm_runtime_init();
 	of_platform_populate(NULL, keystone_dt_match_table, NULL, NULL);
 
@@ -423,8 +421,8 @@ static void __init keystone_init_meminfo(void)
 					 KEYSTONE_LOW_PHYS_START);
 #ifdef CONFIG_ZONE_DMA
 	arm_dma_limit = __pv_phys_offset + arm_dma_zone_size - 1;
+	keystone_platform_nb.notifier_call = keystone_platform_notifier;
 #endif
-
 }
 
 void keystone_restart(char mode, const char *cmd)
