@@ -63,7 +63,7 @@ extern unsigned long arm_dma_zone_size;
 
 static struct map_desc io_desc[] = {
 	{
-		.virtual        = 0xfe800000UL,
+		.virtual        = 0xfe600000UL,
 		.pfn            = __phys_to_pfn(0x02000000UL),
 		.length         = 0x800000UL,
 		.type           = MT_DEVICE
