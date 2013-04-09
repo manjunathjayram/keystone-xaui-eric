@@ -1003,6 +1003,8 @@ static int khwq_load_pdsp(struct khwq_device *kdev,
 		return ret;
 	}
 
+	__raw_writel(pdsp->id + 1, pdsp->command + 0x18);
+
 	/* download the firmware */
 	fwdata = (u32 *)fw->data;
 	fwlen = (fw->size + sizeof(u32) - 1) / sizeof(u32);
