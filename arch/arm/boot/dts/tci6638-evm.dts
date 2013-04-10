@@ -2026,25 +2026,6 @@
 			};
 		};
 
-		mdio: mdio@2090300 {
-			compatible	= "ti,davinci_mdio";
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg		= <0x2090300 0x100>;
-			bus_freq	= <500000>;
-			clocks		= <&clkcpgmac>;
-			clock-names	= "fck";
-
-			phy0: phy@0 {
-				compatible = "marvell,88e1111";
-				reg = <0>;
-			};
-			phy1: phy@1 {
-				compatible = "marvell,88e1111";
-				reg = <1>;
-			};
-		};
-
 		netcp: netcp@2090000 {
 			reg = <0x2090000 0xf00
 				0x2620110 0x8>;
@@ -2113,13 +2094,11 @@
 				slaves {
 					slave0 {
 						label		= "slave0";
-						link-interface	= <1>;
-						phy-handle	= <&phy0>;
+						link-interface	= <4>;
 					};
 					slave1 {
 						label		= "slave1";
-						link-interface	= <1>;
-						phy-handle	= <&phy1>;
+						link-interface	= <4>;
 					};
 
 				};
