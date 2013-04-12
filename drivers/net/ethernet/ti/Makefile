@@ -16,7 +16,8 @@ obj-$(CONFIG_TI_KEYSTONE_NET_SA) += keystone_net_sa.o
 keystone_net-y += cpsw_ale.o		\
 		  keystone_ethss.o	\
 		  keystone_sgmii.o	\
-		  keystone_xgess.o	\
-		  keystone_xgepcsr.o	\
-		  keystone_xgemdio.o	\
 		  keystone_net_core.o
+obj-$(CONFIG_TI_KEYSTONE_XGE) += keystone_xge.o
+obj-$(CONFIG_TI_KEYSTONE_XGE_MDIO) += keystone_xgemdio.o
+keystone_xge-y += keystone_xgess.o	\
+		  keystone_xgepcsr.o
