@@ -1134,11 +1134,11 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 		cpsw_dev->init_serdes_at_probe = 0;
 	}
 	dev_dbg(dev, "serdes_at_probe %u\n", cpsw_dev->init_serdes_at_probe);
-
+#if 0
 	if (cpsw_dev->init_serdes_at_probe == 1) {
 		serdes_init_6638_156p25Mhz();
 	}
-
+#endif
 	ret = of_property_read_u32(node, "sgmii_module_ofs",
 				   &cpsw_dev->sgmii_module_ofs);
 	if (ret < 0)
