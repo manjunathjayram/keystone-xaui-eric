@@ -1279,7 +1279,7 @@
 					reserved;
 				};
 				xge {
-					values = <700 12>;
+					values = <8752 8>;
 					reserved;
 				};
 			};
@@ -1855,7 +1855,7 @@
 					transmit;
 					label		= "xgetx0";
 					pool		= "pool-xge";
-					submit-queue	= <704>;
+					submit-queue	= <8752>;
 					/* complete-queue = <xx>; */
 					/* debug; */
 					/* channel = <0>; */
@@ -1865,7 +1865,7 @@
 					transmit;
 					label		= "xgetx1";
 					pool		= "pool-xge";
-					submit-queue	= <704>;
+					submit-queue	= <8753>;
 					/* complete-queue = <xx>; */
 					/* debug; */
 					/* channel = <0>; */
@@ -1878,8 +1878,8 @@
 					/* submit-queue   = <xx>; */
 					complete-queue	= <8710>;
 					/* debug; */
-					/* channel = <0>; */
-					flow		= <24>;
+					channel		= <0>;
+					flow		= <0>;
 				};
 				xgerx1 {
 					receive;
@@ -1888,8 +1888,8 @@
 					/* submit-queue   = <xx>; */
 					complete-queue	= <8711>;
 					/* debug; */
-					/* channel = <0>; */
-					flow		= <25>;
+					channel		= <8>;
+					flow		= <8>;
 				};
 			};
 		};
