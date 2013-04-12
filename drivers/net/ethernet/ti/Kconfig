@@ -132,4 +132,23 @@ config CPMAC
 	---help---
 	  TI AR7 CPMAC Ethernet support
 
+config TI_KEYSTONE_XGE
+	tristate "TI Keystone 10Gig Ethernet Support"
+	depends on TI_KEYSTONE && TI_KEYSTONE_NET
+	---help---
+	  This driver supports TI's Keystone 10Gig Ethernet.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called keystone_xge.
+
+config TI_KEYSTONE_XGE_MDIO
+	tristate "TI Keystone 10GE MDIO Support"
+	depends on ARM && ARCH_KEYSTONE
+	select PHYLIB
+	---help---
+	  This driver supports TI's Keystone 10GE MDIO module.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called keystone_xgemdio.  This is recommended.
+
 endif # NET_VENDOR_TI
