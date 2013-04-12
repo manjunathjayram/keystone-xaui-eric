@@ -61,8 +61,11 @@
 #define MACSL_GMII_ENABLE			BIT(5)
 #define GMACSL_RET_WARN_RESET_INCOMPLETE	-2
 
+#define SLAVE_LINK_IS_XGMII(s) \
+	((s)->link_interface >= XGMII_LINK_MAC_PHY)
+
 #define MACSL_SIG_ENABLE(s) \
-	(((s)->link_interface == XGMII_LINK_MAC_PHY) ?   \
+		(SLAVE_LINK_IS_XGMII((s)) ?   \
 		(MACSL_XGMII_ENABLE | MACSL_XGIG_MODE) : \
 		MACSL_GMII_ENABLE)
 
@@ -700,7 +703,8 @@ static void cpsw_slave_link(struct cpswx_slave *slave,
 			cpsw_intf->sgmii_link |= BIT(slave->slave_num);
 		else
 			cpsw_intf->sgmii_link &= ~BIT(slave->slave_num);
-	}
+	} else if (slave->link_interface == XGMII_LINK_MAC_MAC_FORCED)
+		cpsw_intf->sgmii_link |= BIT(slave->slave_num);
 }
 
 static void cpsw_slave_open(struct cpswx_slave *slave,
@@ -714,7 +718,7 @@ static void cpsw_slave_open(struct cpswx_slave *slave,
 
 	snprintf(name, sizeof(name), "slave-%d", slave->slave_num);
 
-	if (slave->link_interface != XGMII_LINK_MAC_PHY) {
+	if (!SLAVE_LINK_IS_XGMII(slave)) {
 		keystone_sgmii_reset(priv->sgmii_port_regs, slave->slave_num);
 
 		keystone_sgmii_config(priv->sgmii_port_regs, slave->slave_num,
@@ -1094,7 +1098,7 @@ static int cpswx_open(void *intf_mod_priv, struct net_device *ndev)
 
 	/* Enable correct MII mode at SS level */
 	for (i = 0; i < cpsw_dev->num_slaves; i++)
-		if (cpsw_dev->link[i] == XGMII_LINK_MAC_PHY)
+		if (cpsw_dev->link[i] >= XGMII_LINK_MAC_PHY)
 			xgmii_mode |= (1 << i);
 	__raw_writel(xgmii_mode, &cpsw_dev->ss_regs->control);
 
@@ -1201,7 +1205,7 @@ static int init_slave(struct cpswx_priv *cpsw_dev,
 		dev_err(cpsw_dev->dev,
 			"missing link-interface value"
 			"defaulting to mac-phy link\n");
-		cpsw_dev->link[slave_num] = 1;
+		cpsw_dev->link[slave_num] = XGMII_LINK_MAC_PHY;
 	}
 
 	cpsw_dev->phy_node[slave_num] = of_parse_phandle(node, "phy-handle", 0);
@@ -1375,8 +1379,8 @@ static int cpswx_probe(struct netcp_device *netcp_device,
 	}
 
 	for_each_child_of_node(slaves, slave) {
-			init_slave(cpsw_dev, slave, slave_num);
-			slave_num++;
+		init_slave(cpsw_dev, slave, slave_num);
+		slave_num++;
 	}
 
 	of_node_put(slaves);
