@@ -45,7 +45,7 @@
 #define PCSR_RX_FEC_CNT(x)	(PCSR_OFFSET(x) + 0x28)
 #define PCSR_RX_ERR_FIFO(x)	(PCSR_OFFSET(x) + 0x2C)
 
-#define PCSR_SIGNAL_OK_EN	BIT(2)
+#define PCSR_SIGNAL_OK_EN	BIT(1)
 
 #define reg_rmw(addr, value, mask) \
 	__raw_writel(((__raw_readl(addr) & (~(mask))) | (value)), (addr))
@@ -264,6 +264,5 @@ void xge_serdes_init_156p25Mhz(void)
 
 int keystone_pcsr_config(void __iomem *pcsr_ofs, int port, u32 interface)
 {
-	__raw_writel(PCSR_SIGNAL_OK_EN, pcsr_ofs+PCSR_CTL(port));
 	return 0;
 }
