@@ -16,6 +16,14 @@ efuse-mac:	If this is 1, then the mac address is obtained from the
 local-mac-address:the driver is designed to use the of_get_mac_address api
 		  only if efuse-mac is 0. When efuse-mac is 0, the mac address
 		  is obtained from local-mac-address.
+link-interface: for each slave port that is intended to be used, a
+                link-interface binding has to be used appropriatley
+		initialized. The different options are as follows
+		- for mac mac auto negotiate mode use -> 0
+		- for mac phy mode use -> 1
+		- for mac mac forced mode use -> 2
+		- for mac fiber mode use -> 3
+		- for mac phy mode with no mdio use -> 4
 
 The keystone network device can open other modules such as cpsw or pa.
 
@@ -35,6 +43,18 @@ netcp: netcp@2090000 {
 
 			efuse-mac = <1>;
 			local-mac-address = [00 18 31 7e 3e 6e];
+
+			slaves {
+					slave0 {
+						label		= "slave0";
+						link-interface	= <1>;
+					};
+					slave1 {
+						label		= "slave1";
+						link-interface	= <1>;
+					};
+
+			};
 
 			pa: pa@2000000 {
 				label = "keystone-pa";
