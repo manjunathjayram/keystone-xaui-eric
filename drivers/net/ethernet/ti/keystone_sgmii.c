@@ -154,6 +154,7 @@ int keystone_sgmii_config(void __iomem *sgmii_ofs,
 
 		break;
 	case SGMII_LINK_MAC_PHY:
+	case SGMII_LINK_MAC_PHY_NO_MDIO:
 		config->mr_adv_ability	= 1;
 		config->control		= 1;
 
