@@ -47,30 +47,34 @@ struct qos_channel {
 
 struct qos_device {
 	struct netcp_device		*netcp_device;
-	struct net_device		*net_device;		/* FIXME */
 	struct device			*dev;
-	int				 num_channels;
-	struct qos_channel		 channels[MAX_CHANNELS];
 	struct device_node		*node;
 	u32				 multi_if;
 };
 
+struct qos_intf {
+	struct net_device		*ndev;
+	struct device			*dev;
+	int				 num_channels;
+	struct qos_channel		 channels[MAX_CHANNELS];
+};
+
 static int qos_tx_hook(int order, void *data, struct netcp_packet *p_info)
 {
-	struct qos_device *qos_dev = data;
+	struct qos_intf *qos_intf = data;
 	struct sk_buff *skb = p_info->skb;
 
-	dev_dbg(qos_dev->dev,
+	dev_dbg(qos_intf->dev,
 		"priority: %u, queue_mapping: %04x\n",
 		skb->priority, skb_get_queue_mapping(skb));
 
-	if (skb->queue_mapping < qos_dev->num_channels)
-		p_info->tx_pipe = &qos_dev->channels[skb->queue_mapping].tx_pipe;
+	if (skb->queue_mapping < qos_intf->num_channels)
+		p_info->tx_pipe =
+			&qos_intf->channels[skb->queue_mapping].tx_pipe;
 	else {
-		dev_warn(qos_dev->dev,
-			"queue_mapping (%d) >= num_channels (%d),"
-			" QoS bypassed\n",
-			skb_get_queue_mapping(skb), qos_dev->num_channels);
+		dev_warn(qos_intf->dev,
+			"queue mapping (%d) >= num chans (%d) QoS bypassed\n",
+			 skb_get_queue_mapping(skb), qos_intf->num_channels);
 	}
 
 	return 0;
@@ -79,14 +83,15 @@ static int qos_tx_hook(int order, void *data, struct netcp_packet *p_info)
 
 static int qos_close(void *intf_priv, struct net_device *ndev)
 {
-	struct qos_device *qos_dev = intf_priv;
+	struct qos_intf *qos_intf = intf_priv;
 	struct netcp_priv *netcp_priv = netdev_priv(ndev);
 	int i;
 
-	netcp_unregister_txhook(netcp_priv, QOS_TXHOOK_ORDER, qos_tx_hook, qos_dev);
+	netcp_unregister_txhook(netcp_priv, QOS_TXHOOK_ORDER, qos_tx_hook,
+				qos_intf);
 
-	for (i = 0; i < qos_dev->num_channels; ++i) {
-		struct qos_channel *qchan = &qos_dev->channels[i];
+	for (i = 0; i < qos_intf->num_channels; ++i) {
+		struct qos_channel *qchan = &qos_intf->channels[i];
 
 		netcp_txpipe_close(&qchan->tx_pipe);
 	}
@@ -96,21 +101,22 @@ static int qos_close(void *intf_priv, struct net_device *ndev)
 
 static int qos_open(void *intf_priv, struct net_device *ndev)
 {
-	struct qos_device *qos_dev = intf_priv;
+	struct qos_intf *qos_intf = intf_priv;
 	struct netcp_priv *netcp_priv = netdev_priv(ndev);
 	int ret;
 	int i;
 
 	/* Open the QoS input queues */
-	for (i = 0; i < qos_dev->num_channels; ++i) {
-		struct qos_channel *qchan = &qos_dev->channels[i];
+	for (i = 0; i < qos_intf->num_channels; ++i) {
+		struct qos_channel *qchan = &qos_intf->channels[i];
 
 		ret = netcp_txpipe_open(&qchan->tx_pipe);
 		if (ret)
 			goto fail;
 	}
 
-	netcp_register_txhook(netcp_priv, QOS_TXHOOK_ORDER, qos_tx_hook, intf_priv);
+	netcp_register_txhook(netcp_priv, QOS_TXHOOK_ORDER, qos_tx_hook,
+			      intf_priv);
 
 	return 0;
 
@@ -119,44 +125,106 @@ fail:
 	return ret;
 }
 
+static int init_channel(struct qos_intf *qos_intf,
+			int index,
+			struct device_node *node)
+{
+	struct qos_channel *qchan = &qos_intf->channels[index];
+	int ret;
 
-static int qos_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
+	ret = of_property_read_string(node, "tx-channel", &qchan->tx_chan_name);
+	if (ret < 0) {
+		dev_err(qos_intf->dev,
+			"missing tx-channel parameter, err %d\n", ret);
+		qchan->tx_chan_name = "qos";
+	}
+	dev_dbg(qos_intf->dev, "tx-channel \"%s\"\n", qchan->tx_chan_name);
+
+	ret = of_property_read_u32(node, "tx_queue_depth",
+				   &qchan->tx_queue_depth);
+	if (ret < 0) {
+		dev_err(qos_intf->dev,
+			"missing tx_queue_depth parameter, err %d\n", ret);
+		qchan->tx_queue_depth = 16;
+	}
+	dev_dbg(qos_intf->dev, "tx_queue_depth %u\n", qchan->tx_queue_depth);
+
+	return 0;
+}
+
+static int qos_attach(void *inst_priv, struct net_device *ndev,
+		      void **intf_priv)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
 	struct qos_device *qos_dev = inst_priv;
+	struct qos_intf *qos_intf;
+	struct device_node *interface, *channel;
 	char node_name[24];
-	int i;
+	int i, ret;
+
+	qos_intf = devm_kzalloc(qos_dev->dev,
+				 sizeof(struct qos_intf), GFP_KERNEL);
+	if (!qos_intf) {
+		dev_err(qos_dev->dev,
+			"qos interface memory allocation failed\n");
+		return -ENOMEM;
+	}
+
+	qos_intf->ndev = ndev;
+	qos_intf->dev = qos_dev->dev;
 
 	snprintf(node_name, sizeof(node_name), "interface-%d",
 		 (qos_dev->multi_if) ? (netcp->cpsw_port - 1) : 0);
 
-	qos_dev->net_device = ndev;
-	*intf_priv = qos_dev;
+	*intf_priv = qos_intf;
 
-	if (of_find_property(qos_dev->node, node_name, NULL)) {
-		/* Initialize the QoS input queues */
-		for (i = 0; i < qos_dev->num_channels; ++i) {
-			struct qos_channel *qchan = &qos_dev->channels[i];
+	interface = of_get_child_by_name(qos_dev->node, node_name);
+	if (!interface) {
+		dev_err(qos_intf->dev,
+			"could not find interface %d node in device tree\n",
+			(netcp->cpsw_port - 1));
+		ret = -ENODEV;
+		goto exit;
+	}
 
-			netcp_txpipe_init(&qchan->tx_pipe, netdev_priv(ndev),
-					  qchan->tx_chan_name,
-					  qchan->tx_queue_depth);
-
-			qchan->tx_pipe.dma_psflags = netcp->cpsw_port;
+	qos_intf->num_channels = 0;
+	for_each_child_of_node(interface, channel) {
+		if (qos_intf->num_channels >= MAX_CHANNELS) {
+			dev_err(qos_intf->dev,
+				"too many QoS input channels defined\n");
+			break;
 		}
-		return 0;
-	} else
-		return -ENODEV;
+		init_channel(qos_intf, qos_intf->num_channels, channel);
+		++qos_intf->num_channels;
+	}
+
+	of_node_put(interface);
+
+	/* Initialize the QoS input queues */
+	for (i = 0; i < qos_intf->num_channels; ++i) {
+		struct qos_channel *qchan = &qos_intf->channels[i];
+
+		netcp_txpipe_init(&qchan->tx_pipe, netdev_priv(ndev),
+				  qchan->tx_chan_name,
+				  qchan->tx_queue_depth);
+
+		qchan->tx_pipe.dma_psflags = netcp->cpsw_port;
+	}
+
+	return 0;
+exit:
+	devm_kfree(qos_dev->dev, qos_intf);
+	return ret;
 }
 
 static int qos_release(void *intf_priv)
 {
-	struct qos_device *qos_dev = intf_priv;
+	struct qos_intf *qos_intf = intf_priv;
 
-	qos_dev->net_device = NULL;
+	kfree(qos_intf);
+
 	return 0;
 }
-
 
 static int qos_remove(struct netcp_device *netcp_device, void *inst_priv)
 {
@@ -167,44 +235,14 @@ static int qos_remove(struct netcp_device *netcp_device, void *inst_priv)
 	return 0;
 }
 
-static int init_channel(struct qos_device *qos_dev,
-			int index,
-			struct device_node *node)
-{
-	struct qos_channel *qchan = &qos_dev->channels[index];
-	int ret;
-
-	ret = of_property_read_string(node, "tx-channel", &qchan->tx_chan_name);
-	if (ret < 0) {
-		dev_err(qos_dev->dev, "missing \"tx-channel\" parameter, err %d\n", ret);
-		qchan->tx_chan_name = "qos";
-	}
-	dev_dbg(qos_dev->dev, "tx-channel \"%s\"\n", qchan->tx_chan_name);
-
-	ret = of_property_read_u32(node, "tx_queue_depth", &qchan->tx_queue_depth);
-	if (ret < 0) {
-		dev_err(qos_dev->dev, "missing \"tx_queue_depth\" parameter, err %d\n",	ret);
-		qchan->tx_queue_depth = 16;
-	}
-	dev_dbg(qos_dev->dev, "tx_queue_depth %u\n", qchan->tx_queue_depth);
-
-	return 0;
-}
-
 static int qos_probe(struct netcp_device *netcp_device,
 		    struct device *dev,
 		    struct device_node *node,
 		    void **inst_priv)
 {
 	struct qos_device *qos_dev;
-	struct device_node *channels, *channel;
 	int ret = 0;
-
-	if (!node) {
-		dev_err(dev, "device tree info unavailable\n");
-		return -ENODEV;
-	}
-
+	
 	qos_dev = devm_kzalloc(dev, sizeof(struct qos_device), GFP_KERNEL);
 	if (!qos_dev) {
 		dev_err(dev, "memory allocation failed\n");
@@ -212,31 +250,18 @@ static int qos_probe(struct netcp_device *netcp_device,
 	}
 	*inst_priv = qos_dev;
 
+	if (!node) {
+		dev_err(dev, "device tree info unavailable\n");
+		ret = -ENODEV;
+		goto exit;
+	}
+
 	qos_dev->netcp_device = netcp_device;
 	qos_dev->dev = dev;
 	qos_dev->node = node;
 
 	if (of_find_property(node, "multi-interface", NULL))
 		qos_dev->multi_if = 1;
-
-	channels = of_get_child_by_name(node, "input-channels");
-	if (!channels) {
-		dev_err(dev, "could not find \"input-channels\" in device tree\n");
-		ret = -ENODEV;
-		goto exit;
-	}
-
-	qos_dev->num_channels = 0;
-	for_each_child_of_node(channels, channel) {
-		if (qos_dev->num_channels >= MAX_CHANNELS) {
-			dev_err(dev, "too many QoS input channels defined\n");
-			break;
-		}
-		init_channel(qos_dev, qos_dev->num_channels, channel);
-		++qos_dev->num_channels;
-	}
-
-	of_node_put(channels);
 
 	return 0;
 
