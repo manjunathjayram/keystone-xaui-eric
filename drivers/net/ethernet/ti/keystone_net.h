@@ -108,9 +108,6 @@ struct netcp_priv {
 	struct dma_chan			*rx_channel;
 	const char			*rx_chan_name;
 
-	int				 hwts_tx_en;
-	int				 hwts_rx_en;
-
 	u32				 link_state;
 
 	enum netcp_rx_state		 rx_state;
@@ -119,8 +116,6 @@ struct netcp_priv {
 	struct list_head		 txhook_list_head;
 	struct list_head		 rxhook_list_head;
 	struct list_head		 addr_list;
-
-	u32				 pa_ts_req;
 
 	/* PktDMA configuration data */
 	u32				 rx_queue_depths[KEYSTONE_QUEUES_PER_CHAN];
