@@ -958,6 +958,8 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 
 	netcp_dump_packet(p_info, "txs");
 
+	skb_tx_timestamp(skb);
+
 	sg_init_table(p_info->sg, NETCP_SGLIST_SIZE);
 	sg_set_buf(&p_info->sg[0], p_info->epib, sizeof(p_info->epib));
 	sg_set_buf(&p_info->sg[1], &p_info->psdata[NETCP_PSDATA_LEN - p_info->psdata_len],
@@ -993,9 +995,6 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 		ret = -ENOBUFS;
 		goto out;
 	}
-
-	if (!netcp->pa_ts_req)
-		skb_tx_timestamp(skb);
 
 	desc->callback_param = p_info;
 	desc->callback = netcp_tx_complete;
@@ -1428,27 +1427,24 @@ static int netcp_ndo_ioctl(struct net_device *ndev,
 	struct netcp_priv *netcp = netdev_priv(ndev);
 	struct netcp_intf_modpriv *intf_modpriv;
 	struct netcp_module *module;
-	int ret = -EOPNOTSUPP;
+	int ret = -1, err = -EOPNOTSUPP;
 
 	if (!netif_running(ndev))
 		return -EINVAL;
 
 	for_each_module(netcp, intf_modpriv) {
-		int err;
-
 		module = intf_modpriv->netcp_module;
 		if (!module->ioctl)
 			continue;
 
 		err = module->ioctl(intf_modpriv->module_priv, req, cmd);
-		ret = err;
-		if (err < 0)
-			continue;
+		if ((err < 0) && (err != -EOPNOTSUPP))
+			return err;
 		if (err == 0)
-			break;
+			ret = err;
 	}
 
-	return ret;
+	return (ret == 0) ? 0 : err;
 }
 
 static int netcp_ndo_change_mtu(struct net_device *ndev, int new_mtu)
