@@ -33,7 +33,9 @@
 #include <linux/byteorder/generic.h>
 #include <linux/platform_device.h>
 #include <linux/keystone-dma.h>
+#include <linux/phy.h>
 #include <linux/errqueue.h>
+#include <linux/ptp_classify.h>
 #include <net/sctp/checksum.h>
 #include <linux/clocksource.h>
 
@@ -106,6 +108,34 @@
 #define NT 32
 
 #define PA_SGLIST_SIZE	3
+
+static struct sock_filter ptp_filter[] = {
+	PTP_FILTER
+};
+
+static bool need_timestamp(const struct sk_buff *skb)
+{
+	unsigned type = PTP_CLASS_NONE;
+
+	if (likely(skb->dev &&
+		   skb->dev->phydev &&
+		   skb->dev->phydev->drv &&
+		   skb->dev->phydev->drv->txtstamp))
+		type = sk_run_filter(skb, ptp_filter);
+
+	/* if timestamping is handled at the phy, we don't timestamp */
+	switch (type) {
+	case PTP_CLASS_V1_IPV4:
+	case PTP_CLASS_V1_IPV6:
+	case PTP_CLASS_V2_IPV4:
+	case PTP_CLASS_V2_IPV6:
+	case PTP_CLASS_V2_L2:
+	case PTP_CLASS_V2_VLAN:
+		return false;
+	}
+
+	return true;
+}
 
 const u32 pap_pdsp_const_reg_map[6][4] =
 {
@@ -239,6 +269,9 @@ struct pa_intf {
 	unsigned			 data_queue_num;
 	u32				 saved_ss_state;
 	char				 tx_chan_name[24];
+
+	bool				 tx_timestamp_enable;
+	bool				 rx_timestamp_enable;
 };
 
 struct pa_device {
@@ -1295,7 +1328,7 @@ static int pa_fmtcmd_tx_csum(struct netcp_packet *p_info)
 	PASAHO_CHKCRC_SET_NEG0(ptx, 0);
 
 	return size;
-} 
+}
 
 static int pa_fmtcmd_tx_crc32c(struct netcp_packet *p_info)
 {
@@ -1317,7 +1350,7 @@ static int pa_fmtcmd_tx_crc32c(struct netcp_packet *p_info)
 	PASAHO_CHKCRC_SET_RESULT_OFF (ptx, skb->csum_offset);
 
 	return size;
-} 
+}
 
 static int pa_fmtcmd_next_route(struct netcp_packet *p_info, const struct pa_cmd_next_route *route)
 {
@@ -1350,7 +1383,7 @@ static int pa_fmtcmd_next_route(struct netcp_packet *p_info, const struct pa_cmd
 				PAFRM_ETH_PS_FLAGS_DISABLE_CRC : 0;
 
 		ps_flags |= ((route->pkt_type_emac_ctrl & PA_EMAC_CTRL_PORT_MASK) <<
-				PAFRM_ETH_PS_FLAGS_PORT_SHIFT);  
+				PAFRM_ETH_PS_FLAGS_PORT_SHIFT);
 
 		PASAHO_SET_PKTTYPE(nr, ps_flags);
 	}
@@ -1442,9 +1475,11 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	struct pa_device *pa_dev = pa_intf->pa_device;
 	struct netcp_priv *netcp_priv = netdev_priv(pa_intf->net_device);
 	struct sk_buff *skb = p_info->skb;
+	struct sock *sk = skb->sk;
 	struct pa_cmd_tx_timestamp tx_ts;
 	int size, total = 0;
 	struct pa_cmd_next_route route_cmd;
+	struct tstamp_pending *pend;
 
 	/* Generate the route_cmd */
 	memset(&route_cmd, 0, sizeof(route_cmd));
@@ -1459,21 +1494,24 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	total += size;
 
 	/* If TX Timestamp required, request it */
-	if ((skb_shinfo(p_info->skb)->tx_flags & SKBTX_HW_TSTAMP) &&
-	    p_info->skb->sk && (netcp_priv->pa_ts_req == 1) &&
-	    (netcp_priv->hwts_tx_en == 1)) {
-		struct tstamp_pending	*pend;
-
+	if (unlikely((skb_shinfo(p_info->skb)->tx_flags & SKBTX_HW_TSTAMP) &&
+		     p_info->skb->sk && pa_intf->tx_timestamp_enable &&
+		     need_timestamp(p_info->skb))) {
 		pend = kzalloc(sizeof(*pend), GFP_ATOMIC);
 		if (pend) {
+			if (!atomic_inc_not_zero(&sk->sk_refcnt))
+				return -ENODEV;
 			pend->skb = skb_clone(p_info->skb, GFP_ATOMIC);
-			if (!pend->skb)
+			if (!pend->skb) {
+				sock_put(sk);
 				kfree(pend);
-			else {
+				return -ENOMEM;
+			} else {
 				pend->sock = p_info->skb->sk;
 				pend->pa_dev = pa_dev;
-				pend->context =  PA_CONTEXT_TSTAMP | 
-					(~PA_CONTEXT_MASK & atomic_inc_return(&tstamp_sequence));
+				pend->context =  PA_CONTEXT_TSTAMP |
+					(~PA_CONTEXT_MASK &
+					 atomic_inc_return(&tstamp_sequence));
 				tstamp_add_pending(pend);
 
 				memset(&tx_ts, 0, sizeof(tx_ts));
@@ -1481,7 +1519,8 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 				tx_ts.flow_id    = pa_dev->cmd_flow_num;
 				tx_ts.sw_info0   = pend->context;
 
-				size = pa_fmtcmd_tx_timestamp(p_info, &tx_ts);
+				size = pa_fmtcmd_tx_timestamp(p_info,
+							      &tx_ts);
 				if (unlikely(size < 0))
 					return size;
 				total += size;
@@ -1691,16 +1730,12 @@ static int pa_rx_timestamp(int order, void *data, struct netcp_packet *p_info)
 {
 	struct pa_intf *pa_intf = data;
 	struct pa_device *pa_dev = pa_intf->pa_device;
-	struct netcp_priv *netcp = netdev_priv(pa_intf->net_device);
 	struct sk_buff *skb = p_info->skb;
 	struct skb_shared_hwtstamps *sh_hw_tstamps;
 	u64 rx_timestamp;
 	u64 sys_time;
 
-	if (!netcp->pa_ts_req)
-		return 0;
-
-	if (!netcp->hwts_rx_en)
+	if (!pa_intf->rx_timestamp_enable)
 		return 0;
 
 	rx_timestamp = p_info->epib[0];
@@ -1801,11 +1836,11 @@ static int pa_open(void *intf_priv, struct net_device *ndev)
 		pa_dev->clk = clk_get(pa_dev->dev, "clk_pa");
 		if (IS_ERR_OR_NULL(pa_dev->clk)) {
 			dev_warn(pa_dev->dev, "unable to get Packet Accelerator clock\n");
-			ret = -ENODEV;
-			goto fail;
+			pa_dev->clk = NULL;
 		}
 
-		clk_prepare_enable(pa_dev->clk);
+		if (pa_dev->clk)
+			clk_prepare_enable(pa_dev->clk);
 
 		keystone_pa_reset(pa_dev);
 
@@ -2093,10 +2128,9 @@ static int pa_del_addr(void *intf_priv, struct netcp_addr *naddr)
 	return 0;
 }
 
-static int pa_hwtstamp_ioctl(struct net_device *ndev,
+static int pa_hwtstamp_ioctl(struct pa_intf *pa_intf,
 			     struct ifreq *ifr, int cmd)
 {
-	struct netcp_priv *netcp = netdev_priv(ndev);
 	struct hwtstamp_config cfg;
 
 	if (copy_from_user(&cfg, ifr->ifr_data, sizeof(cfg)))
@@ -2107,10 +2141,10 @@ static int pa_hwtstamp_ioctl(struct net_device *ndev,
 
 	switch (cfg.tx_type) {
 	case HWTSTAMP_TX_OFF:
-		netcp->hwts_tx_en = 0;
+		pa_intf->tx_timestamp_enable = false;
 		break;
 	case HWTSTAMP_TX_ON:
-		netcp->hwts_tx_en = 1;
+		pa_intf->tx_timestamp_enable = true;
 		break;
 	default:
 		return -ERANGE;
@@ -2118,10 +2152,10 @@ static int pa_hwtstamp_ioctl(struct net_device *ndev,
 
 	switch (cfg.rx_filter) {
 	case HWTSTAMP_FILTER_NONE:
-		netcp->hwts_rx_en = 0;
+		pa_intf->rx_timestamp_enable = false;
 		break;
 	default:
-		netcp->hwts_rx_en = 1;
+		pa_intf->rx_timestamp_enable = true;
 		break;
 	}
 
@@ -2131,10 +2165,9 @@ static int pa_hwtstamp_ioctl(struct net_device *ndev,
 int pa_ioctl(void *intf_priv, struct ifreq *req, int cmd)
 {
 	struct pa_intf *pa_intf = intf_priv;
-	struct net_device *ndev = pa_intf->net_device;
 
 	if (cmd == SIOCSHWTSTAMP)
-		return pa_hwtstamp_ioctl(ndev, req, cmd);
+		return pa_hwtstamp_ioctl(pa_intf, req, cmd);
 
 	return -EOPNOTSUPP;
 }
