@@ -957,21 +957,14 @@ static int cpswx_ioctl(void *intf_priv, struct ifreq *req, int cmd)
 	struct cpswx_intf *cpsw_intf = intf_priv;
 	struct cpswx_slave *slave = cpsw_intf->slaves;
 	struct phy_device *phy = slave->phy;
-	struct netcp_priv *netcp = netdev_priv(cpsw_intf->ndev);
-	struct hwtstamp_config cfg;
-	int ret = 0;
-
-	netcp->pa_ts_req = 1;
+	int ret;
 
 	if (!phy)
 		return -EOPNOTSUPP;
 
-	if (copy_from_user(&cfg, req->ifr_data, sizeof(cfg)))
-		return -EFAULT;
-
 	ret = phy_mii_ioctl(phy, req, cmd);
-	if (ret == 0)
-		netcp->pa_ts_req = 0;
+	if ((cmd == SIOCSHWTSTAMP) && (ret == -ERANGE))
+		ret = -EOPNOTSUPP;
 
 	return ret;
 }
