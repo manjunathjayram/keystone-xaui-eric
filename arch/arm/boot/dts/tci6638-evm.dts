@@ -1199,6 +1199,14 @@
 					reg = <0x80000 0xf80000>;
 				};
 			};
+
+			spidev:spi@1 {
+				#address-cells = <1>;
+				#size-cells = <1>;
+				compatible = "rohm,dh2228fv";
+				spi-max-frequency = <30000000>;
+				reg = <3>;
+			};
 		};
 
 		i2c0@2530000 {
