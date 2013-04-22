@@ -3283,12 +3283,15 @@ static int khwq_qos_init_range(struct khwq_range_info *range)
 	struct khwq_device *kdev;
 	u32 command, magic, version;
 	int error, i, idx, timer_config;
+	char name[24];
 
 	info = range->qos_info;
 	pdsp = info->pdsp;
 	kdev = info->kdev;
 
 	range->inst_ops.push = khwq_qos_push;
+
+	snprintf(name, sizeof(name), "qos-%d", pdsp->id);
 
 	spin_lock_bh(&info->lock);
 
@@ -3358,7 +3361,7 @@ static int khwq_qos_init_range(struct khwq_range_info *range)
 		goto fail;
 	}
 
-	info->root_dir = debugfs_create_dir("qos", NULL);
+	info->root_dir = debugfs_create_dir(name, NULL);
 	if (!info->root_dir)
 		goto fail;
 
@@ -3393,7 +3396,7 @@ int khwq_init_qos_range(struct khwq_device *kdev, struct device_node *node,
 		return -ENOMEM;
 	}
 
-	info->kobj = kobject_create_and_add("qos",
+	info->kobj = kobject_create_and_add(node->name,
 					kobject_get(&dev->kobj));
 	if (!info->kobj) {
 		dev_err(kdev->dev, "could not create sysfs entries for qos\n");
