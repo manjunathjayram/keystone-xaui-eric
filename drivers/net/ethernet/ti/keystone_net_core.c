@@ -2003,6 +2003,10 @@ static struct platform_driver netcp_driver = {
 
 extern int  keystone_cpsw_init(void);
 extern void keystone_cpsw_exit(void);
+#ifdef CONFIG_TI_KEYSTONE_XGE
+extern int  keystone_cpswx_init(void);
+extern void keystone_cpswx_exit(void);
+#endif
 
 static int __init netcp_init(void)
 {
@@ -2023,6 +2027,12 @@ static int __init netcp_init(void)
 	if (err)
 		goto cpsw_fail;
 
+#ifdef CONFIG_TI_KEYSTONE_XGE
+	err = keystone_cpswx_init();
+	if (err)
+		goto cpsw_fail;
+#endif
+
 	return 0;
 
 cpsw_fail:
@@ -2037,6 +2047,9 @@ module_init(netcp_init);
 static void __exit netcp_exit(void)
 {
 	keystone_cpsw_exit();
+#ifdef CONFIG_TI_KEYSTONE_XGE
+	keystone_cpswx_exit();
+#endif
 	platform_driver_unregister(&netcp_driver);
 	kmem_cache_destroy(netcp_pinfo_cache);
 	netcp_pinfo_cache = NULL;
