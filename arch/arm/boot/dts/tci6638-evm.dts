@@ -2142,11 +2142,9 @@
 			};
 			qos: qos@0 {
 				label = "keystone-qos";
-
 				multi-interface;
-				interface-0;
 
-				input-channels {
+				interface-0 {
 					chan-0 {
 						tx-channel = "qos0";
 						tx_queue_depth = <128>;
