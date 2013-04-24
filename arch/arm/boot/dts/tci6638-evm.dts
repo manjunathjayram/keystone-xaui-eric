@@ -1328,8 +1328,10 @@
 			       0x0235083c 4
 			       0x02350a3c 4
 			       0x02620240 4
+			       0x10e00000 0x00008000
+			       0x10f00000 0x00008000
 			       0x10800000 0x00100000>;
-			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l2ram";
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l1pram", "l1dram", "l2ram";
 			interrupt-parent = <&ipcirq0>;
 			interrupts = <8 0 0 0>;
 			kick-gpio = <&ipcgpio0 27 0>;
@@ -1342,8 +1344,10 @@
 			       0x02350840 4
 			       0x02350a40 4
 			       0x02620244 4
+			       0x11e00000 0x00008000
+			       0x11f00000 0x00008000
 			       0x11800000 0x00100000>;
-			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l2ram";
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l1pram", "l1dram", "l2ram";
 			interrupt-parent = <&ipcirq0>;
 			interrupts = <9 0 1 0>;
 			kick-gpio = <&ipcgpio1 27 0>;
@@ -1356,8 +1360,10 @@
 			       0x02350844 4
 			       0x02350a44 4
 			       0x02620248 4
+			       0x12e00000 0x00008000
+			       0x12f00000 0x00008000
 			       0x12800000 0x00100000>;
-			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l2ram";
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l1pram", "l1dram", "l2ram";
 			interrupt-parent = <&ipcirq0>;
 			interrupts = <10 0 2 0>;
 			kick-gpio = <&ipcgpio2 27 0>;
@@ -1370,8 +1376,10 @@
 			       0x02350848 4
 			       0x02350a48 4
 			       0x0262024c 4
+			       0x13e00000 0x00008000
+			       0x13f00000 0x00008000
 			       0x13800000 0x00100000>;
-			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l2ram";
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l1pram", "l1dram", "l2ram";
 			interrupt-parent = <&ipcirq0>;
 			interrupts = <11 0 3 0>;
 			kick-gpio = <&ipcgpio3 27 0>;
@@ -1384,8 +1392,10 @@
 			       0x0235084C 4
 			       0x02350a4C 4
 			       0x02620250 4
+			       0x14e00000 0x00008000
+			       0x14f00000 0x00008000
 			       0x14800000 0x00100000>;
-			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l2ram";
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l1pram", "l1dram", "l2ram";
 			interrupt-parent = <&ipcirq0>;
 			interrupts = <12 0 4 0>;
 			kick-gpio = <&ipcgpio4 27 0>;
@@ -1398,8 +1408,10 @@
 			       0x02350850 4
 			       0x02350a50 4
 			       0x02620254 4
+			       0x15e00000 0x00008000
+			       0x15f00000 0x00008000
 			       0x15800000 0x00100000>;
-			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l2ram";
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l1pram", "l1dram", "l2ram";
 			interrupt-parent = <&ipcirq0>;
 			interrupts = <13 0 5 0>;
 			kick-gpio = <&ipcgpio5 27 0>;
@@ -1412,8 +1424,10 @@
 			       0x02350854 4
 			       0x02350a54 4
 			       0x02620258 4
+			       0x16e00000 0x00008000
+			       0x16f00000 0x00008000
 			       0x16800000 0x00100000>;
-			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l2ram";
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l1pram", "l1dram", "l2ram";
 			interrupt-parent = <&ipcirq0>;
 			interrupts = <14 0 6 0>;
 			kick-gpio = <&ipcgpio6 27 0>;
@@ -1426,8 +1440,10 @@
 			       0x02350858 4
 			       0x02350a58 4
 			       0x0262025C 4
+			       0x17e00000 0x00008000
+			       0x17f00000 0x00008000
 			       0x17800000 0x00100000>;
-			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l2ram";
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l1pram", "l1dram", "l2ram";
 			interrupt-parent = <&ipcirq0>;
 			interrupts = <15 0 7 0>;
 			kick-gpio = <&ipcgpio7 27 0>;
