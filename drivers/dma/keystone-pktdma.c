@@ -543,6 +543,19 @@ static bool chan_should_process(struct keystone_dma_chan *chan, bool in_poll)
 	return (state == CHAN_STATE_OPENED || state == CHAN_STATE_CLOSING);
 }
 
+/*
+ *  FIXME: This is a nasty hack to work around a layering problem:
+ *  dma_to_pfn() needs a pointer to the struct device, but as currently
+ *  implemented that's an upper layer's device, not the dma device. We
+ *  don't have access to that data. This hack works because dma_to_pfn()
+ *  doesn't currently use the device pointer. I've deliberately used NULL
+ *  here to cause an immediate exception if/when that changes, at which
+ *  point someone will have to come up with a proper fix. One option is
+ *  to just set the sg_dma_address and let the upper layer fill in the
+ *  rest of the scatterlist fields. -rrp
+ */
+#define dma_to_page(dma) (pfn_to_page(dma_to_pfn(NULL,(dma))))
+
 static int chan_complete(struct keystone_dma_chan *chan, struct hwqueue *queue,
 			 enum dma_status status, int budget, bool in_poll)
 {
@@ -624,7 +637,7 @@ static int chan_complete(struct keystone_dma_chan *chan, struct hwqueue *queue,
 				atomic_inc(&chan->rxpools[q_num].deficit);
 
 				if (sg_retlen < chan->scatterlist_size) {
-					sg_set_page(sg, phys_to_page(bufaddr), buflen,
+					sg_set_page(sg, dma_to_page(bufaddr), buflen,
 							offset_in_page(bufaddr));
 					sg_dma_address(sg) = bufaddr;
 					accum_size += buflen;
