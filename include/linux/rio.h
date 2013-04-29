@@ -287,6 +287,11 @@ struct rio_mport {
 	struct rio_scan *nscan;
 };
 
+/*
+ * Enumeration/discovery control flags
+ */
+#define RIO_SCAN_ENUM_NO_WAIT	0x00000001 /* Do not wait for enum completed */
+
 struct rio_id_table {
 	u16 start;	/* logical minimal id */
 	u32 max;	/* max number of IDs in table */
@@ -508,8 +513,8 @@ extern int rio_dev_add(struct rio_dev *rdev);
  * @discover: Callback to perform RapidIO fabric discovery.
  */
 struct rio_scan {
-	int (*enumerate)(struct rio_mport *mport);
-	int (*discover)(struct rio_mport *mport);
+	int (*enumerate)(struct rio_mport *mport, u32 flags);
+	int (*discover)(struct rio_mport *mport, u32 flags);
 };
 
 /* Architecture and hardware-specific functions */
