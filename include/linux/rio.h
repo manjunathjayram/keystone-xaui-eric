@@ -94,7 +94,6 @@
 
 extern struct bus_type rio_bus_type;
 extern struct device rio_bus;
-extern struct list_head rio_devices;	/* list of all devices */
 
 struct rio_mport;
 struct rio_dev;
@@ -259,6 +258,7 @@ enum rio_phy_type {
  * @name: Port name string
  * @priv: Master port private data
  * @dma: DMA device associated with mport
+ * @nscan: RapidIO network enumeration/discovery operations
  */
 struct rio_mport {
 	struct list_head dbells;	/* list of doorbell events */
@@ -284,6 +284,7 @@ struct rio_mport {
 #ifdef CONFIG_RAPIDIO_DMA_ENGINE
 	struct dma_device	dma;
 #endif
+	struct rio_scan *nscan;
 };
 
 struct rio_id_table {
@@ -500,6 +501,16 @@ extern void rio_dev_exit(void);
 extern int rio_dev_add(struct rio_dev *rdev);
 
 #endif /* CONFIG_RAPIDIO_DEV */
+
+/**
+ * struct rio_scan - RIO enumeration and discovery operations
+ * @enumerate: Callback to perform RapidIO fabric enumeration.
+ * @discover: Callback to perform RapidIO fabric discovery.
+ */
+struct rio_scan {
+	int (*enumerate)(struct rio_mport *mport);
+	int (*discover)(struct rio_mport *mport);
+};
 
 /* Architecture and hardware-specific functions */
 extern int rio_register_mport(struct rio_mport *);
