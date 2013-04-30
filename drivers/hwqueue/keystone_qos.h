@@ -260,32 +260,32 @@ struct khwq_query_stats_regs {
 #define khwq_qos_id_to_queue(info, idx)		\
 	((info)->drop_sched_queue_base + khwq_qos_id_to_idx(idx))
 
-int khwq_qos_alloc(struct khwq_device *kdev, enum khwq_qos_shadow_type type);
-int khwq_qos_free(struct khwq_device *kdev, enum khwq_qos_shadow_type type,
+int khwq_qos_alloc(struct khwq_qos_info *info, enum khwq_qos_shadow_type type);
+int khwq_qos_free(struct khwq_qos_info *info, enum khwq_qos_shadow_type type,
 		    int idx);
-int khwq_qos_control(struct khwq_device *kdev, enum khwq_qos_shadow_type type,
+int khwq_qos_control(struct khwq_qos_info *info, enum khwq_qos_shadow_type type,
 		       enum khwq_qos_control_type ctrl, int idx, u32 arg,
 		       bool internal);
-int khwq_qos_sync(struct khwq_device *kdev, enum khwq_qos_shadow_type type,
+int khwq_qos_sync(struct khwq_qos_info *info, enum khwq_qos_shadow_type type,
 		    int idx, bool internal);
-int khwq_qos_get(struct khwq_device *kdev, enum khwq_qos_shadow_type type,
+int khwq_qos_get(struct khwq_qos_info *info, enum khwq_qos_shadow_type type,
 		   const char *name, int idx, int offset, int startbit,
 		   int nbits, u32 *value);
-int khwq_qos_set(struct khwq_device *kdev, enum khwq_qos_shadow_type type,
+int khwq_qos_set(struct khwq_qos_info *info, enum khwq_qos_shadow_type type,
 		   const char *name, int idx, int offset, int startbit,
 		   int nbits, bool sync, u32 value, bool internal);
 
 #define DEFINE_SHADOW(_type, _field)					       \
-static inline int khwq_qos_control_##_field(struct khwq_device *kdev,          \
+static inline int khwq_qos_control_##_field(struct khwq_qos_info *info,        \
 					    enum khwq_qos_control_type ctrl,   \
 					    int idx, u32 arg)		       \
 {									       \
-	return khwq_qos_control(kdev, _type, ctrl, idx, arg, false);	       \
+	return khwq_qos_control(info, _type, ctrl, idx, arg, false);	       \
 }									       \
-static inline int khwq_qos_sync_##_field(struct khwq_device *kdev,	       \
+static inline int khwq_qos_sync_##_field(struct khwq_qos_info *info,	       \
 					 int idx)			       \
 {									       \
-	return khwq_qos_sync(kdev, _type, idx, false);		       \
+	return khwq_qos_sync(info, _type, idx, false);		       \
 }
 
 DEFINE_SHADOW(QOS_DROP_CFG_PROF,	drop_cfg);
@@ -294,14 +294,14 @@ DEFINE_SHADOW(QOS_SCHED_PORT_CFG,	sched_port);
 DEFINE_SHADOW(QOS_DROP_QUEUE_CFG,	drop_queue);
 
 #define DEFINE_ALLOC(_type, _field)					       \
-static inline int khwq_qos_alloc_##_field(struct khwq_device *kdev)	       \
+static inline int khwq_qos_alloc_##_field(struct khwq_qos_info *info)	       \
 {									       \
-	return khwq_qos_alloc(kdev, _type);				       \
+	return khwq_qos_alloc(info, _type);				       \
 }									       \
-static inline int khwq_qos_free_##_field(struct khwq_device *kdev,	       \
+static inline int khwq_qos_free_##_field(struct khwq_qos_info *info,	       \
 					 int idx)			       \
 {									       \
-	return khwq_qos_free(kdev, _type, idx);			       \
+	return khwq_qos_free(info, _type, idx);			       \
 }
 
 DEFINE_ALLOC(QOS_DROP_CFG_PROF,	 drop_cfg);
@@ -309,45 +309,45 @@ DEFINE_ALLOC(QOS_DROP_OUT_PROF,	 drop_out);
 DEFINE_ALLOC(QOS_SCHED_PORT_CFG, sched_port);
 
 #define DEFINE_FIELD_U32(_type, _field, _offset, _startbit, _nbits)	 \
-static inline int khwq_qos_get_##_field(struct khwq_device *kdev,	 \
+static inline int khwq_qos_get_##_field(struct khwq_qos_info *info,	 \
 					int idx, u32 *value)		 \
 {									 \
-	return khwq_qos_get(kdev, _type, #_field, idx, _offset,	 \
+	return khwq_qos_get(info, _type, #_field, idx, _offset,	 \
 			      _startbit, _nbits, value);		 \
 }									 \
-static inline int khwq_qos_set_##_field(struct khwq_device *kdev,	 \
+static inline int khwq_qos_set_##_field(struct khwq_qos_info *info,	 \
 					int idx, u32 value, bool sync)	 \
 {									 \
-	return khwq_qos_set(kdev, _type, #_field, idx, _offset,	 \
+	return khwq_qos_set(info, _type, #_field, idx, _offset,	 \
 			      _startbit, _nbits, sync, value, false);	 \
 }									 \
-static inline int __khwq_qos_set_##_field(struct khwq_device *kdev,	 \
+static inline int __khwq_qos_set_##_field(struct khwq_qos_info *info,	 \
 					int idx, u32 value, bool sync)	 \
 {									 \
-	return khwq_qos_set(kdev, _type, #_field, idx, _offset,	 \
+	return khwq_qos_set(info, _type, #_field, idx, _offset,	 \
 			      _startbit, _nbits, sync, value, true);	 \
 }
 
 #define DEFINE_FIELD_U32_ARRAY(_type, _field, _offset, _size)		 \
-static inline int khwq_qos_get_##_field(struct khwq_device *kdev,	 \
+static inline int khwq_qos_get_##_field(struct khwq_qos_info *info,	 \
 					int idx, int elem, u32 *value)	 \
 {									 \
 	int ofs = _offset + elem * _size;				 \
-	return khwq_qos_get(kdev, _type, #_field, idx, ofs, 0, 32,	 \
+	return khwq_qos_get(info, _type, #_field, idx, ofs, 0, 32,	 \
 			      value);					 \
 }									 \
-static inline int khwq_qos_set_##_field(struct khwq_device *kdev,	 \
+static inline int khwq_qos_set_##_field(struct khwq_qos_info *info,	 \
 				int idx, int elem, u32 value, bool sync) \
 {									 \
 	int ofs = _offset + elem * _size;				 \
-	return khwq_qos_set(kdev, _type, #_field, idx, ofs, 0, 32,	 \
+	return khwq_qos_set(info, _type, #_field, idx, ofs, 0, 32,	 \
 			      sync, value, false);			 \
 }									 \
-static inline int __khwq_qos_set_##_field(struct khwq_device *kdev,	 \
+static inline int __khwq_qos_set_##_field(struct khwq_qos_info *info,	 \
 				int idx, int elem, u32 value, bool sync) \
 {									 \
 	int ofs = _offset + elem * _size;				 \
-	return khwq_qos_set(kdev, _type, #_field, idx, ofs, 0, 32,	 \
+	return khwq_qos_set(info, _type, #_field, idx, ofs, 0, 32,	 \
 			      sync, value, true);			 \
 }
 
