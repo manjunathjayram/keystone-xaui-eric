@@ -9,7 +9,7 @@ branches()
 			grep "^$stem/" | sed "s:^$stem/::g"
 		else
 			cat
-		fi | grep -e '^master$' -e '^origin$' -e '^rebuild/'
+		fi | grep -e '^master$' -e '^master-rt$' -e '^origin$' -e '^rebuild/'
 }
 
 error()
@@ -279,6 +279,7 @@ forest_rebuild: recreate master from origin and rebuild branches
 Usage: forest_rebuild [-h] <forest>
 Options:
 	-h		this help message
+	-r		rebuild with preempt-rt branch
 	<forest>	local forest to operate on
 EOF
 }
@@ -286,12 +287,16 @@ EOF
 forest_rebuild()
 {
 	debug rebuild $*
+	realtime="n"
 	unset OPTIND
-	while getopts ":hmf" opt; do
+	while getopts ":hmfr" opt; do
 		case "${opt}" in
 			h)
 				forest_rebuild_usage
 				exit 0
+				;;
+			r)
+				realtime="y"
 				;;
 			*)
 				error "unrecognized option ${OPTARG}"
@@ -311,8 +316,14 @@ forest_rebuild()
 		exit 1
 	fi
 
-	rebuild=`branches $forest | grep '^rebuild/' | sort`
-	git checkout $forest/master
+	if [ "$realtime" == "n" ]
+	then
+		rebuild=`branches $forest | grep '^rebuild/' | grep -v 'preempt-rt' | sort`
+		git checkout $forest/master
+	else
+		rebuild=`branches $forest | grep '^rebuild/' | sort`
+		git checkout $forest/master-rt
+	fi
 	git reset --hard $forest/origin
 	for branch in $rebuild
 	do
