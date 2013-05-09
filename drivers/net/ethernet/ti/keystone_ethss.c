@@ -679,8 +679,6 @@ static void cpsw_init_host_port(struct cpsw_priv *priv,
 	if (priv->multi_if)
 		cpsw_ale_control_set(priv->ale, 0, ALE_BYPASS, 1);
 
-	cpsw_ale_control_set(priv->ale, 0, ALE_VLAN_AWARE, 1);
-
 	cpsw_ale_control_set(priv->ale, 0, ALE_NO_PORT_VLAN, 1);
 
 	cpsw_ale_control_set(priv->ale, priv->host_port,
@@ -985,8 +983,7 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 	__raw_writel(0, &cpsw_dev->regs->ptype);
 
 	/* Control register */
-	__raw_writel(CPSW_CTL_P0_ENABLE | CPSW_CTL_VLAN_AWARE,
-			&cpsw_dev->regs->control);
+	__raw_writel(CPSW_CTL_P0_ENABLE, &cpsw_dev->regs->control);
 
 	/* All statistics enabled by default */
 	__raw_writel(CPSW_REG_VAL_STAT_ENABLE_ALL,
