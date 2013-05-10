@@ -11,6 +11,7 @@
 	aliases {
 		serial0	= &uart0;
 		gpio0	= &gpio0;
+		ethernet1 = &interface1;
 	};
 
 	chosen {
@@ -2325,14 +2326,14 @@
 			streaming-regs = <0x02000604 0x4>;
 
 			interfaces {
-				interface-0 {
+				interface0: interface-0 {
 					rx-channel = "netrx0";
 					rx-queue-depth = <128 128 0 0>;
 					rx-buffer-size = <1500 4096 0 0>;
 					efuse-mac = <1>;
 					/*local-mac-address = [02 18 31 7e 3e 6e]; */
 				};
-				interface-1 {
+				interface1: interface-1 {
 					rx-channel = "netrx1";
 					rx-queue-depth = <128 128 0 0>;
 					rx-buffer-size = <1500 4096 0 0>;
