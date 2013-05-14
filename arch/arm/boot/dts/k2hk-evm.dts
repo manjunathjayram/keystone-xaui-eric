@@ -2632,12 +2632,12 @@
 				slaves {
 					slave0 {
 						label		= "slave0";
-						link-interface	= <4>;        /* 4 - XGMII_LINK_MAC_PHY */
+						link-interface	= <10>;        /* 4 - XGMII_LINK_MAC_PHY */
 						phy-handle	= <&phyx0>;
 					};
 					slave1 {
 						label		= "slave1";
-						link-interface	= <4>;        /* 1 - SGMII_LINK_MAC_PHY */
+						link-interface	= <10>;        /* 1 - SGMII_LINK_MAC_PHY */
 						phy-handle	= <&phyx1>;
 					};
 				};
