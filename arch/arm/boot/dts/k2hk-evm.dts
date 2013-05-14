@@ -2667,5 +2667,12 @@
 			clocks = <&clkpcie>;
 			clock-names = "pcie";
 		};
+
+		wdt: wdt@22f0080 {
+			compatible = "ti,davinci-wdt";
+			reg = <0x022f0080 0x80>;
+			clocks = <&clkwdtimer0>;
+			clock-names = "watchdog";
+		};
 	};
 };
