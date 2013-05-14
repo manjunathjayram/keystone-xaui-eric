@@ -249,6 +249,9 @@ struct cpsw_priv {
 
 	u64				 hw_stats[72];
 	int				 init_serdes_at_probe;
+	struct kobject			kobj;
+	struct kobject			tx_pri_kobj;
+	struct kobject			pvlan_kobj;
 };
 
 struct cpsw_intf {
@@ -376,6 +379,759 @@ static const struct netcp_ethtool_stat et_stats[] = {
 };
 
 #define ETHTOOL_STATS_NUM ARRAY_SIZE(et_stats)
+
+struct cpsw_attribute {
+	struct attribute attr;
+	ssize_t (*show)(struct cpsw_priv *cpsw_dev,
+		struct cpsw_attribute *attr, char *buf);
+	ssize_t	(*store)(struct cpsw_priv *cpsw_dev,
+		struct cpsw_attribute *attr, const char *, size_t);
+	const struct cpsw_mod_info *info;
+	ssize_t info_size;
+	void *context;
+};
+#define to_cpsw_attr(_attr) container_of(_attr, struct cpsw_attribute, attr)
+
+#define to_cpsw_dev(obj) container_of(obj, struct cpsw_priv, kobj)
+#define tx_pri_to_cpsw_dev(obj) container_of(obj, struct cpsw_priv, tx_pri_kobj)
+#define pvlan_to_cpsw_dev(obj) container_of(obj, struct cpsw_priv, pvlan_kobj)
+
+#define BITS(x)			(BIT(x) - 1)
+#define BITMASK(n, s)		(BITS(n) << (s))
+#define cpsw_mod_info_field_val(r, i) \
+	((r & BITMASK(i->bits, i->shift)) >> i->shift)
+
+#define for_each_intf(i, priv) \
+	list_for_each_entry((i), &(priv)->cpsw_intf_head, cpsw_intf_list)
+
+#define __CPSW_ATTR(_name, _mode, _show, _store, _info) \
+	{ \
+		.attr = {.name = __stringify(_name), .mode = _mode },	\
+		.show	= _show,		\
+		.store	= _store,		\
+		.info	= _info,		\
+		.info_size = ARRAY_SIZE(_info)	\
+	}
+
+#define __CPSW_CTXT_ATTR(_name, _mode, _show, _store, _info, ctxt) \
+	{ \
+		.attr = {.name = __stringify(_name), .mode = _mode },	\
+		.show	= _show,		\
+		.store	= _store,		\
+		.info	= _info,		\
+		.info_size = ARRAY_SIZE(_info),	\
+		.context   = (ctxt)		\
+	}
+
+struct cpsw_mod_info {
+	const char	*name;
+	int		shift;
+	int		bits;
+};
+
+struct cpsw_parse_result {
+	int control;
+	int port;
+	u32 value;
+};
+
+static ssize_t cpsw_attr_info_show(const struct cpsw_mod_info *info,
+				int info_size, u32 reg, char *buf)
+{
+	int i, len = 0;
+
+	for (i = 0; i < info_size; i++, info++) {
+		len += snprintf(buf + len, PAGE_SIZE - len,
+			"%s=%d\n", info->name,
+			(int)cpsw_mod_info_field_val(reg, info));
+	}
+
+	return len;
+}
+
+static ssize_t cpsw_attr_parse_set_command(struct cpsw_priv *cpsw_dev,
+			      struct cpsw_attribute *attr,
+			      const char *buf, size_t count,
+				struct cpsw_parse_result *res)
+{
+	char ctrl_str[33], tmp_str[9];
+	int port = -1, value, len, control;
+	unsigned long end;
+	const struct cpsw_mod_info *info = attr->info;
+
+	len = strcspn(buf, ".=");
+	if (len >= 32)
+		return -ENOMEM;
+
+	strncpy(ctrl_str, buf, len);
+	ctrl_str[len] = '\0';
+	buf += len;
+
+	if (*buf == '.') {
+		++buf;
+		len = strcspn(buf, "=");
+		if (len >= 8)
+			return -ENOMEM;
+		strncpy(tmp_str, buf, len);
+		tmp_str[len] = '\0';
+		if (kstrtoul(tmp_str, 0, &end))
+			return -EINVAL;
+		port = (int)end;
+		buf += len;
+	}
+
+	if (*buf != '=')
+		return -EINVAL;
+
+	if (kstrtoul(buf + 1, 0, &end))
+		return -EINVAL;
+
+	value = (int)end;
+
+	for (control = 0; control < attr->info_size; control++)
+		if (strcmp(ctrl_str, info[control].name) == 0)
+			break;
+
+	if (control >= attr->info_size)
+		return -ENOENT;
+
+	res->control = control;
+	res->port = port;
+	res->value = value;
+
+	dev_info(cpsw_dev->dev, "parsed command %s.%d=%d\n",
+		attr->info[control].name, port, value);
+
+	return 0;
+}
+
+static inline void cpsw_info_set_reg_field(void __iomem *r,
+		const struct cpsw_mod_info *info, int val)
+{
+	u32 rv;
+
+	rv = __raw_readl(r);
+	rv = ((rv & ~BITMASK(info->bits, info->shift)) | (val << info->shift));
+	__raw_writel(rv, r);
+}
+
+static ssize_t cpsw_version_show(struct cpsw_priv *cpsw_dev,
+		     struct cpsw_attribute *attr,
+		     char *buf)
+{
+	u32 reg;
+
+	reg = __raw_readl(&cpsw_dev->regs->id_ver);
+
+	return snprintf(buf, PAGE_SIZE,
+		"cpsw version %d.%d (%d) SGMII identification value 0x%x\n",
+		 CPSW_MAJOR_VERSION(reg), CPSW_MINOR_VERSION(reg),
+		 CPSW_RTL_VERSION(reg), CPSW_SGMII_IDENT(reg));
+}
+
+static struct cpsw_attribute cpsw_version_attribute =
+	__ATTR(version, S_IRUGO, cpsw_version_show, NULL);
+
+static const struct cpsw_mod_info cpsw_controls[] = {
+	{
+		.name		= "fifo_loopback",
+		.shift		= 0,
+		.bits		= 1,
+	},
+	{
+		.name		= "vlan_aware",
+		.shift		= 1,
+		.bits		= 1,
+	},
+	{
+		.name		= "p0_enable",
+		.shift		= 2,
+		.bits		= 1,
+	},
+	{
+		.name		= "p0_pass_pri_tagged",
+		.shift		= 3,
+		.bits		= 1,
+	},
+	{
+		.name		= "p1_pass_pri_tagged",
+		.shift		= 4,
+		.bits		= 1,
+	},
+	{
+		.name		= "p2_pass_pri_tagged",
+		.shift		= 5,
+		.bits		= 1,
+	},
+};
+
+static ssize_t cpsw_control_show(struct cpsw_priv *cpsw_dev,
+		     struct cpsw_attribute *attr,
+		     char *buf)
+{
+	u32 reg;
+
+	reg = __raw_readl(&cpsw_dev->regs->control);
+	return cpsw_attr_info_show(attr->info, attr->info_size, reg, buf);
+}
+
+static ssize_t cpsw_control_store(struct cpsw_priv *cpsw_dev,
+			      struct cpsw_attribute *attr,
+			      const char *buf, size_t count)
+{
+	const struct cpsw_mod_info *i;
+	struct cpsw_parse_result res;
+	void __iomem *r = NULL;
+	int ret;
+
+
+	ret = cpsw_attr_parse_set_command(cpsw_dev, attr, buf, count, &res);
+	if (ret)
+		return ret;
+
+	i = &(attr->info[res.control]);
+	r = &cpsw_dev->regs->control;
+
+	cpsw_info_set_reg_field(r, i, res.value);
+	return count;
+}
+
+static struct cpsw_attribute cpsw_control_attribute =
+	__CPSW_ATTR(control, S_IRUGO | S_IWUSR,
+		cpsw_control_show, cpsw_control_store, cpsw_controls);
+
+static const struct cpsw_mod_info cpsw_ptypes[] = {
+	{
+		.name		= "escalate_pri_load_val",
+		.shift		= 0,
+		.bits		= 5,
+	},
+	{
+		.name		= "port0_pri_type_escalate",
+		.shift		= 8,
+		.bits		= 1,
+	},
+	{
+		.name		= "port1_pri_type_escalate",
+		.shift		= 9,
+		.bits		= 1,
+	},
+	{
+		.name		= "port2_pri_type_escalate",
+		.shift		= 10,
+		.bits		= 1,
+	},
+};
+
+static ssize_t cpsw_pri_type_show(struct cpsw_priv *cpsw_dev,
+		     struct cpsw_attribute *attr,
+		     char *buf)
+{
+	u32 reg;
+
+	reg = __raw_readl(&cpsw_dev->regs->ptype);
+
+	return cpsw_attr_info_show(attr->info, attr->info_size, reg, buf);
+}
+
+static ssize_t cpsw_pri_type_store(struct cpsw_priv *cpsw_dev,
+			      struct cpsw_attribute *attr,
+			      const char *buf, size_t count)
+{
+	const struct cpsw_mod_info *i;
+	struct cpsw_parse_result res;
+	void __iomem *r = NULL;
+	int ret;
+
+
+	ret = cpsw_attr_parse_set_command(cpsw_dev, attr, buf, count, &res);
+	if (ret)
+		return ret;
+
+	i = &(attr->info[res.control]);
+	r = &cpsw_dev->regs->ptype;
+
+	cpsw_info_set_reg_field(r, i, res.value);
+	return count;
+}
+
+static struct cpsw_attribute cpsw_pri_type_attribute =
+	__CPSW_ATTR(priority_type, S_IRUGO | S_IWUSR,
+			cpsw_pri_type_show,
+			cpsw_pri_type_store,
+			cpsw_ptypes);
+
+static const struct cpsw_mod_info cpsw_flow_controls[] = {
+	{
+		.name		= "port0_flow_control_en",
+		.shift		= 0,
+		.bits		= 1,
+	},
+	{
+		.name		= "port1_flow_control_en",
+		.shift		= 1,
+		.bits		= 1,
+	},
+	{
+		.name		= "port2_flow_control_en",
+		.shift		= 2,
+		.bits		= 1,
+	},
+};
+
+static ssize_t cpsw_flow_control_show(struct cpsw_priv *cpsw_dev,
+		     struct cpsw_attribute *attr, char *buf)
+{
+	u32 reg;
+
+	reg = __raw_readl(&cpsw_dev->regs->flow_control);
+
+	return cpsw_attr_info_show(attr->info, attr->info_size, reg, buf);
+}
+
+static ssize_t cpsw_flow_control_store(struct cpsw_priv *cpsw_dev,
+			      struct cpsw_attribute *attr,
+			      const char *buf, size_t count)
+{
+	const struct cpsw_mod_info *i;
+	struct cpsw_parse_result res;
+	void __iomem *r = NULL;
+	int ret;
+
+
+	ret = cpsw_attr_parse_set_command(cpsw_dev, attr, buf, count, &res);
+	if (ret)
+		return ret;
+
+	i = &(attr->info[res.control]);
+	r = &cpsw_dev->regs->flow_control;
+
+	cpsw_info_set_reg_field(r, i, res.value);
+	return count;
+}
+
+static struct cpsw_attribute cpsw_flow_control_attribute =
+	__CPSW_ATTR(flow_control, S_IRUGO | S_IWUSR,
+		cpsw_flow_control_show,
+		cpsw_flow_control_store,
+		cpsw_flow_controls);
+
+static const struct cpsw_mod_info cpsw_port_tx_pri_maps[] = {
+	{
+		.name		= "port_tx_pri_0",
+		.shift		= 0,
+		.bits		= 3,
+	},
+	{
+		.name		= "port_tx_pri_1",
+		.shift		= 1,
+		.bits		= 3,
+	},
+	{
+		.name		= "port_tx_pri_2",
+		.shift		= 2,
+		.bits		= 3,
+	},
+	{
+		.name		= "port_tx_pri_3",
+		.shift		= 3,
+		.bits		= 3,
+	},
+	{
+		.name		= "port_tx_pri_4",
+		.shift		= 4,
+		.bits		= 3,
+	},
+	{
+		.name		= "port_tx_pri_5",
+		.shift		= 5,
+		.bits		= 3,
+	},
+	{
+		.name		= "port_tx_pri_6",
+		.shift		= 6,
+		.bits		= 3,
+	},
+	{
+		.name		= "port_tx_pri_7",
+		.shift		= 7,
+		.bits		= 3,
+	},
+};
+
+static ssize_t cpsw_port_tx_pri_map_show(struct cpsw_priv *cpsw_dev,
+		     struct cpsw_attribute *attr,
+		     char *buf)
+{
+	int idx, len = 0, total_len = 0, port;
+	struct cpsw_intf *cpsw_intf;
+	struct cpsw_slave *slave;
+	u32 reg;
+
+	port = (int)(attr->context);
+
+	for_each_intf(cpsw_intf, cpsw_dev) {
+		if (cpsw_intf->multi_if) {
+			slave = cpsw_intf->slaves;
+			if (slave->port_num != port)
+				continue;
+			reg = __raw_readl(&slave->regs->tx_pri_map);
+			len = cpsw_attr_info_show(attr->info, attr->info_size,
+						reg, buf+total_len);
+			total_len += len;
+		} else {
+			for (idx = 0; idx < cpsw_intf->num_slaves; idx++) {
+				slave = cpsw_intf->slaves + idx;
+				if (slave->port_num != port)
+					continue;
+				reg = __raw_readl(&slave->regs->tx_pri_map);
+				len = cpsw_attr_info_show(attr->info,
+					attr->info_size, reg, buf+total_len);
+				total_len += len;
+			}
+		}
+	}
+	return total_len;
+}
+
+static ssize_t cpsw_port_tx_pri_map_store(struct cpsw_priv *cpsw_dev,
+			      struct cpsw_attribute *attr,
+			      const char *buf, size_t count)
+{
+	const struct cpsw_mod_info *i;
+	struct cpsw_parse_result res;
+	struct cpsw_intf *cpsw_intf;
+	struct cpsw_slave *slave;
+	void __iomem *r = NULL;
+	int ret, idx, port;
+
+	port = (int)(attr->context);
+
+	ret = cpsw_attr_parse_set_command(cpsw_dev, attr, buf, count, &res);
+	if (ret)
+		return ret;
+
+	i = &(attr->info[res.control]);
+
+	/* Slave port */
+	for_each_intf(cpsw_intf, cpsw_dev) {
+		if (cpsw_intf->multi_if) {
+			slave = cpsw_intf->slaves;
+			if (slave->port_num == port) {
+				r = &slave->regs->tx_pri_map;
+				goto set;
+			}
+		} else
+			for (idx = 0; idx < cpsw_intf->num_slaves; idx++) {
+				slave = cpsw_intf->slaves + idx;
+				if (slave->port_num == port) {
+					r = &slave->regs->tx_pri_map;
+					goto set;
+				}
+			}
+	}
+
+	if (!r)
+		return  -ENOENT;
+
+set:
+	cpsw_info_set_reg_field(r, i, res.value);
+	return count;
+}
+
+static struct cpsw_attribute cpsw_tx_pri_1_attribute =
+	__CPSW_CTXT_ATTR(1, S_IRUGO | S_IWUSR,
+			cpsw_port_tx_pri_map_show,
+			cpsw_port_tx_pri_map_store,
+			cpsw_port_tx_pri_maps, (void *)1);
+
+static struct cpsw_attribute cpsw_tx_pri_2_attribute =
+	__CPSW_CTXT_ATTR(2, S_IRUGO | S_IWUSR,
+			cpsw_port_tx_pri_map_show,
+			cpsw_port_tx_pri_map_store,
+			cpsw_port_tx_pri_maps, (void *)2);
+
+static struct cpsw_attribute cpsw_tx_pri_3_attribute =
+	__CPSW_CTXT_ATTR(3, S_IRUGO | S_IWUSR,
+			cpsw_port_tx_pri_map_show,
+			cpsw_port_tx_pri_map_store,
+			cpsw_port_tx_pri_maps, (void *)3);
+
+static struct cpsw_attribute cpsw_tx_pri_4_attribute =
+	__CPSW_CTXT_ATTR(4, S_IRUGO | S_IWUSR,
+			cpsw_port_tx_pri_map_show,
+			cpsw_port_tx_pri_map_store,
+			cpsw_port_tx_pri_maps, (void *)4);
+
+static struct attribute *cpsw_tx_pri_default_attrs[] = {
+	&cpsw_tx_pri_1_attribute.attr,
+	&cpsw_tx_pri_2_attribute.attr,
+	&cpsw_tx_pri_3_attribute.attr,
+	&cpsw_tx_pri_4_attribute.attr,
+	NULL
+};
+
+static ssize_t cpsw_tx_pri_attr_show(struct kobject *kobj,
+			struct attribute *attr, char *buf)
+{
+	struct cpsw_attribute *attribute = to_cpsw_attr(attr);
+	struct cpsw_priv *cpsw_dev = tx_pri_to_cpsw_dev(kobj);
+
+	if (!attribute->show)
+		return -EIO;
+
+	return attribute->show(cpsw_dev, attribute, buf);
+}
+
+static ssize_t cpsw_tx_pri_attr_store(struct kobject *kobj,
+			struct attribute *attr, const char *buf, size_t count)
+{
+	struct cpsw_attribute *attribute = to_cpsw_attr(attr);
+	struct cpsw_priv *cpsw_dev = tx_pri_to_cpsw_dev(kobj);
+
+	if (!attribute->store)
+		return -EIO;
+
+	return attribute->store(cpsw_dev, attribute, buf, count);
+}
+
+static const struct sysfs_ops cpsw_tx_pri_sysfs_ops = {
+	.show = cpsw_tx_pri_attr_show,
+	.store = cpsw_tx_pri_attr_store,
+};
+
+static struct kobj_type cpsw_tx_pri_ktype = {
+	.sysfs_ops = &cpsw_tx_pri_sysfs_ops,
+	.default_attrs = cpsw_tx_pri_default_attrs,
+};
+
+static const struct cpsw_mod_info cpsw_port_vlans[] = {
+	{
+		.name		= "port_vlan_id",
+		.shift		= 0,
+		.bits		= 12,
+	},
+	{
+		.name		= "port_cfi",
+		.shift		= 12,
+		.bits		= 1,
+	},
+	{
+		.name		= "port_vlan_pri",
+		.shift		= 13,
+		.bits		= 3,
+	},
+};
+
+static ssize_t cpsw_port_vlan_show(struct cpsw_priv *cpsw_dev,
+		     struct cpsw_attribute *attr,
+		     char *buf)
+{
+	int idx, len = 0, total_len = 0, port;
+	struct cpsw_intf *cpsw_intf;
+	struct cpsw_slave *slave;
+	u32 reg;
+
+	port = (int)(attr->context);
+
+	if (port == cpsw_dev->host_port) {
+		/* Host port */
+		reg = __raw_readl(&cpsw_dev->host_port_regs->port_vlan);
+		len = cpsw_attr_info_show(attr->info, attr->info_size,
+					reg, buf);
+		return len;
+	}
+
+	/* Slave ports */
+	for_each_intf(cpsw_intf, cpsw_dev) {
+		if (cpsw_intf->multi_if) {
+			slave = cpsw_intf->slaves;
+			if (slave->port_num != port)
+				continue;
+			reg = __raw_readl(&slave->regs->port_vlan);
+			len = cpsw_attr_info_show(attr->info, attr->info_size,
+					reg, buf+total_len);
+			total_len += len;
+		} else {
+			for (idx = 0; idx < cpsw_intf->num_slaves; idx++) {
+				slave = cpsw_intf->slaves + idx;
+				if (slave->port_num != port)
+					continue;
+				reg = __raw_readl(&slave->regs->port_vlan);
+				len = cpsw_attr_info_show(attr->info,
+					attr->info_size, reg, buf+total_len);
+				total_len += len;
+			}
+		}
+	}
+	return total_len;
+}
+
+static ssize_t cpsw_port_vlan_store(struct cpsw_priv *cpsw_dev,
+			      struct cpsw_attribute *attr,
+			      const char *buf, size_t count)
+{
+	const struct cpsw_mod_info *i;
+	struct cpsw_parse_result res;
+	struct cpsw_intf *cpsw_intf;
+	struct cpsw_slave *slave;
+	void __iomem *r = NULL;
+	int ret, idx, port;
+
+	port = (int)(attr->context);
+
+	ret = cpsw_attr_parse_set_command(cpsw_dev, attr, buf, count, &res);
+	if (ret)
+		return ret;
+
+	i = &(attr->info[res.control]);
+
+	/* Host port */
+	if (port == cpsw_dev->host_port) {
+		r = &cpsw_dev->host_port_regs->port_vlan;
+		goto set;
+	}
+
+	/* Slave port */
+	for_each_intf(cpsw_intf, cpsw_dev) {
+		if (cpsw_intf->multi_if) {
+			slave = cpsw_intf->slaves;
+			if (slave->port_num == port) {
+				r = &slave->regs->port_vlan;
+				goto set;
+			}
+		} else
+			for (idx = 0; idx < cpsw_intf->num_slaves; idx++) {
+				slave = cpsw_intf->slaves + idx;
+				if (slave->port_num == port) {
+					r = &slave->regs->port_vlan;
+					goto set;
+				}
+			}
+	}
+
+	if (!r)
+		return  -ENOENT;
+
+set:
+	cpsw_info_set_reg_field(r, i, res.value);
+	return count;
+}
+
+static struct cpsw_attribute cpsw_pvlan_0_attribute =
+	__CPSW_CTXT_ATTR(0, S_IRUGO | S_IWUSR,
+			cpsw_port_vlan_show,
+			cpsw_port_vlan_store,
+			cpsw_port_vlans, (void *)0);
+
+static struct cpsw_attribute cpsw_pvlan_1_attribute =
+	__CPSW_CTXT_ATTR(1, S_IRUGO | S_IWUSR,
+			cpsw_port_vlan_show,
+			cpsw_port_vlan_store,
+			cpsw_port_vlans, (void *)1);
+
+static struct cpsw_attribute cpsw_pvlan_2_attribute =
+	__CPSW_CTXT_ATTR(2, S_IRUGO | S_IWUSR,
+			cpsw_port_vlan_show,
+			cpsw_port_vlan_store,
+			cpsw_port_vlans, (void *)2);
+
+static struct cpsw_attribute cpsw_pvlan_3_attribute =
+	__CPSW_CTXT_ATTR(3, S_IRUGO | S_IWUSR,
+			cpsw_port_vlan_show,
+			cpsw_port_vlan_store,
+			cpsw_port_vlans, (void *)3);
+
+static struct cpsw_attribute cpsw_pvlan_4_attribute =
+	__CPSW_CTXT_ATTR(4, S_IRUGO | S_IWUSR,
+			cpsw_port_vlan_show,
+			cpsw_port_vlan_store,
+			cpsw_port_vlans, (void *)4);
+
+static struct attribute *cpsw_pvlan_default_attrs[] = {
+	&cpsw_pvlan_0_attribute.attr,
+	&cpsw_pvlan_1_attribute.attr,
+	&cpsw_pvlan_2_attribute.attr,
+	&cpsw_pvlan_3_attribute.attr,
+	&cpsw_pvlan_4_attribute.attr,
+	NULL
+};
+
+static ssize_t cpsw_pvlan_attr_show(struct kobject *kobj,
+			struct attribute *attr, char *buf)
+{
+	struct cpsw_attribute *attribute = to_cpsw_attr(attr);
+	struct cpsw_priv *cpsw_dev = pvlan_to_cpsw_dev(kobj);
+
+	if (!attribute->show)
+		return -EIO;
+
+	return attribute->show(cpsw_dev, attribute, buf);
+}
+
+static ssize_t cpsw_pvlan_attr_store(struct kobject *kobj,
+			struct attribute *attr, const char *buf, size_t count)
+{
+	struct cpsw_attribute *attribute = to_cpsw_attr(attr);
+	struct cpsw_priv *cpsw_dev = pvlan_to_cpsw_dev(kobj);
+
+	if (!attribute->store)
+		return -EIO;
+
+	return attribute->store(cpsw_dev, attribute, buf, count);
+}
+
+static const struct sysfs_ops cpsw_pvlan_sysfs_ops = {
+	.show = cpsw_pvlan_attr_show,
+	.store = cpsw_pvlan_attr_store,
+};
+
+static struct kobj_type cpsw_pvlan_ktype = {
+	.sysfs_ops = &cpsw_pvlan_sysfs_ops,
+	.default_attrs = cpsw_pvlan_default_attrs,
+};
+
+static struct attribute *cpsw_default_attrs[] = {
+	&cpsw_version_attribute.attr,
+	&cpsw_control_attribute.attr,
+	&cpsw_pri_type_attribute.attr,
+	&cpsw_flow_control_attribute.attr,
+	NULL
+};
+
+static ssize_t cpsw_attr_show(struct kobject *kobj, struct attribute *attr,
+				  char *buf)
+{
+	struct cpsw_attribute *attribute = to_cpsw_attr(attr);
+	struct cpsw_priv *cpsw_dev = to_cpsw_dev(kobj);
+
+	if (!attribute->show)
+		return -EIO;
+
+	return attribute->show(cpsw_dev, attribute, buf);
+}
+
+static ssize_t cpsw_attr_store(struct kobject *kobj, struct attribute *attr,
+				   const char *buf, size_t count)
+{
+	struct cpsw_attribute *attribute = to_cpsw_attr(attr);
+	struct cpsw_priv *cpsw_dev = to_cpsw_dev(kobj);
+
+	if (!attribute->store)
+		return -EIO;
+
+	return attribute->store(cpsw_dev, attribute, buf, count);
+}
+
+static const struct sysfs_ops cpsw_sysfs_ops = {
+	.show = cpsw_attr_show,
+	.store = cpsw_attr_store,
+};
+
+static struct kobj_type cpsw_ktype = {
+	.sysfs_ops = &cpsw_sysfs_ops,
+	.default_attrs = cpsw_default_attrs,
+};
 
 static void keystone_get_drvinfo(struct net_device *ndev,
 			     struct ethtool_drvinfo *info)
@@ -1083,6 +1839,45 @@ static int init_slave(struct cpsw_priv *cpsw_dev,
 	return 0;
 }
 
+static int cpsw_create_sysfs_entries(struct cpsw_priv *cpsw_dev)
+{
+	struct device *dev = cpsw_dev->dev;
+	int ret;
+
+	ret = kobject_init_and_add(&cpsw_dev->kobj, &cpsw_ktype,
+		kobject_get(&dev->kobj), "cpsw");
+
+	if (ret) {
+		dev_err(dev, "failed to create cpsw sysfs entry\n");
+		kobject_put(&cpsw_dev->kobj);
+		kobject_put(&dev->kobj);
+		return ret;
+	}
+
+	ret = kobject_init_and_add(&cpsw_dev->tx_pri_kobj,
+		&cpsw_tx_pri_ktype,
+		kobject_get(&cpsw_dev->kobj), "port_tx_pri_map");
+
+	if (ret) {
+		dev_err(dev, "failed to create sysfs port_tx_pri_map entry\n");
+		kobject_put(&cpsw_dev->tx_pri_kobj);
+		kobject_put(&cpsw_dev->kobj);
+		return ret;
+	}
+
+	ret = kobject_init_and_add(&cpsw_dev->pvlan_kobj,
+		&cpsw_pvlan_ktype,
+		kobject_get(&cpsw_dev->kobj), "port_vlan");
+
+	if (ret) {
+		dev_err(dev, "failed to create sysfs port_vlan entry\n");
+		kobject_put(&cpsw_dev->pvlan_kobj);
+		kobject_put(&cpsw_dev->kobj);
+		return ret;
+	}
+
+	return 0;
+}
 
 static int cpsw_probe(struct netcp_device *netcp_device,
 			struct device *dev,
@@ -1263,6 +2058,10 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 		netcp_create_interface(netcp_device, &ndev,
 					       NULL, cpsw_dev->intf_tx_queues,
 					       1, 0);
+
+	ret = cpsw_create_sysfs_entries(cpsw_dev);
+	if (ret)
+		goto exit;
 
 	return 0;
 
