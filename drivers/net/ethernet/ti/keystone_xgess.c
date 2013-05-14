@@ -95,6 +95,7 @@ struct cpswx_slave {
 	const char			*phy_id;
 	struct cpsw_ale			*ale;
 	u32				 link_interface;
+	u8				 phy_port_t;
 };
 
 /* 0x0000 */
@@ -1289,6 +1290,63 @@ static void keystone_get_ethtool_stats(struct net_device *ndev,
 	return;
 }
 
+static int keystone_get_settings(struct net_device *ndev,
+			      struct ethtool_cmd *cmd)
+{
+	struct phy_device *phy = ndev->phydev;
+	struct cpswx_slave *slave;
+	int ret;
+
+	if (!phy)
+		return -EINVAL;
+
+	slave = (struct cpswx_slave *)phy->context;
+	if (!slave)
+		return -EINVAL;
+
+	ret = phy_ethtool_gset(phy, cmd);
+	if (!ret)
+		cmd->port = slave->phy_port_t;
+
+	return ret;
+}
+
+static int keystone_set_settings(struct net_device *ndev,
+				struct ethtool_cmd *cmd)
+{
+	struct phy_device *phy = ndev->phydev;
+	struct cpswx_slave *slave;
+	u32 features = cmd->advertising & cmd->supported;
+
+	if (!phy)
+		return -EINVAL;
+
+	slave = (struct cpswx_slave *)phy->context;
+	if (!slave)
+		return -EINVAL;
+
+	if (cmd->port != slave->phy_port_t) {
+		if ((cmd->port == PORT_TP) && !(features & ADVERTISED_TP))
+			return -EINVAL;
+
+		if ((cmd->port == PORT_AUI) && !(features & ADVERTISED_AUI))
+			return -EINVAL;
+
+		if ((cmd->port == PORT_BNC) && !(features & ADVERTISED_BNC))
+			return -EINVAL;
+
+		if ((cmd->port == PORT_MII) && !(features & ADVERTISED_MII))
+			return -EINVAL;
+
+		if ((cmd->port == PORT_FIBRE) && !(features & ADVERTISED_FIBRE))
+			return -EINVAL;
+	}
+
+	slave->phy_port_t = cmd->port;
+
+	return phy_ethtool_sset(phy, cmd);
+}
+
 static const struct ethtool_ops keystone_ethtool_ops = {
 	.get_drvinfo		= keystone_get_drvinfo,
 	.get_link		= ethtool_op_get_link,
@@ -1297,6 +1355,8 @@ static const struct ethtool_ops keystone_ethtool_ops = {
 	.get_strings		= keystone_get_stat_strings,
 	.get_sset_count		= keystone_get_sset_count,
 	.get_ethtool_stats	= keystone_get_ethtool_stats,
+	.get_settings		= keystone_get_settings,
+	.set_settings		= keystone_set_settings,
 };
 
 #define mac_hi(mac)	(((mac)[0] << 0) | ((mac)[1] << 8) |	\
@@ -1489,10 +1549,12 @@ static void cpsw_slave_open(struct cpswx_slave *slave,
 	if (slave->link_interface == SGMII_LINK_MAC_PHY) {
 		has_phy = 1;
 		phy_mode = PHY_INTERFACE_MODE_SGMII;
+		slave->phy_port_t = PORT_MII;
 	} else if (slave->link_interface == XGMII_LINK_MAC_PHY) {
 		has_phy = 1;
 		/* +++FIXME: PHY_INTERFACE_MODE_XGMII ?? */
 		phy_mode = PHY_INTERFACE_MODE_NA;
+		slave->phy_port_t = PORT_FIBRE;
 	}
 
 	if (has_phy) {
