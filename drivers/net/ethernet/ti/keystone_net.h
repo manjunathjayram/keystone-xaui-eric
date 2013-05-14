@@ -30,8 +30,8 @@
 #define SGMII_LINK_MAC_MAC_FORCED	2
 #define SGMII_LINK_MAC_FIBER		3
 #define SGMII_LINK_MAC_PHY_NO_MDIO	4
-#define XGMII_LINK_MAC_PHY		4
-#define XGMII_LINK_MAC_MAC_FORCED	5
+#define XGMII_LINK_MAC_PHY		10
+#define XGMII_LINK_MAC_MAC_FORCED	11
 
 int serdes_init(void);
 void serdes_init_6638_156p25Mhz(void);
