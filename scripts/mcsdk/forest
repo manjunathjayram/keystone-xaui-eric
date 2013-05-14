@@ -85,6 +85,7 @@ forest_rm()
 	debug rm $*
 	unset OPTIND
 	opt_force=-d
+	key=$RANDOM
 	while getopts ":hf" opt; do
 		case "${opt}" in
 			h)
@@ -121,6 +122,15 @@ forest_rm()
 				error must force removal of remote branches
 				exit 1
 			fi
+
+			echo "The $remote:$rstem tree will be deleted";
+			echo "To confirm type \"$key\"";
+			read line;
+			if [ $line != $key ]
+			then
+				exit 1
+			fi
+
 			for branch in $branches
 			do
 				b=`sanitize :refs/heads/$rstem/$branch`
@@ -199,6 +209,7 @@ forest_cp()
 	move=""
 	force=""
 	keep=""
+	key=$RANDOM
 	while getopts ":hmfk" opt; do
 		case "${opt}" in
 			h)
@@ -239,6 +250,13 @@ forest_cp()
 			forest_cp_usage
 			exit 1
 		else
+			echo "The $opt_to tree will be deleted";
+			echo "To confirm type \"$key\"";
+			read line;
+			if [ $line != $key ]
+			then
+				exit 1
+			fi
 			forest_rm $force $opt_to
 		fi
 	fi
