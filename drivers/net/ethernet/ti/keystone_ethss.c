@@ -725,37 +725,37 @@ static const struct cpsw_mod_info cpsw_port_tx_pri_maps[] = {
 	},
 	{
 		.name		= "port_tx_pri_1",
-		.shift		= 1,
-		.bits		= 3,
-	},
-	{
-		.name		= "port_tx_pri_2",
-		.shift		= 2,
-		.bits		= 3,
-	},
-	{
-		.name		= "port_tx_pri_3",
-		.shift		= 3,
-		.bits		= 3,
-	},
-	{
-		.name		= "port_tx_pri_4",
 		.shift		= 4,
 		.bits		= 3,
 	},
 	{
+		.name		= "port_tx_pri_2",
+		.shift		= 8,
+		.bits		= 3,
+	},
+	{
+		.name		= "port_tx_pri_3",
+		.shift		= 12,
+		.bits		= 3,
+	},
+	{
+		.name		= "port_tx_pri_4",
+		.shift		= 16,
+		.bits		= 3,
+	},
+	{
 		.name		= "port_tx_pri_5",
-		.shift		= 5,
+		.shift		= 20,
 		.bits		= 3,
 	},
 	{
 		.name		= "port_tx_pri_6",
-		.shift		= 6,
+		.shift		= 24,
 		.bits		= 3,
 	},
 	{
 		.name		= "port_tx_pri_7",
-		.shift		= 7,
+		.shift		= 28,
 		.bits		= 3,
 	},
 };
