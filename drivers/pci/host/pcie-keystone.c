@@ -130,7 +130,6 @@ struct keystone_pcie_info {
 /* abort reg reference */
 static u32 abort_check_base;
 
-#define XFER_TEST
 #ifdef XFER_TEST
 #define TX_RX_BUF_SZ		40
 #define IB_BUFFER_DEFAULT_SIZE		SZ_32K
@@ -645,7 +644,6 @@ static void keystone_legacy_irq_handler(unsigned int irq, struct irq_desc *desc)
 			IRQ_STATUS + (irq_offset << 2));
 
 	if (BIT(0) & pending) {
-		irq_offset = irq_offset;
 		virq = irq_linear_revmap(info->legacy_irqd, irq_offset);
 		pr_debug("irq: irq_offset %d, virq %d\n",
 				 irq_offset, virq);
@@ -682,7 +680,7 @@ static void unmask_irq(struct irq_data *d)
 	u32 offset;
 	unsigned int irq = d->irq;
 
-	offset = irq - irq_linear_revmap(info->msi_irqd, 0);
+	offset = irq - irq_linear_revmap(info->legacy_irqd, 0);
 	__raw_writel(BIT(0),
 		info->reg_cfg_virt + IRQ_ENABLE_SET + (offset << 2));
 }
@@ -1327,11 +1325,11 @@ static int keystone_pcie_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
 		return -1;
 	}
 	pr_info("keystone_pcie_map_irq: legacy_irq %d\n",
-		info->legacy_irqs[pin - 1]);
+		info->virqs[pin - 1]);
 
 	/* pin has values from 1-4 */
-	return (info->legacy_irqs[pin - 1] >= 0) ?
-				info->legacy_irqs[pin - 1] : -1;
+	return (info->virqs[pin - 1] >= 0) ?
+				info->virqs[pin - 1] : -1;
 }
 
 
@@ -1405,7 +1403,7 @@ static int __init keystone_pcie_rc_init(void)
 			irq_set_chip_and_handler(rc_info->virqs[i],
 				&keystone_legacy_irq_chip, handle_level_irq);
 			irq_set_chip_data(rc_info->virqs[i], rc_info);
-			set_irq_flags(rc_info->legacy_irqs[i], IRQF_VALID);
+			set_irq_flags(rc_info->virqs[i], IRQF_VALID);
 
 			if (rc_info->legacy_irqs[i] >= 0) {
 				irq_set_handler_data(rc_info->legacy_irqs[i],
@@ -1413,6 +1411,7 @@ static int __init keystone_pcie_rc_init(void)
 				irq_set_chained_handler(rc_info->legacy_irqs[i],
 					keystone_legacy_irq_handler);
 			}
+			set_irq_flags(rc_info->legacy_irqs[i], IRQF_VALID);
 		}
 	}
 
