@@ -253,6 +253,8 @@ struct cpsw_priv {
 	struct kobject			kobj;
 	struct kobject			tx_pri_kobj;
 	struct kobject			pvlan_kobj;
+	struct kobject			stats_kobj;
+	struct mutex			hw_stats_lock;
 };
 
 struct cpsw_intf {
@@ -396,6 +398,7 @@ struct cpsw_attribute {
 #define to_cpsw_dev(obj) container_of(obj, struct cpsw_priv, kobj)
 #define tx_pri_to_cpsw_dev(obj) container_of(obj, struct cpsw_priv, tx_pri_kobj)
 #define pvlan_to_cpsw_dev(obj) container_of(obj, struct cpsw_priv, pvlan_kobj)
+#define stats_to_cpsw_dev(obj) container_of(obj, struct cpsw_priv, stats_kobj)
 
 #define BITS(x)			(BIT(x) - 1)
 #define BITMASK(n, s)		(BITS(n) << (s))
@@ -405,24 +408,24 @@ struct cpsw_attribute {
 #define for_each_intf(i, priv) \
 	list_for_each_entry((i), &(priv)->cpsw_intf_head, cpsw_intf_list)
 
-#define __CPSW_ATTR(_name, _mode, _show, _store, _info) \
+#define __CPSW_ATTR_FULL(_name, _mode, _show, _store, _info,	\
+				_info_size, _ctxt)		\
 	{ \
 		.attr = {.name = __stringify(_name), .mode = _mode },	\
 		.show	= _show,		\
 		.store	= _store,		\
 		.info	= _info,		\
-		.info_size = ARRAY_SIZE(_info)	\
+		.info_size = _info_size,	\
+		.context = (_ctxt),		\
 	}
 
-#define __CPSW_CTXT_ATTR(_name, _mode, _show, _store, _info, ctxt) \
-	{ \
-		.attr = {.name = __stringify(_name), .mode = _mode },	\
-		.show	= _show,		\
-		.store	= _store,		\
-		.info	= _info,		\
-		.info_size = ARRAY_SIZE(_info),	\
-		.context   = (ctxt)		\
-	}
+#define __CPSW_ATTR(_name, _mode, _show, _store, _info) \
+		__CPSW_ATTR_FULL(_name, _mode, _show, _store, _info, \
+					(ARRAY_SIZE(_info)), NULL)
+
+#define __CPSW_CTXT_ATTR(_name, _mode, _show, _store, _info, _ctxt) \
+		__CPSW_ATTR_FULL(_name, _mode, _show, _store, _info, \
+					(ARRAY_SIZE(_info)), _ctxt)
 
 struct cpsw_mod_info {
 	const char	*name;
@@ -1092,6 +1095,80 @@ static struct kobj_type cpsw_pvlan_ktype = {
 	.default_attrs = cpsw_pvlan_default_attrs,
 };
 
+static void cpsw_reset_mod_stats(struct cpsw_priv *cpsw_dev, int stat_mod)
+{
+	struct cpsw_hw_stats __iomem *cpsw_statsa = cpsw_dev->hw_stats_regs[0];
+	struct cpsw_hw_stats __iomem *cpsw_statsb = cpsw_dev->hw_stats_regs[1];
+	void *p = NULL;
+	int i;
+
+	if (stat_mod == CPSW_STATSA_MODULE)
+		p = cpsw_statsa;
+	else
+		p = cpsw_statsb;
+
+	for (i = 0; i < ETHTOOL_STATS_NUM; i++) {
+		if (et_stats[i].type == stat_mod) {
+			cpsw_dev->hw_stats[i] = 0;
+			p = (u8 *)p + et_stats[i].offset;
+			*(u32 *)p = 0xffffffff;
+		}
+	}
+	return;
+}
+
+static ssize_t cpsw_stats_mod_store(struct cpsw_priv *cpsw_dev,
+			      struct cpsw_attribute *attr,
+			      const char *buf, size_t count)
+{
+	unsigned long end;
+	int stat_mod;
+
+	if (kstrtoul(buf, 0, &end) != 0 || (end != 0))
+		return -EINVAL;
+
+	stat_mod = (int)(attr->context);
+	mutex_lock(&cpsw_dev->hw_stats_lock);
+	cpsw_reset_mod_stats(cpsw_dev, stat_mod);
+	mutex_unlock(&cpsw_dev->hw_stats_lock);
+	return count;
+}
+
+static struct cpsw_attribute cpsw_stats_a_attribute =
+	__CPSW_ATTR_FULL(A, S_IWUSR, NULL, cpsw_stats_mod_store,
+			NULL, 0, (void *)CPSW_STATSA_MODULE);
+
+static struct cpsw_attribute cpsw_stats_b_attribute =
+	__CPSW_ATTR_FULL(B, S_IWUSR, NULL, cpsw_stats_mod_store,
+			NULL, 0, (void *)CPSW_STATSB_MODULE);
+
+static struct attribute *cpsw_stats_default_attrs[] = {
+	&cpsw_stats_a_attribute.attr,
+	&cpsw_stats_b_attribute.attr,
+	NULL
+};
+
+static ssize_t cpsw_stats_attr_store(struct kobject *kobj,
+			struct attribute *attr, const char *buf, size_t count)
+{
+	struct cpsw_attribute *attribute = to_cpsw_attr(attr);
+	struct cpsw_priv *cpsw_dev = stats_to_cpsw_dev(kobj);
+
+	if (!attribute->store)
+		return -EIO;
+
+	return attribute->store(cpsw_dev, attribute, buf, count);
+}
+
+static const struct sysfs_ops cpsw_stats_sysfs_ops = {
+	.store = cpsw_stats_attr_store,
+};
+
+static struct kobj_type cpsw_stats_ktype = {
+	.sysfs_ops = &cpsw_stats_sysfs_ops,
+	.default_attrs = cpsw_stats_default_attrs,
+};
+
 static struct attribute *cpsw_default_attrs[] = {
 	&cpsw_version_attribute.attr,
 	&cpsw_control_attribute.attr,
@@ -1215,7 +1292,9 @@ static void keystone_get_ethtool_stats(struct net_device *ndev,
 				       struct ethtool_stats *stats,
 				       uint64_t *data)
 {
+	mutex_lock(&priv->hw_stats_lock);
 	cpsw_update_stats(priv, data);
+	mutex_unlock(&priv->hw_stats_lock);
 
 	return;
 }
@@ -1709,7 +1788,9 @@ static void cpsw_timer(unsigned long arg)
 			netif_stop_queue(cpsw_intf->ndev);
 	}
 
+	mutex_lock(&cpsw_dev->hw_stats_lock);
 	cpsw_update_stats(cpsw_dev, NULL);
+	mutex_unlock(&cpsw_dev->hw_stats_lock);
 
 	cpsw_intf->timer.expires = jiffies + (HZ/10);
 	add_timer(&cpsw_intf->timer);
@@ -1937,6 +2018,17 @@ static int cpsw_create_sysfs_entries(struct cpsw_priv *cpsw_dev)
 		return ret;
 	}
 
+	ret = kobject_init_and_add(&cpsw_dev->stats_kobj,
+		&cpsw_stats_ktype,
+		kobject_get(&cpsw_dev->kobj), "stats");
+
+	if (ret) {
+		dev_err(dev, "failed to create sysfs stats entry\n");
+		kobject_put(&cpsw_dev->stats_kobj);
+		kobject_put(&cpsw_dev->kobj);
+		return ret;
+	}
+
 	return 0;
 }
 
@@ -2119,6 +2211,8 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 		netcp_create_interface(netcp_device, &ndev,
 					       NULL, cpsw_dev->intf_tx_queues,
 					       1, 0);
+	/* init the hw stats lock */
+	mutex_init(&cpsw_dev->hw_stats_lock);
 
 	ret = cpsw_create_sysfs_entries(cpsw_dev);
 	if (ret)
