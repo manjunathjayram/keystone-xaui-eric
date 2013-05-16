@@ -48,6 +48,8 @@
 #define PSC_HAS_EXT_POWER_CNTL	BIT(2) /* PSC has external power control
 					* available (for DM6446 SoC) */
 #define PSC_LRESET		BIT(3) /* Keep module in local reset */
+#define STATE_TRANS_MAX_COUNT	0xffff /* Maximum timeout to bail out state
+					* transition for module */
 /**
  * struct clk_psc - DaVinci PSC clock
  * @hw: clk_hw for the psc
@@ -69,6 +71,8 @@ static void clk_psc_config(void __iomem *base, unsigned int domain,
 	u32 epcpr, ptcmd, ptstat, pdstat, pdctl, mdstat, mdctl;
 	u32 next_state = PSC_STATE_ENABLE;
 	void __iomem *psc_base = base;
+	u32 count = STATE_TRANS_MAX_COUNT;
+	int err = 0;
 
 	if (!enable) {
 		if (flags & PSC_SWRSTDISABLE)
@@ -82,8 +86,14 @@ static void clk_psc_config(void __iomem *base, unsigned int domain,
 	mdctl |= next_state;
 	if (flags & PSC_FORCE)
 		mdctl |= MDCTL_FORCE;
+
 	if (flags & PSC_LRESET)
 		mdctl &= ~MDCTL_LRESET;
+
+	/* For disable, we always put the module in local reset */
+	if (!enable)
+		mdctl &= ~MDCTL_LRESET;
+
 	__raw_writel(mdctl, psc_base + MDCTL + 4 * id);
 
 	pdstat = __raw_readl(psc_base + PDSTAT + 4 * domain);
@@ -115,11 +125,17 @@ static void clk_psc_config(void __iomem *base, unsigned int domain,
 
 	do {
 		ptstat = __raw_readl(psc_base + PTSTAT);
-	} while (!(((ptstat >> domain) & 1) == 0));
+	} while (!(((ptstat >> domain) & 1) == 0) && (count--));
 
+	if (!count)
+		goto err;
+
+	count = STATE_TRANS_MAX_COUNT;
 	do {
 		mdstat = __raw_readl(psc_base + MDSTAT + 4 * id);
-	} while (!((mdstat & MDSTAT_STATE_MASK) == next_state));
+	} while (!((mdstat & MDSTAT_STATE_MASK) == next_state) && (count--));
+err:
+	return;
 }
 
 static int clk_psc_is_enabled(struct clk_hw *hw)
