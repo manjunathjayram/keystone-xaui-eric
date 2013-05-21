@@ -1296,7 +1296,8 @@ static struct pci_bus *keystone_pcie_scan(int nr, struct pci_sys_data *sys)
 	pr_info(DRIVER_NAME ": Starting PCI scan...\n");
 	info = (struct keystone_pcie_info *)sys->private_data;
 
-	bus = pci_scan_bus(0, &keystone_pci_ops, sys);
+	bus = pci_scan_root_bus(NULL, sys->busnr, &keystone_pci_ops, sys,
+				&sys->resources);
 
 	/* Post enumeration fixups */
 	set_inbound_trans(info);
