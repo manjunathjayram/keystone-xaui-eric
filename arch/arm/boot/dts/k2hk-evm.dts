@@ -2346,7 +2346,7 @@
 				label = "keystone-cpsw";
 				serdes_at_probe = <1>;
 
-				intf_tx_queues = <4>;
+				intf_tx_queues = <6>;
 
 				sgmii_module_ofs  = <0x100>;
 				switch_module_ofs = <0x800>;
@@ -2370,13 +2370,11 @@
 						slave_port = <0>;
 						tx-channel = "nettx0";
 						tx_queue_depth = <32>;
-						intf_tx_queues = <6>;
 					};
 					interface-1 {
 						slave_port = <1>;
 						tx-channel = "nettx1";
 						tx_queue_depth = <32>;
-						intf_tx_queues = <6>;
 					};
 				};
 
@@ -2594,7 +2592,7 @@
 				label = "keystone-cpswx";
 				serdes_at_probe = <1>;
 
-				intf_tx_queues = <4>;
+				intf_tx_queues = <1>;
 
 				sgmii_module_ofs  = <0x100>;
 				pcsr_module_ofs   = <0x600>;
@@ -2620,13 +2618,11 @@
 						slave_port = <0>;
 						tx-channel = "xgetx0";
 						tx_queue_depth = <32>;
-						intf_tx_queues = <6>;
 					};
 					interface-1 {
 						slave_port = <1>;
 						tx-channel = "xgetx1";
 						tx_queue_depth = <32>;
-						intf_tx_queues = <6>;
 					};
 				};
 
