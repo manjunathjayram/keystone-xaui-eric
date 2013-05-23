@@ -66,7 +66,7 @@
 #define IRQ_ENABLE_SET			0x188
 #define IRQ_ENABLE_CLR			0x18c
 
-#define MSI_IRQ_OFFSET_SHIFT            4
+#define MSI_IRQ_OFFSET			4
 
 /*
  * PCIe Config Register Offsets (capabilities)
@@ -762,6 +762,8 @@ static void ack_msi(struct irq_data *d)
 
 	__raw_writel(BIT(bit_pos),
 		info->reg_cfg_virt + MSI0_IRQ_STATUS + (offset << 2));
+
+	__raw_writel(offset + MSI_IRQ_OFFSET, info->reg_cfg_virt + IRQ_EOI);
 }
 
 static void mask_msi(struct irq_data *d)
