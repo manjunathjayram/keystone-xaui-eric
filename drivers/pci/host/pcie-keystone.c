@@ -569,11 +569,13 @@ static int
 keystone_pcie_fault(unsigned long addr, unsigned int fsr,
 		struct pt_regs *regs)
 {
-	unsigned long instr = *(unsigned long *)regs->ARM_pc;
+	unsigned long instr = *(unsigned long *) instruction_pointer(regs);
 
-	/* Note: Only handle PCIESS module space access */
-	if ((addr < abort_check_base) || (addr >= (abort_check_base + SZ_16K)))
-		return -1;
+	/* Note: only handle such abort during PCI bus probing */
+	if (!abort_check_base)
+		return 0;
+
+	get_and_clear_err((void __iomem *) abort_check_base);
 
 	/*
 	 * Mimic aborted read of all 1's as required to detect device/function
@@ -589,9 +591,15 @@ keystone_pcie_fault(unsigned long addr, unsigned int fsr,
 			val = -1;
 
 		regs->uregs[reg] = val;
+		regs->ARM_pc += 4;
 	}
 
-	regs->ARM_pc += 4;
+	if ((instr & 0x0e100090) == 0x00100090) {
+		int reg = (instr >> 12) & 15;
+
+		regs->uregs[reg] = -1;
+		regs->ARM_pc += 4;
+	}
 
 	pr_info(": Handled PCIe abort\n");
 
@@ -929,6 +937,7 @@ static int keystone_pcie_setup(int nr, struct pci_sys_data *sys)
 
 	info = (struct keystone_pcie_info *)sys->private_data;
 	reg_virt = info->reg_cfg_virt;
+
 	/* Not able to pass this to the fault code cleanly */
 	abort_check_base = (u32)reg_virt;
 
@@ -1026,8 +1035,9 @@ static int keystone_pcie_setup(int nr, struct pci_sys_data *sys)
 	 * PCIe access errors that result into OCP errors are caught by ARM as
 	 * "External aborts" (Precise).
 	 */
-	hook_fault_code(8, keystone_pcie_fault, SIGBUS, 0,
-			"Precise External Abort on non-linefetch");
+	hook_fault_code(17, keystone_pcie_fault, SIGBUS, 0,
+			"external abort on linefetch");
+
 	pr_info(DRIVER_NAME ": Doing PCI Setup...Done\n");
 	return 1;
 free_resource_0:
@@ -1355,7 +1365,7 @@ static int __init keystone_pcie_rc_init(void)
 	struct clk *pcie_clk;
 
 	pr_info(DRIVER_NAME
-		"keystone_pcie_rc_init - start\n");
+		": keystone_pcie_rc_init - start\n");
 
 	rc_info = kzalloc(sizeof(*rc_info), GFP_KERNEL);
 	if (!rc_info) {
@@ -1432,9 +1442,11 @@ static int __init keystone_pcie_rc_init(void)
 	}
 	of_node_put(np);
 	keystone_pcie_hw.private_data = (void **)&rc_info;
+	pcibios_min_mem = 0;
 	pci_common_init(&keystone_pcie_hw);
+	abort_check_base = 0;
 	pr_info(DRIVER_NAME
-		"keystone_pcie_rc_init - end\n");
+		": keystone_pcie_rc_init - end\n");
 
 	return 0;
 err1:
