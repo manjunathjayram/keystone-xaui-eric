@@ -2658,9 +2658,9 @@
 
 			interrupt-parent = <&gic>;
 			/* First 4 are legacy IRQs, followed by 8 MSI IRQs */
-			interrupts = <0 26 0xf04 0 27 0xf04 0 28 0xf04 0 29 0xf04
-				      0 30 0xf04 0 31 0xf04 0 32 0xf04 0 33 0xf04
-				      0 34 0xf04 0 35 0xf04 0 34 0xf04 0 37 0xf04>;
+			interrupts = <0 26 0xf01 0 27 0xf01 0 28 0xf01 0 29 0xf01
+				      0 30 0xf01 0 31 0xf01 0 32 0xf01 0 33 0xf01
+				      0 34 0xf01 0 35 0xf01 0 36 0xf01 0 37 0xf01>;
 			clocks = <&clkpcie>;
 			clock-names = "pcie";
 		};
