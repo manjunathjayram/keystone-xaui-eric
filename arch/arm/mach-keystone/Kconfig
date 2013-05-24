@@ -5,6 +5,10 @@ config TI_KEYSTONE
 
 menu "TI KeyStone Implementations"
 
+config KEYSTONE2_DMA_COHERENT
+	bool "MPAX based coherency support"
+	default n
+
 endmenu
 
 endif
