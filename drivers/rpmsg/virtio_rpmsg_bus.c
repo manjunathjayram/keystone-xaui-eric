@@ -773,6 +773,11 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 	msg->reserved = 0;
 	memcpy(msg->data, data, len);
 
+#ifdef CONFIG_KEYSTONE2_DMA_COHERENT
+	dma_sync_single_for_device(dev, virt_to_dma(dev, (void *)(msg)),
+					sizeof(struct rpmsg_hdr) + msg->len - 1,
+					DMA_TO_DEVICE);
+#endif
 	dev_dbg(dev, "TX From 0x%x, To 0x%x, Len %d, Flags %d, Reserved %d\n",
 					msg->src, msg->dst, msg->len,
 					msg->flags, msg->reserved);
@@ -810,6 +815,12 @@ static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
 	struct rpmsg_endpoint *ept;
 	struct scatterlist sg;
 	int err;
+
+#ifdef CONFIG_KEYSTONE2_DMA_COHERENT
+	dma_sync_single_for_cpu(dev, virt_to_dma(dev, (void *)(msg)),
+					sizeof(struct rpmsg_hdr) + msg->len - 1,
+					DMA_FROM_DEVICE);
+#endif
 
 	dev_dbg(dev, "From: 0x%x, To: 0x%x, Len: %d, Flags: %d, Reserved: %d\n",
 					msg->src, msg->dst, msg->len,
