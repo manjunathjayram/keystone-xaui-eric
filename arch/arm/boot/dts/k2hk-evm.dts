@@ -1683,7 +1683,7 @@
 			};
 			queues {
 				qpend-arm-low {
-					values = <652 20>;
+					values = <658 8>;
 					interrupts = <0 40 0xf04 0 41 0xf04 0 42 0xf04 0 43 0xf04
 						      0 44 0xf04 0 45 0xf04 0 46 0xf04 0 47 0xf04>;
 					reserved;
@@ -1713,6 +1713,43 @@
 				};
 				xge {
 					values = <8752 8>;
+					reserved;
+				};
+				accumulator-low-0 {
+					values = <128 32>;
+					// pdsp-id, channel, entries, pacing mode, latency
+					accumulator = <0 36 8 2 0>;
+					interrupts = <0 215 0xf01>;
+					multi-queue;
+					reserved;
+				};
+				accumulator-low-1 {
+					values = <160 32>;
+					// pdsp-id, channel, entries, pacing mode, latency
+					accumulator = <0 37 8 2 0>;
+					interrupts = <0 216 0xf01>;
+					multi-queue;
+				};
+				accumulator-low-2 {
+					values = <192 32>;
+					// pdsp-id, channel, entries, pacing mode, latency
+					accumulator = <0 38 8 2 0>;
+					interrupts = <0 217 0xf01>;
+					multi-queue;
+				};
+				accumulator-low-3 {
+					values = <224 32>;
+					// pdsp-id, channel, entries, pacing mode, latency
+					accumulator = <0 39 8 2 0>;
+					interrupts = <0 218 0xf01>;
+					multi-queue;
+				};
+				accumulator-high {
+					values = <720 8>;
+					// pdsp-id, channel, entries, pacing mode, latency
+					accumulator = <0 16 8 2 0>;
+					interrupts = <0 179 0xf01 0 180 0xf01 0 181 0xf01 0 182 0xf01
+						      0 183 0xf01 0 184 0xf01 0 185 0xf01 0 186 0xf01>;
 					reserved;
 				};
 				qos-inputs-1 {
@@ -1879,7 +1916,7 @@
 					label		= "patx-pdsp0";
 					pool		= "pool-net";
 					submit-queue	= <640>;
-					complete-queue = <8706>;
+					/* complete-queue = <xx>; */
 					/* debug; */
 					/* channel = <xx>; */
 					/* priority = <1>; */
@@ -1889,7 +1926,7 @@
 					label		= "patx-pdsp5-0";
 					pool		= "pool-net";
 					submit-queue	= <645>;
-					complete-queue = <8707>;
+					/* complete-queue = <xx>; */
 					/* debug; */
 					/* channel = <xx>; */
 					/* priority = <1>; */
