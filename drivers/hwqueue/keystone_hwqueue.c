@@ -18,6 +18,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/device.h>
+#include <linux/clk.h>
 #include <linux/io.h>
 #include <linux/bitops.h>
 #include <linux/slab.h>
@@ -1158,6 +1159,17 @@ static int khwq_probe(struct platform_device *pdev)
 	kdev->base_id    = temp[0];
 	kdev->num_queues = temp[1];
 
+	kdev->clk = clk_get(dev, "clk_hwqueue");
+	if (IS_ERR_OR_NULL(kdev->clk)) {
+		dev_err(dev, "unable to get hardware queue clock\n");
+		return -ENODEV;
+	}
+	if (clk_prepare_enable(kdev->clk)) {
+		dev_err(dev, "unable to enable hardware queue clock\n");
+		clk_put(kdev->clk);
+		return -ENODEV;
+	}
+
 	qmgrs =  of_get_child_by_name(node, "qmgrs");
 	if (!qmgrs) {
 		dev_err(dev, "queue manager info not specified\n");
@@ -1271,6 +1283,12 @@ static int khwq_remove(struct platform_device *pdev)
 	struct khwq_device *kdev = platform_get_drvdata(pdev);
 	struct hwqueue_device *hdev = to_hdev(kdev);
 	int ret;
+
+	if (kdev->clk) {
+		clk_disable_unprepare(kdev->clk);
+		clk_put(kdev->clk);
+	}
+	kdev->clk = NULL;
 
 	ret = hwqueue_device_unregister(hdev);
 	if (ret < 0) {
