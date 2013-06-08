@@ -1652,6 +1652,8 @@
 			compatible = "ti,keystone-hwqueue";
 			#address-cells = <1>;
 			#size-cells = <1>;
+			clocks = <&chipclk13>;
+			clock-names = "clk_hwqueue";
 			ranges;
 			range		= <0 0x4000>;
 			linkram0	= <0x100000 0x8000>;
