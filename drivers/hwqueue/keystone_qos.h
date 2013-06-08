@@ -19,8 +19,6 @@
 
 #define QOS_MAX_INPUTS			128
 
-#define QMSS_CLK_RATE			327680000
-
 #define QOS_RETCODE_SUCCESS		1
 
 #define QOS_COMMAND_TIMEOUT		20	/* msecs */

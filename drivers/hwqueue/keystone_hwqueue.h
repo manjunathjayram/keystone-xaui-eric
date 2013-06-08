@@ -220,6 +220,7 @@ struct khwq_qmgr_info {
 
 struct khwq_device {
 	struct device			*dev;
+	struct clk			*clk;
 	struct hwqueue_device		 hdev;
 	struct list_head		 regions;
 	struct khwq_link_ram_block	 link_rams[2];
