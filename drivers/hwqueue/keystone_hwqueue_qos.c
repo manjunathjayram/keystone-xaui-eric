@@ -18,6 +18,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/device.h>
+#include <linux/clk.h>
 #include <linux/io.h>
 #include <linux/bitops.h>
 #include <linux/slab.h>
@@ -3311,7 +3312,7 @@ static int khwq_qos_init_range(struct khwq_range_info *range)
 	}
 
 	/* calculate the timer config from the pdsp tick */
-	timer_config = (QMSS_CLK_RATE / info->ticks_per_sec);
+	timer_config = (clk_get_rate(kdev->clk) / info->ticks_per_sec);
 	timer_config /= 2;
 	command = (QOS_CMD_SET_TIMER_CONFIG | ((timer_config & 0xffff) << 16));
 	error = khwq_qos_write_cmd(info, command);
