@@ -125,6 +125,8 @@ struct cpts {
 	struct list_head events;
 	struct list_head pool;
 	struct cpts_event pool_data[CPTS_MAX_EVENTS];
+	struct sock_filter *filter;
+	int filter_size;
 #endif
 };
 
