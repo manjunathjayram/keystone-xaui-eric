@@ -241,7 +241,7 @@ static void cpts_overflow_check(struct work_struct *work)
 
 static void cpts_clk_init(struct cpts *cpts)
 {
-	cpts->refclk = clk_get(NULL, CPTS_REF_CLOCK_NAME);
+	cpts->refclk = clk_get(cpts->dev, CPTS_REF_CLOCK_NAME);
 	if (IS_ERR(cpts->refclk)) {
 		pr_err("Failed to clk_get %s\n", CPTS_REF_CLOCK_NAME);
 		cpts->refclk = NULL;
@@ -389,6 +389,7 @@ int cpts_register(struct device *dev, struct cpts *cpts,
 	}
 	spin_lock_init(&cpts->lock);
 
+	cpts->dev = dev;
 	cpts->cc.read = cpts_systim_read;
 	cpts->cc.mask = CLOCKSOURCE_MASK(32);
 	cpts->cc_mult = mult;
