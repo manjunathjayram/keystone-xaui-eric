@@ -852,6 +852,9 @@ static void netcp_tx_complete(void *data)
 
 	netcp_dump_packet(p_info, "txc");
 
+	if (p_info->txtstamp_complete)
+		p_info->txtstamp_complete(p_info->ts_context, p_info);
+
 	poll_count = atomic_add_return(sg_ents, &tx_pipe->dma_poll_count);
 	if ((poll_count >= tx_pipe->dma_resume_threshold) &&
 	    netif_subqueue_stopped(netcp->ndev, skb)) {
@@ -924,6 +927,8 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	p_info->skb = skb;
 	p_info->tx_pipe = NULL;
 	p_info->psdata_len = 0;
+	p_info->ts_context = NULL;
+	p_info->txtstamp_complete = NULL;
 	memset(p_info->epib, 0, sizeof(p_info->epib));
 
 	/* Find out where to inject the packet for transmission */
