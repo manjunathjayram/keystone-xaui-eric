@@ -31,11 +31,12 @@
 struct cpsw_cpts {
 	u32 idver;                /* Identification and version */
 	u32 control;              /* Time sync control */
-	u32 res1;
+	u32 rfclk_sel;            /* Ref Clock Select (v1.5 only) */
 	u32 ts_push;              /* Time stamp event push */
 	u32 ts_load_val;          /* Time stamp load value */
 	u32 ts_load_en;           /* Time stamp load enable */
-	u32 res2[2];
+	u32 ts_comp_val;          /* Time stamp comparison value, v1.5 & up */
+	u32 ts_comp_length;       /* Time stamp comp assert len, v1.5 & up */
 	u32 intstat_raw;          /* Time sync interrupt status raw */
 	u32 intstat_masked;       /* Time sync interrupt status masked */
 	u32 int_enable;           /* Time sync interrupt enable */
@@ -43,6 +44,7 @@ struct cpsw_cpts {
 	u32 event_pop;            /* Event interrupt pop */
 	u32 event_low;            /* 32 Bit Event Time Stamp */
 	u32 event_high;           /* Event Type Fields */
+	u32 event_high2;          /* Domain number in Ptp message v1.5 & up */
 };
 
 /* Bit definitions for the IDVER register */
