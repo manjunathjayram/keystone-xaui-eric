@@ -133,6 +133,10 @@ struct netcp_packet {
 	struct netcp_priv		*netcp;
 	dma_cookie_t			 cookie;
 	struct netcp_tx_pipe		*tx_pipe;
+	bool				 rxtstamp_complete;
+	void				*ts_context;
+	int				(*txtstamp_complete)(void *context,
+						struct netcp_packet *packet);
 };
 
 static inline int netcp_prepend_psdata(struct netcp_packet *p_info, u32 *data, unsigned len)
