@@ -132,14 +132,16 @@ struct cpts {
 };
 
 #ifdef CONFIG_TI_CPTS
-extern void cpts_rx_timestamp(struct cpts *cpts, struct sk_buff *skb);
-extern void cpts_tx_timestamp(struct cpts *cpts, struct sk_buff *skb);
+extern int cpts_rx_timestamp(struct cpts *cpts, struct sk_buff *skb);
+extern int cpts_tx_timestamp(struct cpts *cpts, struct sk_buff *skb);
 #else
-static inline void cpts_rx_timestamp(struct cpts *cpts, struct sk_buff *skb)
+static inline int cpts_rx_timestamp(struct cpts *cpts, struct sk_buff *skb)
 {
+	return 0;
 }
-static inline void cpts_tx_timestamp(struct cpts *cpts, struct sk_buff *skb)
+static inline int cpts_tx_timestamp(struct cpts *cpts, struct sk_buff *skb)
 {
+	return 0;
 }
 #endif
 
