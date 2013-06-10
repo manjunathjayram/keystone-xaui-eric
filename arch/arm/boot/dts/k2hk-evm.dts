@@ -2393,8 +2393,8 @@
 				0x2620110 0x8>;
 			compatible = "ti,keystone-netcp";
 
-			clocks = <&papllclk>, <&clkcpgmac>;
-			clock-names = "clk_pa", "clk_cpgmac";
+			clocks = <&papllclk>, <&clkcpgmac>, <&chipclk12>;
+			clock-names = "clk_pa", "clk_cpgmac", "cpsw_cpts_rft_clk";
 			dma-coherent;
 			streaming-regs = <0x02000604 0x4>;
 
@@ -2427,6 +2427,7 @@
 				slave_reg_ofs	  = <0x860>;
 				sliver_reg_ofs	  = <0x900>;
 				hw_stats_reg_ofs  = <0xb00>;
+				cpts_reg_ofs	  = <0xd00>;
 				ale_reg_ofs	  = <0xe00>;
 
 				num_slaves  = <2>;
