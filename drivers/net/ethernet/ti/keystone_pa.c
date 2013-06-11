@@ -109,34 +109,6 @@
 
 #define PA_SGLIST_SIZE	3
 
-static struct sock_filter ptp_filter[] = {
-	PTP_FILTER
-};
-
-static bool need_timestamp(const struct sk_buff *skb)
-{
-	unsigned type = PTP_CLASS_NONE;
-
-	if (likely(skb->dev &&
-		   skb->dev->phydev &&
-		   skb->dev->phydev->drv &&
-		   skb->dev->phydev->drv->txtstamp))
-		type = sk_run_filter(skb, ptp_filter);
-
-	/* if timestamping is handled at the phy, we don't timestamp */
-	switch (type) {
-	case PTP_CLASS_V1_IPV4:
-	case PTP_CLASS_V1_IPV6:
-	case PTP_CLASS_V2_IPV4:
-	case PTP_CLASS_V2_IPV6:
-	case PTP_CLASS_V2_L2:
-	case PTP_CLASS_V2_VLAN:
-		return false;
-	}
-
-	return true;
-}
-
 const u32 pap_pdsp_const_reg_map[6][4] =
 {
 	/* PDSP0: C24-C31 */
@@ -1496,7 +1468,7 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	/* If TX Timestamp required, request it */
 	if (unlikely((skb_shinfo(p_info->skb)->tx_flags & SKBTX_HW_TSTAMP) &&
 		     p_info->skb->sk && pa_intf->tx_timestamp_enable &&
-		     need_timestamp(p_info->skb))) {
+		   !(skb_shinfo(p_info->skb)->tx_flags & SKBTX_IN_PROGRESS))) {
 		pend = kzalloc(sizeof(*pend), GFP_ATOMIC);
 		if (pend) {
 			if (!atomic_inc_not_zero(&sk->sk_refcnt))
@@ -1738,6 +1710,9 @@ static int pa_rx_timestamp(int order, void *data, struct netcp_packet *p_info)
 	if (!pa_intf->rx_timestamp_enable)
 		return 0;
 
+	if (p_info->rxtstamp_complete)
+		return 0;
+
 	rx_timestamp = p_info->epib[0];
 	rx_timestamp |= ((u64)(p_info->psdata[5] & 0x0000ffff)) << 32;
 
@@ -1748,6 +1723,8 @@ static int pa_rx_timestamp(int order, void *data, struct netcp_packet *p_info)
 	sh_hw_tstamps->hwtstamp = ns_to_ktime(tstamp_raw_to_ns(pa_dev,
 							rx_timestamp));
 	sh_hw_tstamps->syststamp = ns_to_ktime(sys_time);
+
+	p_info->rxtstamp_complete = true;
 
 	return 0;
 }
