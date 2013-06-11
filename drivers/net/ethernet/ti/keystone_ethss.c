@@ -254,7 +254,7 @@ struct cpsw_priv {
 	struct kobject			tx_pri_kobj;
 	struct kobject			pvlan_kobj;
 	struct kobject			stats_kobj;
-	struct mutex			hw_stats_lock;
+	spinlock_t			hw_stats_lock;
 };
 
 struct cpsw_intf {
@@ -1128,9 +1128,9 @@ static ssize_t cpsw_stats_mod_store(struct cpsw_priv *cpsw_dev,
 		return -EINVAL;
 
 	stat_mod = (int)(attr->context);
-	mutex_lock(&cpsw_dev->hw_stats_lock);
+	spin_lock_bh(&cpsw_dev->hw_stats_lock);
 	cpsw_reset_mod_stats(cpsw_dev, stat_mod);
-	mutex_unlock(&cpsw_dev->hw_stats_lock);
+	spin_unlock_bh(&cpsw_dev->hw_stats_lock);
 	return count;
 }
 
@@ -1292,9 +1292,9 @@ static void keystone_get_ethtool_stats(struct net_device *ndev,
 				       struct ethtool_stats *stats,
 				       uint64_t *data)
 {
-	mutex_lock(&priv->hw_stats_lock);
+	spin_lock_bh(&priv->hw_stats_lock);
 	cpsw_update_stats(priv, data);
-	mutex_unlock(&priv->hw_stats_lock);
+	spin_unlock_bh(&priv->hw_stats_lock);
 
 	return;
 }
@@ -1788,9 +1788,9 @@ static void cpsw_timer(unsigned long arg)
 			netif_stop_queue(cpsw_intf->ndev);
 	}
 
-	mutex_lock(&cpsw_dev->hw_stats_lock);
+	spin_lock_bh(&cpsw_dev->hw_stats_lock);
 	cpsw_update_stats(cpsw_dev, NULL);
-	mutex_unlock(&cpsw_dev->hw_stats_lock);
+	spin_unlock_bh(&cpsw_dev->hw_stats_lock);
 
 	cpsw_intf->timer.expires = jiffies + (HZ/10);
 	add_timer(&cpsw_intf->timer);
@@ -2212,7 +2212,7 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 					       NULL, cpsw_dev->intf_tx_queues,
 					       1, 0);
 	/* init the hw stats lock */
-	mutex_init(&cpsw_dev->hw_stats_lock);
+	spin_lock_init(&cpsw_dev->hw_stats_lock);
 
 	ret = cpsw_create_sysfs_entries(cpsw_dev);
 	if (ret)
