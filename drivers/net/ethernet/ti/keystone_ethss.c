@@ -1099,19 +1099,20 @@ static void cpsw_reset_mod_stats(struct cpsw_priv *cpsw_dev, int stat_mod)
 {
 	struct cpsw_hw_stats __iomem *cpsw_statsa = cpsw_dev->hw_stats_regs[0];
 	struct cpsw_hw_stats __iomem *cpsw_statsb = cpsw_dev->hw_stats_regs[1];
-	void *p = NULL;
+	void __iomem *base;
+	u32  __iomem *p;
 	int i;
 
 	if (stat_mod == CPSW_STATSA_MODULE)
-		p = cpsw_statsa;
+		base = cpsw_statsa;
 	else
-		p = cpsw_statsb;
+		base = cpsw_statsb;
 
 	for (i = 0; i < ETHTOOL_STATS_NUM; i++) {
 		if (et_stats[i].type == stat_mod) {
 			cpsw_dev->hw_stats[i] = 0;
-			p = (u8 *)p + et_stats[i].offset;
-			*(u32 *)p = 0xffffffff;
+			p = base + et_stats[i].offset;
+			*p = 0xffffffff;
 		}
 	}
 	return;
@@ -1263,26 +1264,27 @@ static void cpsw_update_stats(struct cpsw_priv *cpsw_dev, uint64_t *data)
 {
 	struct cpsw_hw_stats __iomem *cpsw_statsa = cpsw_dev->hw_stats_regs[0];
 	struct cpsw_hw_stats __iomem *cpsw_statsb = cpsw_dev->hw_stats_regs[1];
-	void *p = NULL;
+	void __iomem *base = NULL;
+	u32  __iomem *p;
 	u32 tmp = 0;
 	int i;
 
 	for (i = 0; i < ETHTOOL_STATS_NUM; i++) {
 		switch (et_stats[i].type) {
 		case CPSW_STATSA_MODULE:
-			p = cpsw_statsa;
+			base = cpsw_statsa;
 			break;
 		case CPSW_STATSB_MODULE:
-			p  = cpsw_statsb;
+			base  = cpsw_statsb;
 			break;
 		}
 
-		p = (u8 *)p + et_stats[i].offset;
-		tmp = *(u32 *)p;
+		p = base + et_stats[i].offset;
+		tmp = *p;
 		cpsw_dev->hw_stats[i] = cpsw_dev->hw_stats[i] + tmp;
 		if (data)
 			data[i] = cpsw_dev->hw_stats[i];
-		*(u32 *)p = tmp;
+		*p = tmp;
 	}
 
 	return;
