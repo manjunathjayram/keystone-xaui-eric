@@ -32,12 +32,16 @@
 #include <linux/scatterlist.h>
 #include <linux/etherdevice.h>
 #include <linux/platform_device.h>
+#include <linux/ptp_classify.h>
 
 #include "cpsw_ale.h"
 #include "keystone_net.h"
+#include "cpts.h"
 
 #define NETCP_DRIVER_NAME	"TI KeyStone Ethernet Driver"
 #define NETCP_DRIVER_VERSION	"v1.2.2"
+
+#define CPSW_MODULE_NAME	"keystone-cpsw"
 
 #define CPSW_SGMII_IDENT(reg)		((reg >> 16) & 0xffff)
 #define CPSW_MAJOR_VERSION(reg)		(reg >> 8 & 0x7)
@@ -73,6 +77,71 @@
 #define CPSW_STATSB_MODULE			1
 
 #define MAX_SIZE_STREAM_BUFFER		        9504
+
+/* Px_TS_CTL register */
+#define CPSW_TS_RX_ANX_F_EN			BIT(0)
+#define CPSW_TS_RX_VLAN_LT1_EN			BIT(1)
+#define CPSW_TS_RX_VLAN_LT2_EN			BIT(2)
+#define CPSW_TS_RX_ANX_D_EN			BIT(3)
+#define CPSW_TS_TX_ANX_F_EN			BIT(4)
+#define CPSW_TS_TX_VLAN_LT1_EN			BIT(5)
+#define CPSW_TS_TX_VLAN_LT2_EN			BIT(6)
+#define CPSW_TS_TX_ANX_D_EN			BIT(7)
+#define CPSW_TS_LT2_EN				BIT(8)
+#define CPSW_TS_RX_ANX_E_EN			BIT(9)
+#define CPSW_TS_TX_ANX_E_EN			BIT(10)
+#define CPSW_TS_MSG_TYPE_EN_SHIFT		16
+#define CPSW_TS_MSG_TYPE_EN_MASK		0xffff
+
+/* Px_TS_SEQ_LTYPE */
+#define CPSW_TS_LTYPE1_SHIFT			0
+#define CPSW_TS_LTYPE1_MASK			0xffff
+#define CPSW_TS_SEQ_ID_OFS_SHIFT		16
+#define CPSW_TS_SEQ_ID_OFS_MASK			0x3f
+
+/* Px_TS_VLAN_LTYPE */
+#define CPSW_TS_VLAN_LTYPE1_SHIFT		0
+#define CPSW_TS_VLAN_LTYPE1_MASK		0xffff
+#define CPSW_TS_VLAN_LTYPE2_SHIFT		16
+#define CPSW_TS_VLAN_LTYPE2_MASK		0xffff
+
+/* Px_TS_CTL_LTYPE2 */
+#define CPSW_TS_LTYPE2_SHIFT			0
+#define CPSW_TS_LTYPE2_MASK			0xffff
+#define CPSW_TS_107				BIT(16)
+#define CPSW_TS_129				BIT(17)
+#define CPSW_TS_130				BIT(18)
+#define CPSW_TS_131				BIT(19)
+#define CPSW_TS_132				BIT(20)
+#define CPSW_TS_319				BIT(21)
+#define CPSW_TS_320				BIT(22)
+#define CPSW_TS_TTL_NONZERO			BIT(23)
+#define CPSW_TS_UNI_EN				BIT(24)
+
+/* Px_TS_CTL2 */
+#define CPSW_TS_MCAST_TYPE_EN_SHIFT		0
+#define CPSW_TS_MCAST_TYPE_EN_MASK		0xff
+#define CPSW_TS_DOMAIN_OFFSET_SHIFT		16
+#define CPSW_TS_DOMAIN_OFFSET_MASK		0x3f
+
+#define CPSW_TS_TX_ANX_ALL_EN		 \
+		(CPSW_TS_TX_ANX_D_EN	|\
+		 CPSW_TS_TX_ANX_E_EN	|\
+		 CPSW_TS_TX_ANX_F_EN)
+
+
+#define CPSW_TS_RX_ANX_ALL_EN		 \
+		(CPSW_TS_RX_ANX_D_EN	|\
+		 CPSW_TS_RX_ANX_E_EN	|\
+		 CPSW_TS_RX_ANX_F_EN)
+
+#define CPSW_TS_CTL_ALL	\
+		(CPSW_TS_107 | CPSW_TS_129 | CPSW_TS_130 | \
+		 CPSW_TS_131 | CPSW_TS_132 | CPSW_TS_319 | \
+		 CPSW_TS_320 | CPSW_TS_TTL_NONZERO)
+
+/* The PTP event messages - Sync, Delay_Req, Pdelay_Req, and Pdelay_Resp. */
+#define EVENT_MSG_BITS ((1<<0) | (1<<1) | (1<<2) | (1<<3))
 
 struct cpsw_slave {
 	struct cpsw_slave_regs __iomem	*regs;
@@ -129,6 +198,8 @@ struct cpsw_slave_regs {
 	u32	ts_ctl;
 	u32	ts_seq_ltype;
 	u32	ts_vlan;
+	u32	ts_ctl_ltype2;
+	u32	ts_ctl2;
 };
 
 struct cpsw_host_regs {
@@ -222,6 +293,7 @@ struct cpsw_priv {
 	u32				 sliver_reg_ofs;
 	u32				 hw_stats_reg_ofs;
 	u32				 ale_reg_ofs;
+	u32				 cpts_reg_ofs;
 
 	int				 host_port;
 	u32				 rx_packet_max;
@@ -255,6 +327,7 @@ struct cpsw_priv {
 	struct kobject			pvlan_kobj;
 	struct kobject			stats_kobj;
 	spinlock_t			hw_stats_lock;
+	struct cpts			cpts;
 };
 
 struct cpsw_intf {
@@ -1358,6 +1431,51 @@ static int keystone_set_settings(struct net_device *ndev,
 	return phy_ethtool_sset(phy, cmd);
 }
 
+#ifdef CONFIG_TI_CPTS
+static int keystone_get_ts_info(struct net_device *ndev,
+			    struct ethtool_ts_info *info)
+{
+	struct netcp_priv *netcp = netdev_priv(ndev);
+	struct netcp_device *netcp_device = netcp->netcp_device;
+	struct cpsw_priv *priv;
+
+	/* find the instance of the module registered to the netcp_device */
+	priv = netcp_device_find_module(netcp_device, CPSW_MODULE_NAME);
+	if (!priv)
+		return -EINVAL;
+
+	info->so_timestamping =
+		SOF_TIMESTAMPING_TX_HARDWARE |
+		SOF_TIMESTAMPING_TX_SOFTWARE |
+		SOF_TIMESTAMPING_RX_HARDWARE |
+		SOF_TIMESTAMPING_RX_SOFTWARE |
+		SOF_TIMESTAMPING_SOFTWARE |
+		SOF_TIMESTAMPING_RAW_HARDWARE;
+	info->phc_index = priv->cpts.phc_index;
+	info->tx_types =
+		(1 << HWTSTAMP_TX_OFF) |
+		(1 << HWTSTAMP_TX_ON);
+	info->rx_filters =
+		(1 << HWTSTAMP_FILTER_NONE) |
+		(1 << HWTSTAMP_FILTER_PTP_V1_L4_EVENT) |
+		(1 << HWTSTAMP_FILTER_PTP_V2_EVENT);
+	return 0;
+}
+#else
+static int keystone_get_ts_info(struct net_device *ndev,
+			    struct ethtool_ts_info *info)
+{
+	info->so_timestamping =
+		SOF_TIMESTAMPING_TX_SOFTWARE |
+		SOF_TIMESTAMPING_RX_SOFTWARE |
+		SOF_TIMESTAMPING_SOFTWARE;
+	info->phc_index = -1;
+	info->tx_types = 0;
+	info->rx_filters = 0;
+	return 0;
+}
+#endif
+
 static const struct ethtool_ops keystone_ethtool_ops = {
 	.get_drvinfo		= keystone_get_drvinfo,
 	.get_link		= ethtool_op_get_link,
@@ -1368,6 +1486,7 @@ static const struct ethtool_ops keystone_ethtool_ops = {
 	.get_ethtool_stats	= keystone_get_ethtool_stats,
 	.get_settings		= keystone_get_settings,
 	.set_settings		= keystone_set_settings,
+	.get_ts_info		= keystone_get_ts_info,
 };
 
 #define mac_hi(mac)	(((mac)[0] << 0) | ((mac)[1] << 8) |	\
@@ -1737,19 +1856,119 @@ int cpsw_del_vid(void *intf_priv, int vid)
 	return 0;
 }
 
+#ifdef CONFIG_TI_CPTS
+static struct sock_filter phy_ptp_filter[] = {
+	PTP_FILTER
+};
+
+static struct sock_filter cpsw_ptp_filter[] = {
+	PTP_FILTER
+};
+
+static void cpsw_hwtstamp(struct cpsw_intf *cpsw_intf)
+{
+	struct cpsw_priv *priv = cpsw_intf->cpsw_priv;
+	struct cpsw_slave *slave = cpsw_intf->slaves;
+	u32 ts_en, seq_id, ctl;
+
+	if (!priv->cpts.tx_enable && !priv->cpts.rx_enable) {
+		__raw_writel(0, &slave->regs->ts_ctl);
+		return;
+	}
+
+	seq_id = (30 << CPSW_TS_SEQ_ID_OFS_SHIFT) | ETH_P_1588;
+	ts_en = EVENT_MSG_BITS << CPSW_TS_MSG_TYPE_EN_SHIFT;
+	ctl = ETH_P_1588 | CPSW_TS_CTL_ALL;
+
+	if (priv->cpts.tx_enable)
+		ts_en |= CPSW_TS_TX_ANX_ALL_EN;
+
+	if (priv->cpts.rx_enable)
+		ts_en |= CPSW_TS_RX_ANX_ALL_EN;
+
+	writel(ts_en, &slave->regs->ts_ctl);
+	writel(seq_id, &slave->regs->ts_seq_ltype);
+	writel(ctl, &slave->regs->ts_ctl_ltype2);
+}
+
+static int cpsw_hwtstamp_ioctl(struct cpsw_intf *cpsw_intf, struct ifreq *ifr)
+{
+	struct cpsw_priv *priv = cpsw_intf->cpsw_priv;
+	struct cpts *cpts = &priv->cpts;
+	struct hwtstamp_config cfg;
+
+	if (!cpts->reg)
+		return -EOPNOTSUPP;
+
+	if (copy_from_user(&cfg, ifr->ifr_data, sizeof(cfg)))
+		return -EFAULT;
+
+	/* reserved for future extensions */
+	if (cfg.flags)
+		return -EINVAL;
+
+	switch (cfg.tx_type) {
+	case HWTSTAMP_TX_OFF:
+		cpts->tx_enable = 0;
+		break;
+	case HWTSTAMP_TX_ON:
+		cpts->tx_enable = 1;
+		break;
+	default:
+		return -ERANGE;
+	}
+
+	switch (cfg.rx_filter) {
+	case HWTSTAMP_FILTER_NONE:
+		cpts->rx_enable = 0;
+		break;
+	case HWTSTAMP_FILTER_ALL:
+	case HWTSTAMP_FILTER_PTP_V1_L4_EVENT:
+	case HWTSTAMP_FILTER_PTP_V1_L4_SYNC:
+	case HWTSTAMP_FILTER_PTP_V1_L4_DELAY_REQ:
+		cpts->rx_enable = 1;
+		cfg.rx_filter = HWTSTAMP_FILTER_PTP_V1_L4_EVENT;
+		break;
+	case HWTSTAMP_FILTER_PTP_V2_L4_EVENT:
+	case HWTSTAMP_FILTER_PTP_V2_L4_SYNC:
+	case HWTSTAMP_FILTER_PTP_V2_L4_DELAY_REQ:
+	case HWTSTAMP_FILTER_PTP_V2_L2_EVENT:
+	case HWTSTAMP_FILTER_PTP_V2_L2_SYNC:
+	case HWTSTAMP_FILTER_PTP_V2_L2_DELAY_REQ:
+	case HWTSTAMP_FILTER_PTP_V2_EVENT:
+	case HWTSTAMP_FILTER_PTP_V2_SYNC:
+	case HWTSTAMP_FILTER_PTP_V2_DELAY_REQ:
+		cpts->rx_enable = 1;
+		cfg.rx_filter = HWTSTAMP_FILTER_PTP_V2_EVENT;
+		break;
+	default:
+		return -ERANGE;
+	}
+
+	cpsw_hwtstamp(cpsw_intf);
+
+	return copy_to_user(ifr->ifr_data, &cfg, sizeof(cfg)) ? -EFAULT : 0;
+}
+#else
+static inline int cpsw_hwtstamp_ioctl(struct cpsw_intf *cpsw_intf,
+					struct ifreq *ifr)
+{
+	return -EOPNOTSUPP;
+}
+#endif /*CONFIG_TI_CPTS*/
+
 int cpsw_ioctl(void *intf_priv, struct ifreq *req, int cmd)
 {
 	struct cpsw_intf *cpsw_intf = intf_priv;
 	struct cpsw_slave *slave = cpsw_intf->slaves;
 	struct phy_device *phy = slave->phy;
-	int ret;
+	int ret = -EOPNOTSUPP;
 
-	if (!phy)
-		return -EOPNOTSUPP;
+	if (phy)
+		ret = phy_mii_ioctl(phy, req, cmd);
 
-	ret = phy_mii_ioctl(phy, req, cmd);
-	if ((cmd == SIOCSHWTSTAMP) && (ret == -ERANGE))
-		ret = -EOPNOTSUPP;
+	if ((cmd == SIOCSHWTSTAMP) && (ret == -EOPNOTSUPP))
+		ret = cpsw_hwtstamp_ioctl(cpsw_intf, req);
 
 	return ret;
 }
@@ -1800,12 +2019,142 @@ static void cpsw_timer(unsigned long arg)
 	return;
 }
 
+#ifdef CONFIG_TI_CPTS
+#define PHY_TXTSTAMP(p)				\
+		(p->skb->dev &&			\
+		 p->skb->dev->phydev &&		\
+		 p->skb->dev->phydev->drv &&	\
+		 p->skb->dev->phydev->drv->txtstamp)
+
+#define PHY_RXTSTAMP(p)				\
+		(p->skb->dev &&			\
+		 p->skb->dev->phydev &&		\
+		 p->skb->dev->phydev->drv &&	\
+		 p->skb->dev->phydev->drv->rxtstamp)
+
+static bool phy_ptp_tstamp(const struct netcp_packet *p_info, bool is_tx)
+{
+	struct sk_buff *skb = p_info->skb;
+	unsigned type = PTP_CLASS_NONE;
+
+	if (is_tx && likely(PHY_TXTSTAMP(p_info)))
+		type = sk_run_filter(skb, phy_ptp_filter);
+	else if (!is_tx && likely(PHY_RXTSTAMP(p_info)))
+		type = sk_run_filter(skb, phy_ptp_filter);
+	else
+		return false;
+
+	switch (type) {
+	case PTP_CLASS_V1_IPV4:
+	case PTP_CLASS_V1_IPV6:
+	case PTP_CLASS_V2_IPV4:
+	case PTP_CLASS_V2_IPV6:
+	case PTP_CLASS_V2_L2:
+	case PTP_CLASS_V2_VLAN:
+		return true;
+	}
+
+	return false;
+}
+
+static int cpsw_txtstamp_complete(void *context, struct netcp_packet *p_info)
+{
+	struct cpsw_intf *cpsw_intf = context;
+	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+
+	return cpts_tx_timestamp(&cpsw_dev->cpts, p_info->skb);
+}
+
+static bool cpsw_cpts_txtstamp(struct cpsw_intf *cpsw_intf,
+				const struct netcp_packet *p_info)
+{
+	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+	struct sk_buff *skb = p_info->skb;
+	unsigned type = PTP_CLASS_NONE;
+
+	if (!cpsw_dev->cpts.tx_enable)
+		return false;
+
+	type = sk_run_filter(skb, cpsw_dev->cpts.filter);
+	switch (type) {
+	case PTP_CLASS_V1_IPV4:
+	case PTP_CLASS_V1_IPV6:
+	case PTP_CLASS_V2_IPV4:
+	case PTP_CLASS_V2_IPV6:
+	case PTP_CLASS_V2_L2:
+	case PTP_CLASS_V2_VLAN:
+		return true;
+	}
+
+	return false;
+}
+
+int cpsw_mark_pkt_txtstamp(struct cpsw_intf *cpsw_intf,
+			struct netcp_packet *p_info)
+{
+	if (!(skb_shinfo(p_info->skb)->tx_flags & SKBTX_HW_TSTAMP))
+		return 0;
+
+	if (phy_ptp_tstamp(p_info, true)) {
+		skb_shinfo(p_info->skb)->tx_flags |= SKBTX_IN_PROGRESS;
+		return 0;
+	}
+
+	if (cpsw_cpts_txtstamp(cpsw_intf, p_info)) {
+		p_info->txtstamp_complete = cpsw_txtstamp_complete;
+		p_info->ts_context = (void *)cpsw_intf;
+		skb_shinfo(p_info->skb)->tx_flags |= SKBTX_IN_PROGRESS;
+	}
+
+	return 0;
+}
+
+static int cpsw_rxtstamp_complete(struct cpsw_intf *cpsw_intf,
+				struct netcp_packet *p_info)
+{
+	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+
+	if (p_info->rxtstamp_complete == true)
+		return 0;
+
+	if (phy_ptp_tstamp(p_info, false)) {
+		p_info->rxtstamp_complete = true;
+		return 0;
+	}
+
+	if (!cpts_rx_timestamp(&cpsw_dev->cpts, p_info->skb))
+		p_info->rxtstamp_complete = true;
+
+	return 0;
+}
+#else
+static inline int cpsw_mark_pkt_txtstamp(struct cpsw_intf *cpsw_intf,
+					struct netcp_packet *p_info)
+{
+	return 0;
+}
+
+static inline int cpsw_rxtstamp_complete(struct cpsw_intf *cpsw_intf,
+					struct netcp_packet *p_info)
+{
+	return 0;
+}
+#endif /* CONFIG_TI_CPTS */
+
 static int cpsw_tx_hook(int order, void *data, struct netcp_packet *p_info)
 {
 	struct cpsw_intf *cpsw_intf = data;
 
 	p_info->tx_pipe = &cpsw_intf->tx_pipe;
-	return 0;
+
+	return cpsw_mark_pkt_txtstamp(cpsw_intf, p_info);
+}
+
+static int cpsw_rx_hook(int order, void *data, struct netcp_packet *p_info)
+{
+	struct cpsw_intf *cpsw_intf = data;
+
+	return cpsw_rxtstamp_complete(cpsw_intf, p_info);
 }
 
 #define	CPSW_TXHOOK_ORDER	0
@@ -1900,6 +2249,9 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 
 	netcp_register_txhook(netcp, CPSW_TXHOOK_ORDER,
 			      cpsw_tx_hook, cpsw_intf);
+
+	netcp_register_rxhook(netcp, CPSW_TXHOOK_ORDER,
+			      cpsw_rx_hook, cpsw_intf);
 
 	/* Configure the streaming switch */
 #define	PSTREAM_ROUTE_DMA	6
@@ -2034,6 +2386,25 @@ static int cpsw_create_sysfs_entries(struct cpsw_priv *cpsw_dev)
 	return 0;
 }
 
+#ifdef CONFIG_TI_CPTS
+static inline void cpsw_register_cpts(struct cpsw_priv *cpsw_dev)
+{
+	if (!cpsw_dev->cpts.reg)
+		return;
+
+	cpsw_dev->cpts.filter = cpsw_ptp_filter;
+	cpsw_dev->cpts.filter_size = ARRAY_SIZE(cpsw_ptp_filter);
+
+	/* Let cpts calculate the mult and shift */
+	if (cpts_register(cpsw_dev->dev, &cpsw_dev->cpts, 0, 0))
+		dev_err(cpsw_dev->dev, "error registering cpts device\n");
+}
+#else
+static inline void cpsw_register_cpts(struct cpsw_priv *cpsw_dev)
+{
+}
+#endif /* CONFIG_TI_CPTS */
+
 static int cpsw_probe(struct netcp_device *netcp_device,
 			struct device *dev,
 			struct device_node *node,
@@ -2114,6 +2485,10 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	if (ret < 0)
 		dev_err(dev, "missing ale reg offset, err %d\n", ret);
 
+	ret = of_property_read_u32(node, "cpts_reg_ofs",
+				   &cpsw_dev->cpts_reg_ofs);
+	if (ret < 0)
+		dev_err(dev, "missing cpts reg offset, err %d\n", ret);
 
 	ret = of_property_read_u32(node, "num_slaves", &cpsw_dev->num_slaves);
 	if (ret < 0) {
@@ -2173,6 +2548,8 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	cpsw_dev->hw_stats_regs[0] = regs + cpsw_dev->hw_stats_reg_ofs;
 	cpsw_dev->hw_stats_regs[1] = regs + cpsw_dev->hw_stats_reg_ofs + 0x100;
 	cpsw_dev->ale_reg	  = regs + cpsw_dev->ale_reg_ofs;
+	if (cpsw_dev->cpts_reg_ofs)
+		cpsw_dev->cpts.reg = regs + cpsw_dev->cpts_reg_ofs;
 
 	cpsw_dev->host_port = 0;
 	cpsw_dev->rx_packet_max = 9500;
@@ -2220,6 +2597,7 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	if (ret)
 		goto exit;
 
+	cpsw_register_cpts(cpsw_dev);
 	return 0;
 
 exit:
@@ -2347,7 +2725,7 @@ static int cpsw_release(void *intf_priv)
 
 
 static struct netcp_module cpsw_module = {
-	.name		= "keystone-cpsw",
+	.name		= CPSW_MODULE_NAME,
 	.owner		= THIS_MODULE,
 	.probe		= cpsw_probe,
 	.open		= cpsw_open,
