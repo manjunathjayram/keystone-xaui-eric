@@ -66,7 +66,6 @@ struct netcp_tx_pipe {
 	u8				 filler1;
 	u16				 dma_queue;
 	unsigned int			 dma_queue_depth;
-	unsigned int			 dma_poll_threshold;
 	unsigned int			 dma_pause_threshold;
 	unsigned int			 dma_resume_threshold;
 	atomic_t			 dma_poll_count;
