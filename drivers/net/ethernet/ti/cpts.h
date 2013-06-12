@@ -95,8 +95,12 @@ enum {
 	CPTS_EV_TX,   /* Ethernet Transmit Event */
 };
 
-/* This covers any input clock up to about 500 MHz. */
-#define CPTS_OVERFLOW_PERIOD (HZ * 8)
+/*
+   This covers any input clock up to about 500 MHz.
+   It also take care of misalignments that might occur
+   around counter half roll over.
+*/
+#define CPTS_OVERFLOW_PERIOD (HZ * 4)
 
 #define CPTS_FIFO_DEPTH 16
 #define CPTS_MAX_EVENTS 32
