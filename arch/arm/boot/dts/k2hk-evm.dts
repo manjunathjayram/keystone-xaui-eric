@@ -1734,7 +1734,7 @@
 				accumulator-low-0 {
 					values = <128 32>;
 					// pdsp-id, channel, entries, pacing mode, latency
-					accumulator = <0 36 8 2 0>;
+					accumulator = <0 36 16 2 50>;
 					interrupts = <0 215 0xf01>;
 					multi-queue;
 					reserved;
@@ -1742,21 +1742,21 @@
 				accumulator-low-1 {
 					values = <160 32>;
 					// pdsp-id, channel, entries, pacing mode, latency
-					accumulator = <0 37 8 2 0>;
+					accumulator = <0 37 16 2 50>;
 					interrupts = <0 216 0xf01>;
 					multi-queue;
 				};
 				accumulator-low-2 {
 					values = <192 32>;
 					// pdsp-id, channel, entries, pacing mode, latency
-					accumulator = <0 38 8 2 0>;
+					accumulator = <0 38 16 2 50>;
 					interrupts = <0 217 0xf01>;
 					multi-queue;
 				};
 				accumulator-low-3 {
 					values = <224 32>;
 					// pdsp-id, channel, entries, pacing mode, latency
-					accumulator = <0 39 8 2 0>;
+					accumulator = <0 39 16 2 50>;
 					interrupts = <0 218 0xf01>;
 					multi-queue;
 				};
