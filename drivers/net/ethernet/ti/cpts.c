@@ -241,12 +241,32 @@ static void cpts_overflow_check(struct work_struct *work)
 
 static void cpts_clk_init(struct cpts *cpts)
 {
+	unsigned long rate;
+	u64 max_sec;
+
 	cpts->refclk = clk_get(cpts->dev, CPTS_REF_CLOCK_NAME);
 	if (IS_ERR(cpts->refclk)) {
 		pr_err("Failed to clk_get %s\n", CPTS_REF_CLOCK_NAME);
 		cpts->refclk = NULL;
 		return;
 	}
+
+	if (!cpts->cc.mult && !cpts->cc.shift) {
+		/*
+		   calculate the multiplier/shift to
+		   convert CPTS counter ticks to ns.
+		*/
+		rate = clk_get_rate(cpts->refclk);
+		max_sec = ((1ULL << 48) - 1) + (rate - 1);
+		do_div(max_sec, rate);
+
+		clocks_calc_mult_shift(&cpts->cc.mult, &cpts->cc.shift, rate,
+					NSEC_PER_SEC, max_sec);
+
+		pr_debug("cpts rftclk rate(%lu HZ),mult(%u),shift(%u)\n",
+				rate, cpts->cc.mult, cpts->cc.shift);
+	}
+
 	clk_prepare_enable(cpts->refclk);
 }
 
@@ -366,6 +386,10 @@ int cpts_tx_timestamp(struct cpts *cpts, struct sk_buff *skb)
 
 #endif /*CONFIG_TI_CPTS*/
 
+/*
+    If both mult and shift are passed in as 0, they will be
+    calculated based on the cpts rfclk frequency
+*/
 int cpts_register(struct device *dev, struct cpts *cpts,
 		  u32 mult, u32 shift)
 {
@@ -404,6 +428,8 @@ int cpts_register(struct device *dev, struct cpts *cpts,
 		list_add(&cpts->pool_data[i].list, &cpts->pool);
 
 	cpts_clk_init(cpts);
+	/* mult may be updated during clk init */
+	cpts->cc_mult = cpts->cc.mult;
 	cpts_write32(cpts, CPTS_EN, control);
 	cpts_write32(cpts, TS_PEND_EN, int_enable);
 
