@@ -609,6 +609,7 @@ static void netcp_rx_complete(void *data)
 #endif
 
 	/* Call each of the RX hooks */
+	p_info->rxtstamp_complete = false;
 	list_for_each_entry(rx_hook, &netcp->rxhook_list_head, list) {
 		int ret;
 		ret = rx_hook->hook_rtn(rx_hook->order, rx_hook->hook_data, p_info);
