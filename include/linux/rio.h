@@ -506,12 +506,27 @@ extern int rio_dev_add(struct rio_dev *rdev);
 
 /**
  * struct rio_scan - RIO enumeration and discovery operations
+ * @owner: The module owner of this structure
  * @enumerate: Callback to perform RapidIO fabric enumeration.
  * @discover: Callback to perform RapidIO fabric discovery.
  */
 struct rio_scan {
+	struct module *owner;
 	int (*enumerate)(struct rio_mport *mport, u32 flags);
 	int (*discover)(struct rio_mport *mport, u32 flags);
+};
+
+/**
+ * struct rio_scan_node - list node to register RapidIO enumeration and
+ * discovery methods with RapidIO core.
+ * @mport_id: ID of an mport (net) serviced by this enumerator
+ * @node: node in global list of registered enumerators
+ * @ops: RIO enumeration and discovery operations
+ */
+struct rio_scan_node {
+	int mport_id;
+	struct list_head node;
+	struct rio_scan *ops;
 };
 
 /* Architecture and hardware-specific functions */
