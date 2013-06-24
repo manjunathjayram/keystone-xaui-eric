@@ -1070,8 +1070,8 @@ int netcp_txpipe_open(struct netcp_tx_pipe *tx_pipe)
 		return ret;
 	}
 
-	dma_set_notify(tx_pipe->dma_channel, netcp_tx_notify, tx_pipe);
 	netcp_set_txpipe_state(tx_pipe, TX_STATE_INTERRUPT);
+	dma_set_notify(tx_pipe->dma_channel, netcp_tx_notify, tx_pipe);
 
 	tx_pipe->dma_queue = dma_get_tx_queue(tx_pipe->dma_channel);
 	atomic_set(&tx_pipe->dma_poll_count, tx_pipe->dma_queue_depth);
