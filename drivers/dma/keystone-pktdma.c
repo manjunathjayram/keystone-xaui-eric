@@ -1055,6 +1055,10 @@ static void chan_stop(struct keystone_dma_chan *chan)
 		schedule_timeout_interruptible(DMA_TIMEOUT / 10);
 	} while (time_after(end, jiffies));
 
+	/* Forget the notifier info */
+	chan->notify_info.fn     = NULL;
+	chan->notify_info.fn_arg = NULL;
+
 	/* then disconnect the completion side and hope for the best */
 	if (chan->reg_rx_flow) {
 		__raw_writel(0, &chan->reg_rx_flow->control);
