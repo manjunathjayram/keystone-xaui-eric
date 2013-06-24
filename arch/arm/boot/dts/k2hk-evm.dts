@@ -1770,7 +1770,7 @@
 				};
 				qos-inputs-1 {
 					values			= <8000 192>;
-					pdsp-id			= <1>;
+					pdsp-id			= <3>;
 					ticks-per-sec		= <10000>;
 					qos-cfg			= <4 50 1 1 0xf00 0 0>;
 					sched-port-configs	= <0 20 0x1c8>;
@@ -1784,7 +1784,7 @@
 				};
 				qos-inputs-2 {
 					values			= <6400 192>;
-					pdsp-id			= <3>;
+					pdsp-id			= <7>;
 					ticks-per-sec		= <10000>;
 					qos-cfg			= <4 50 1 1 0xf00 0 0>;
 					sched-port-configs	= <0 20 0x1c8>;
@@ -1851,14 +1851,6 @@
 					       0x2a20000 0x4000>;  /*cmd*/
 					id = <0>;
 				};
-				pdsp1@0x2a11000 {
-					firmware = "keystone/qmss_pdsp_qos_k2_le_2_0_1_5.fw";
-					reg = <0x2a11000 0x1000    /*iram */
-					       0x2a0f100 0x100     /*reg*/
-					       0x2a0c000 0x3c8	   /*intd */
-					       0x2a24000 0x4000>;  /*cmd*/
-					id = <1>;
-				};
 				pdsp3@0x2a13000 {
 					firmware = "keystone/qmss_pdsp_qos_k2_le_2_0_1_5.fw";
 					reg = <0x2a13000 0x1000    /*iram */
@@ -1866,6 +1858,14 @@
 					       0x2a0c000 0x3c8	   /*intd */
 					       0x2a2c000 0x4000>;  /*cmd*/
 					id = <3>;
+				};
+				pdsp7@0x2a17000 {
+					firmware = "keystone/qmss_pdsp_qos_k2_le_2_0_1_5.fw";
+					reg = <0x2a17000 0x1000    /*iram */
+					       0x2a0f700 0x100     /*reg*/
+					       0x2a0c000 0x3c8	   /*intd */
+					       0x2a3c000 0x4000>;  /*cmd*/
+					id = <7>;
 				};
 			};
 		}; /* hwqueue0 */
