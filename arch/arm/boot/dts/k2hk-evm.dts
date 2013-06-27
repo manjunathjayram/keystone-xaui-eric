@@ -2042,7 +2042,7 @@
 					label		= "qos5";
 					pool		= "pool-net";
 					submit-queue	= <8077>;
-					/* complete-queue = <xx>; */
+					complete-queue  = <8707>;
 					/* debug; */
 					/* channel = <xx>; */
 					/* priority = <1>; */
@@ -2102,7 +2102,7 @@
 					label		= "qos11";
 					pool		= "pool-net";
 					submit-queue	= <6477>;
-					/* complete-queue = <xx>; */
+					complete-queue  = <8708>;
 					/* debug; */
 					/* channel = <xx>; */
 					/* priority = <1>; */
