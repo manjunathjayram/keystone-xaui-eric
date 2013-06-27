@@ -1942,7 +1942,7 @@
 					label		= "patx-pdsp0";
 					pool		= "pool-net";
 					submit-queue	= <640>;
-					/* complete-queue = <xx>; */
+					complete-queue  = <8706>;
 					/* debug; */
 					/* channel = <xx>; */
 					/* priority = <1>; */
