@@ -288,6 +288,7 @@ struct pa_device {
 	u32				 lut_size;
 
 	u32				 ts_not_req;
+	int				 force_no_hwtstamp;
 };
 
 #define pa_from_module(data)	container_of(data, struct pa_device, module)
@@ -1467,7 +1468,8 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 
 	/* If TX Timestamp required, request it */
 	if (unlikely((skb_shinfo(p_info->skb)->tx_flags & SKBTX_HW_TSTAMP) &&
-		     p_info->skb->sk && pa_intf->tx_timestamp_enable &&
+		   !pa_dev->force_no_hwtstamp &&
+		   p_info->skb->sk && pa_intf->tx_timestamp_enable &&
 		   !(skb_shinfo(p_info->skb)->tx_flags & SKBTX_IN_PROGRESS))) {
 		pend = kzalloc(sizeof(*pend), GFP_ATOMIC);
 		if (pend) {
@@ -1706,6 +1708,9 @@ static int pa_rx_timestamp(int order, void *data, struct netcp_packet *p_info)
 	struct skb_shared_hwtstamps *sh_hw_tstamps;
 	u64 rx_timestamp;
 	u64 sys_time;
+
+	if (pa_dev->force_no_hwtstamp)
+		return 0;
 
 	if (!pa_intf->rx_timestamp_enable)
 		return 0;
@@ -2364,6 +2369,11 @@ static int pa_probe(struct netcp_device *netcp_device,
 	if (!of_get_property(node, "lut-ranges", &len)) {
 		dev_err(dev, "No lut-entry array in dt bindings for PA\n");
 		return -ENODEV;
+	}
+
+	if (of_find_property(node, "force_no_hwtstamp", NULL)) {
+		pa_dev->force_no_hwtstamp = 1;
+		dev_warn(dev, "***** No PA timestamping *****\n");
 	}
 
 	prange = devm_kzalloc(dev, len, GFP_KERNEL);
