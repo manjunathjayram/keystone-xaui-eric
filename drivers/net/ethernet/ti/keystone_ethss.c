@@ -117,6 +117,7 @@
 #define CPSW_TS_320				BIT(22)
 #define CPSW_TS_TTL_NONZERO			BIT(23)
 #define CPSW_TS_UNI_EN				BIT(24)
+#define CPSW_TS_UNI_EN_SHIFT			24
 
 /* Px_TS_CTL2 */
 #define CPSW_TS_MCAST_TYPE_EN_SHIFT		0
@@ -135,13 +136,26 @@
 		 CPSW_TS_RX_ANX_E_EN	|\
 		 CPSW_TS_RX_ANX_F_EN)
 
-#define CPSW_TS_CTL_ALL	\
+#define CPSW_TS_CTL_DST_PORT		(CPSW_TS_319)
+#define CPSW_TS_CTL_DST_PORT_SHIFT	21
+
+#define CPSW_TS_CTL_MADDR_ALL	\
 		(CPSW_TS_107 | CPSW_TS_129 | CPSW_TS_130 | \
-		 CPSW_TS_131 | CPSW_TS_132 | CPSW_TS_319 | \
-		 CPSW_TS_320 | CPSW_TS_TTL_NONZERO)
+		 CPSW_TS_131 | CPSW_TS_132)
+
+#define CPSW_TS_CTL_MADDR_SHIFT		16
 
 /* The PTP event messages - Sync, Delay_Req, Pdelay_Req, and Pdelay_Resp. */
 #define EVENT_MSG_BITS ((1<<0) | (1<<1) | (1<<2) | (1<<3))
+
+#define MAX_SLAVES			4
+
+struct cpts_port_ts_ctl {
+	int	uni;
+	u8	dst_port_map;
+	u8	maddr_map;
+	u8	ts_mcast_type;
+};
 
 struct cpsw_slave {
 	struct cpsw_slave_regs __iomem	*regs;
@@ -154,6 +168,7 @@ struct cpsw_slave {
 	struct cpsw_ale			*ale;
 	u32				 link_interface;
 	u8				 phy_port_t;
+	struct cpts_port_ts_ctl		 ts_ctl;
 };
 
 struct cpsw_ss_regs {
@@ -325,6 +340,7 @@ struct cpsw_priv {
 	struct kobject			kobj;
 	struct kobject			tx_pri_kobj;
 	struct kobject			pvlan_kobj;
+	struct kobject			port_ts_kobj[MAX_SLAVES];
 	struct kobject			stats_kobj;
 	spinlock_t			hw_stats_lock;
 	struct cpts			cpts;
@@ -1168,6 +1184,284 @@ static struct kobj_type cpsw_pvlan_ktype = {
 	.default_attrs = cpsw_pvlan_default_attrs,
 };
 
+struct cpsw_ts_attribute {
+	struct attribute attr;
+	ssize_t (*show)(struct cpsw_priv *cpsw_dev,
+		struct cpsw_ts_attribute *attr, char *buf, void *);
+	ssize_t	(*store)(struct cpsw_priv *cpsw_dev,
+		struct cpsw_ts_attribute *attr, const char *, size_t, void *);
+};
+#define to_cpsw_ts_attr(_attr) \
+	container_of(_attr, struct cpsw_ts_attribute, attr)
+
+#define __CPSW_TS_ATTR(_name, _mode, _show, _store)		\
+	{ \
+		.attr = {.name = __stringify(_name), .mode = _mode },	\
+		.show	= _show,		\
+		.store	= _store,		\
+	}
+
+#define pts_to_cpsw_dev(obj) container_of(obj, struct cpsw_priv, pts_kobj)
+
+#define pts_n_to_cpsw_dev(obj, n) \
+	container_of(obj, struct cpsw_priv, port_ts_kobj[n])
+
+struct cpsw_slave *cpsw_port_num_get_slave(struct cpsw_priv *cpsw_dev, int port)
+{
+	struct cpsw_intf *cpsw_intf;
+	struct cpsw_slave *slave = NULL;
+	int idx;
+
+	for_each_intf(cpsw_intf, cpsw_dev) {
+		if (cpsw_intf->multi_if) {
+			slave = cpsw_intf->slaves;
+			if (slave->port_num == port)
+				return slave;
+		} else {
+			for (idx = 0; idx < cpsw_intf->num_slaves; idx++) {
+				slave = cpsw_intf->slaves + idx;
+				if (slave->port_num == port)
+					return slave;
+			}
+		}
+	}
+	return NULL;
+}
+
+static ssize_t cpsw_port_ts_uni_show(struct cpsw_priv *cpsw_dev,
+		     struct cpsw_ts_attribute *attr,
+		     char *buf, void *context)
+{
+	struct cpsw_slave *slave;
+	int len, port;
+	u32 reg;
+
+	port = (int)context;
+
+	slave = cpsw_port_num_get_slave(cpsw_dev, port);
+	if (!slave)
+		return 0;
+
+	reg = readl(&slave->regs->ts_ctl_ltype2);
+	len = snprintf(buf, PAGE_SIZE, "%lu\n",
+		((reg & CPSW_TS_UNI_EN) >> CPSW_TS_UNI_EN_SHIFT));
+
+	return len;
+}
+
+static ssize_t cpsw_port_ts_uni_store(struct cpsw_priv *cpsw_dev,
+			      struct cpsw_ts_attribute *attr,
+			      const char *buf, size_t count, void *context)
+{
+	struct cpsw_slave *slave;
+	int port, val;
+	u32 reg, mode;
+
+	port = (int)context;
+
+	slave = cpsw_port_num_get_slave(cpsw_dev, port);
+	if (!slave)
+		return 0;
+
+	if (kstrtoint(buf, 0, &val) < 0)
+		return -EINVAL;
+
+
+	if (val)
+		mode = CPSW_TS_UNI_EN;
+	else
+		mode = (slave->ts_ctl.maddr_map << CPSW_TS_CTL_MADDR_SHIFT);
+
+	reg = readl(&slave->regs->ts_ctl_ltype2);
+	reg &= ~(CPSW_TS_UNI_EN | CPSW_TS_CTL_MADDR_ALL);
+	reg |= mode;
+	writel(reg, &slave->regs->ts_ctl_ltype2);
+
+	slave->ts_ctl.uni = (val ? 1 : 0);
+	return count;
+}
+
+static struct cpsw_ts_attribute cpsw_pts_uni_attribute =
+	__CPSW_TS_ATTR(uni_en, S_IRUGO | S_IWUSR,
+			cpsw_port_ts_uni_show,
+			cpsw_port_ts_uni_store);
+
+static ssize_t cpsw_port_ts_maddr_show(struct cpsw_priv *cpsw_dev,
+		     struct cpsw_ts_attribute *attr, char *buf, void *context)
+{
+	struct cpsw_slave *slave;
+	int len, port;
+	u32 reg;
+
+	port = (int)context;
+
+	slave = cpsw_port_num_get_slave(cpsw_dev, port);
+	if (!slave)
+		return 0;
+
+	reg = readl(&slave->regs->ts_ctl_ltype2);
+	len = snprintf(buf, PAGE_SIZE, "%02x\n",
+		(reg >> CPSW_TS_CTL_MADDR_SHIFT) & 0x1f);
+	return len;
+}
+
+static ssize_t cpsw_port_ts_maddr_store(struct cpsw_priv *cpsw_dev,
+			      struct cpsw_ts_attribute *attr,
+			      const char *buf, size_t count, void *context)
+{
+	struct cpsw_slave *slave;
+	int port;
+	u32 reg;
+	u8 val;
+
+	port = (int)context;
+
+	slave = cpsw_port_num_get_slave(cpsw_dev, port);
+	if (!slave)
+		return 0;
+
+	if (kstrtou8(buf, 0, &val) < 0)
+		return -EINVAL;
+
+	reg = readl(&slave->regs->ts_ctl_ltype2);
+	reg &= ~CPSW_TS_CTL_MADDR_ALL;
+	reg |= ((val & 0x1f) << CPSW_TS_CTL_MADDR_SHIFT);
+	writel(reg, &slave->regs->ts_ctl_ltype2);
+
+	slave->ts_ctl.maddr_map = val & 0x1f;
+	return count;
+}
+
+static struct cpsw_ts_attribute cpsw_pts_maddr_attribute =
+	__CPSW_TS_ATTR(mcast_addr, S_IRUGO | S_IWUSR,
+			cpsw_port_ts_maddr_show,
+			cpsw_port_ts_maddr_store);
+
+static ssize_t cpsw_port_ts_dst_port_show(struct cpsw_priv *cpsw_dev,
+		     struct cpsw_ts_attribute *attr, char *buf, void *context)
+{
+	struct cpsw_slave *slave;
+	int len, port;
+	u32 reg;
+
+	port = (int)context;
+
+	slave = cpsw_port_num_get_slave(cpsw_dev, port);
+	if (!slave)
+		return 0;
+
+	reg = readl(&slave->regs->ts_ctl_ltype2);
+	len = snprintf(buf, PAGE_SIZE, "%01x\n",
+		(reg >> CPSW_TS_CTL_DST_PORT_SHIFT) & 0x3);
+	return len;
+}
+
+static ssize_t cpsw_port_ts_dst_port_store(struct cpsw_priv *cpsw_dev,
+			      struct cpsw_ts_attribute *attr,
+			      const char *buf, size_t count, void *context)
+{
+	struct cpsw_slave *slave;
+	int port;
+	u32 reg;
+	u8 val;
+
+	port = (int)context;
+
+	slave = cpsw_port_num_get_slave(cpsw_dev, port);
+	if (!slave)
+		return 0;
+
+	if (kstrtou8(buf, 0, &val) < 0)
+		return -EINVAL;
+
+	reg = readl(&slave->regs->ts_ctl_ltype2);
+	reg &= ~CPSW_TS_CTL_DST_PORT;
+	reg |= ((val & 0x3) << CPSW_TS_CTL_DST_PORT_SHIFT);
+	writel(reg, &slave->regs->ts_ctl_ltype2);
+
+	slave->ts_ctl.dst_port_map = val & 0x3;
+	return count;
+}
+
+static struct cpsw_ts_attribute cpsw_pts_dst_port_attribute =
+	__CPSW_TS_ATTR(dst_port, S_IRUGO | S_IWUSR,
+			cpsw_port_ts_dst_port_show,
+			cpsw_port_ts_dst_port_store);
+
+static struct attribute *cpsw_pts_n_default_attrs[] = {
+	&cpsw_pts_uni_attribute.attr,
+	&cpsw_pts_maddr_attribute.attr,
+	&cpsw_pts_dst_port_attribute.attr,
+	NULL
+};
+
+struct cpsw_priv *cpsw_port_ts_kobj_to_priv(struct kobject *kobj, int *port)
+{
+	char *port_name[] = {"1", "2", "3", "4", NULL};
+	struct cpsw_priv *cpsw_dev;
+	struct kobject *kobj_0;
+	int i = 0;
+
+	*port = -1;
+
+	while (i < MAX_SLAVES && port_name[i]) {
+		if (strncmp(port_name[i], kobject_name(kobj), 1) == 0)
+			*port = i+1;
+		i++;
+	}
+
+	if (*port < 0)
+		return NULL;
+
+	kobj_0 = kobj - (*port - 1);
+	cpsw_dev = pts_n_to_cpsw_dev(kobj_0, 0);
+	return cpsw_dev;
+}
+
+static ssize_t cpsw_pts_n_attr_show(struct kobject *kobj,
+			struct attribute *attr, char *buf)
+{
+	struct cpsw_ts_attribute *attribute = to_cpsw_ts_attr(attr);
+	struct cpsw_priv *cpsw_dev;
+	int port = -1;
+
+	if (!attribute->show)
+		return -EIO;
+
+	cpsw_dev = cpsw_port_ts_kobj_to_priv(kobj, &port);
+	if (!cpsw_dev)
+		return -EIO;
+
+	return attribute->show(cpsw_dev, attribute, buf, (void *)port);
+}
+
+static ssize_t cpsw_pts_n_attr_store(struct kobject *kobj,
+			struct attribute *attr, const char *buf, size_t count)
+{
+	struct cpsw_ts_attribute *attribute = to_cpsw_ts_attr(attr);
+	struct cpsw_priv *cpsw_dev;
+	int port = -1;
+
+	if (!attribute->store)
+		return -EIO;
+
+	cpsw_dev = cpsw_port_ts_kobj_to_priv(kobj, &port);
+	if (!cpsw_dev)
+		return -EIO;
+
+	return attribute->store(cpsw_dev, attribute, buf, count, (void *)port);
+}
+
+static const struct sysfs_ops cpsw_pts_n_sysfs_ops = {
+	.show = cpsw_pts_n_attr_show,
+	.store = cpsw_pts_n_attr_store,
+};
+
+static struct kobj_type cpsw_pts_n_ktype = {
+	.sysfs_ops = &cpsw_pts_n_sysfs_ops,
+	.default_attrs = cpsw_pts_n_default_attrs,
+};
+
 static void cpsw_reset_mod_stats(struct cpsw_priv *cpsw_dev, int stat_mod)
 {
 	struct cpsw_hw_stats __iomem *cpsw_statsa = cpsw_dev->hw_stats_regs[0];
@@ -1946,7 +2240,10 @@ static void cpsw_hwtstamp(struct cpsw_intf *cpsw_intf)
 
 	seq_id = (30 << CPSW_TS_SEQ_ID_OFS_SHIFT) | ETH_P_1588;
 	ts_en = EVENT_MSG_BITS << CPSW_TS_MSG_TYPE_EN_SHIFT;
-	ctl = ETH_P_1588 | CPSW_TS_CTL_ALL;
+	ctl = ETH_P_1588 | CPSW_TS_TTL_NONZERO |
+		(slave->ts_ctl.dst_port_map << CPSW_TS_CTL_DST_PORT_SHIFT) |
+		(slave->ts_ctl.uni ?  CPSW_TS_UNI_EN :
+			slave->ts_ctl.maddr_map << CPSW_TS_CTL_MADDR_SHIFT);
 
 	if (priv->cpts.tx_enable)
 		ts_en |= CPSW_TS_TX_ANX_ALL_EN;
@@ -2407,6 +2704,38 @@ static int init_slave(struct cpsw_priv *cpsw_dev,
 	return 0;
 }
 
+static int cpsw_create_cpts_sysfs(struct cpsw_priv *cpsw_dev)
+{
+	struct kobject *pts_kobj;
+	char *port_name[] = {"1", "2", "3", "4", NULL};
+	int i, ret;
+
+	pts_kobj = kobject_create_and_add("port_ts",
+			kobject_get(&cpsw_dev->kobj));
+	if (!pts_kobj) {
+		dev_err(cpsw_dev->dev,
+			"failed to create sysfs port_ts entry\n");
+		kobject_put(&cpsw_dev->kobj);
+		return -ENOMEM;
+	}
+
+	for (i = 0; (i < cpsw_dev->num_slaves) && port_name[i]; i++) {
+		ret = kobject_init_and_add(&cpsw_dev->port_ts_kobj[i],
+			&cpsw_pts_n_ktype, kobject_get(pts_kobj), port_name[i]);
+
+		if (ret) {
+			dev_err(cpsw_dev->dev,
+				"failed to create sysfs port_ts/%s entry\n",
+				port_name[i]);
+			kobject_put(&cpsw_dev->port_ts_kobj[i]);
+			kobject_put(pts_kobj);
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
 static int cpsw_create_sysfs_entries(struct cpsw_priv *cpsw_dev)
 {
 	struct device *dev = cpsw_dev->dev;
@@ -2443,6 +2772,10 @@ static int cpsw_create_sysfs_entries(struct cpsw_priv *cpsw_dev)
 		kobject_put(&cpsw_dev->kobj);
 		return ret;
 	}
+
+	ret = cpsw_create_cpts_sysfs(cpsw_dev);
+	if (ret)
+		return ret;
 
 	ret = kobject_init_and_add(&cpsw_dev->stats_kobj,
 		&cpsw_stats_ktype,
@@ -2694,6 +3027,15 @@ exit:
 	return ret;
 }
 
+static void cpsw_slave_cpts_ctl_init(struct cpsw_slave *slave)
+{
+	slave->ts_ctl.uni = 1;
+	slave->ts_ctl.dst_port_map =
+		(CPSW_TS_CTL_DST_PORT >> CPSW_TS_CTL_DST_PORT_SHIFT) & 0x3;
+	slave->ts_ctl.maddr_map =
+		(CPSW_TS_CTL_MADDR_ALL >> CPSW_TS_CTL_MADDR_SHIFT) & 0x1f;
+}
+
 static int cpsw_attach(void *inst_priv, struct net_device *ndev,
 		       void **intf_priv)
 {
@@ -2775,10 +3117,12 @@ static int cpsw_attach(void *inst_priv, struct net_device *ndev,
 		cpsw_intf->slaves[i].link_interface =
 			cpsw_dev->link[cpsw_intf->slave_port];
 		cpsw_intf->phy_node = cpsw_dev->phy_node[cpsw_intf->slave_port];
+		cpsw_slave_cpts_ctl_init(&(cpsw_intf->slaves[i]));
 	} else {
 		for (i = 0; i < cpsw_intf->num_slaves; i++) {
 			cpsw_intf->slaves[i].slave_num = i;
 			cpsw_intf->slaves[i].link_interface = cpsw_dev->link[i];
+			cpsw_slave_cpts_ctl_init(&(cpsw_intf->slaves[i]));
 		}
 	}
 
