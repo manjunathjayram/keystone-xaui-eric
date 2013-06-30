@@ -327,6 +327,14 @@ static int cpts_match(struct sk_buff *skb, unsigned int ptp_class,
 	case PTP_CLASS_V2_VLAN:
 		offset = ETH_HLEN + VLAN_HLEN;
 		break;
+	case PTP_CLASS_V1_VLAN_IPV4:
+	case PTP_CLASS_V2_VLAN_IPV4:
+		offset = ETH_HLEN + VLAN_HLEN + IPV4_HLEN(data) + UDP_HLEN;
+		break;
+	case PTP_CLASS_V1_VLAN_IPV6:
+	case PTP_CLASS_V2_VLAN_IPV6:
+		offset = OFF_PTP6 + VLAN_HLEN;
+		break;
 	default:
 		return 0;
 	}

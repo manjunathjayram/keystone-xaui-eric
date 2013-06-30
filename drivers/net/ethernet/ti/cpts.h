@@ -28,6 +28,14 @@
 #include <linux/ptp_clock_kernel.h>
 #include <linux/skbuff.h>
 
+#define PTP_CLASS_VLAN_IPV4  0x50 /* event in a VLAN tagged IPV4 packet */
+#define PTP_CLASS_VLAN_IPV6  0x60 /* event in a VLAN tagged IPV6 packet */
+
+#define PTP_CLASS_V1_VLAN_IPV4 (PTP_CLASS_V1 | PTP_CLASS_VLAN_IPV4)
+#define PTP_CLASS_V1_VLAN_IPV6 (PTP_CLASS_V1 | PTP_CLASS_VLAN_IPV6)
+#define PTP_CLASS_V2_VLAN_IPV4 (PTP_CLASS_V2 | PTP_CLASS_VLAN_IPV4)
+#define PTP_CLASS_V2_VLAN_IPV6 (PTP_CLASS_V2 | PTP_CLASS_VLAN_IPV6)
+
 struct cpsw_cpts {
 	u32 idver;                /* Identification and version */
 	u32 control;              /* Time sync control */
