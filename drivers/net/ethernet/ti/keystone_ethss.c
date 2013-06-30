@@ -1857,13 +1857,81 @@ int cpsw_del_vid(void *intf_priv, int vid)
 }
 
 #ifdef CONFIG_TI_CPTS
+#define KEYSTONE_PTP_FILTER \
+{ \
+	{OP_LDH,	0,   0, OFF_ETYPE		}, /*              */ \
+/*ip4*/	{OP_JEQ,	0,  12, ETH_P_IP		}, /* f goto ip6   */ \
+	{OP_LDB,	0,   0, OFF_PROTO4		}, /*              */ \
+	{OP_JEQ,	0,   9, IPPROTO_UDP		}, /*              */ \
+	{OP_LDH,	0,   0, OFF_FRAG		}, /*              */ \
+	{OP_JSET,	7,   0, 0x1fff			}, /*              */ \
+	{OP_LDX,	0,   0, OFF_IHL			}, /*              */ \
+	{OP_LDHI,	0,   0, RELOFF_DST4		}, /*              */ \
+	{OP_JEQ,	0,   4, PTP_EV_PORT		}, /*              */ \
+	{OP_LDHI,	0,   0, ETH_HLEN + UDP_HLEN	}, /*              */ \
+	{OP_AND,	0,   0, PTP_CLASS_VMASK		}, /*              */ \
+	{OP_OR,		0,   0, PTP_CLASS_IPV4		}, /*              */ \
+	{OP_RETA,	0,   0, 0			}, /*              */ \
+	{OP_RETK,	0,   0, PTP_CLASS_NONE		}, /*              */ \
+/*ip6*/	{OP_JEQ,	0,   9, ETH_P_IPV6		}, /* f goto v     */ \
+	{OP_LDB,	0,   0, ETH_HLEN + OFF_NEXT	}, /*              */ \
+	{OP_JEQ,	0,   6, IPPROTO_UDP		}, /*              */ \
+	{OP_LDH,	0,   0, OFF_DST6		}, /*              */ \
+	{OP_JEQ,	0,   4, PTP_EV_PORT		}, /*              */ \
+	{OP_LDH,	0,   0, OFF_PTP6		}, /*              */ \
+	{OP_AND,	0,   0, PTP_CLASS_VMASK		}, /*              */ \
+	{OP_OR,		0,   0, PTP_CLASS_IPV6		}, /*              */ \
+	{OP_RETA,	0,   0, 0			}, /*              */ \
+	{OP_RETK,	0,   0, PTP_CLASS_NONE		}, /*              */ \
+/* v */ {OP_JEQ,	0,  32, ETH_P_8021Q		}, /* f goto ptp   */ \
+	{OP_LDH,	0,   0, OFF_ETYPE + 4		}, /*              */ \
+/*vip4*/{OP_JEQ,	0,  12, ETH_P_IP		}, /* f goto vip6  */ \
+	{OP_LDB,	0,   0, OFF_PROTO4 + 4		}, /*              */ \
+	{OP_JEQ,	0,   9, IPPROTO_UDP		}, /*              */ \
+	{OP_LDH,	0,   0, OFF_FRAG + 4		}, /*              */ \
+	{OP_JSET,	7,   0, 0x1fff			}, /*              */ \
+	{OP_LDX,	0,   0, OFF_IHL + 4		}, /*              */ \
+	{OP_LDHI,	0,   0, RELOFF_DST4 + 4		}, /*              */ \
+	{OP_JEQ,	0,   4, PTP_EV_PORT		}, /*              */ \
+	{OP_LDHI,	0,   0, ETH_HLEN + UDP_HLEN + 4	}, /*              */ \
+	{OP_AND,	0,   0, PTP_CLASS_VMASK		}, /*              */ \
+	{OP_OR,		0,   0, PTP_CLASS_VLAN_IPV4	}, /*              */ \
+	{OP_RETA,	0,   0, 0			}, /*              */ \
+	{OP_RETK,	0,   0, PTP_CLASS_NONE		}, /*              */ \
+/*vip6*/{OP_JEQ,	0,   9, ETH_P_IPV6		}, /* f goto vptp  */ \
+	{OP_LDB,	0,   0, ETH_HLEN + OFF_NEXT + 4	}, /*              */ \
+	{OP_JEQ,	0,   6, IPPROTO_UDP		}, /*              */ \
+	{OP_LDH,	0,   0, OFF_DST6 + 4		}, /*              */ \
+	{OP_JEQ,	0,   4, PTP_EV_PORT		}, /*              */ \
+	{OP_LDH,	0,   0, OFF_PTP6 + 4		}, /*              */ \
+	{OP_AND,	0,   0, PTP_CLASS_VMASK		}, /*              */ \
+	{OP_OR,		0,   0, PTP_CLASS_VLAN_IPV6	}, /*              */ \
+	{OP_RETA,	0,   0, 0			}, /*              */ \
+	{OP_RETK,	0,   0, PTP_CLASS_NONE		}, /*              */ \
+/*vptp*/{OP_JEQ,	0,  15, ETH_P_1588		}, /*              */ \
+	{OP_LDB,	0,   0, ETH_HLEN + VLAN_HLEN	}, /*              */ \
+	{OP_AND,	0,   0, PTP_GEN_BIT		}, /*              */ \
+	{OP_JEQ,	0,  12, 0			}, /*              */ \
+	{OP_LDH,	0,   0, ETH_HLEN + VLAN_HLEN	}, /*              */ \
+	{OP_AND,	0,   0, PTP_CLASS_VMASK		}, /*              */ \
+	{OP_OR,		0,   0, PTP_CLASS_VLAN		}, /*              */ \
+	{OP_RETA,	0,   0, 0			}, /*              */ \
+/*ptp*/	{OP_JEQ,	0,   7, ETH_P_1588		}, /*              */ \
+	{OP_LDB,	0,   0, ETH_HLEN		}, /*              */ \
+	{OP_AND,	0,   0, PTP_GEN_BIT		}, /*              */ \
+	{OP_JEQ,	0,   4, 0			}, /*              */ \
+	{OP_LDH,	0,   0, ETH_HLEN		}, /*              */ \
+	{OP_AND,	0,   0, PTP_CLASS_VMASK		}, /*              */ \
+	{OP_OR,		0,   0, PTP_CLASS_L2		}, /*              */ \
+	{OP_RETA,	0,   0, 0			}, /*              */ \
+	{OP_RETK,	0,   0, PTP_CLASS_NONE		},                    \
+}
+
 static struct sock_filter phy_ptp_filter[] = {
 	PTP_FILTER
 };
 
-static struct sock_filter cpsw_ptp_filter[] = {
-	PTP_FILTER
-};
+static struct sock_filter cpsw_ptp_filter[] = KEYSTONE_PTP_FILTER;
 
 static void cpsw_hwtstamp(struct cpsw_intf *cpsw_intf)
 {
@@ -2083,6 +2151,10 @@ static bool cpsw_cpts_txtstamp(struct cpsw_intf *cpsw_intf,
 	case PTP_CLASS_V2_IPV6:
 	case PTP_CLASS_V2_L2:
 	case PTP_CLASS_V2_VLAN:
+	case PTP_CLASS_V1_VLAN_IPV4:
+	case PTP_CLASS_V2_VLAN_IPV4:
+	case PTP_CLASS_V1_VLAN_IPV6:
+	case PTP_CLASS_V2_VLAN_IPV6:
 		return true;
 	}
 
