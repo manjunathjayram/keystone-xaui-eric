@@ -2490,6 +2490,20 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	if (ret < 0)
 		dev_err(dev, "missing cpts reg offset, err %d\n", ret);
 
+	ret = of_property_read_u32(node, "cpts_rftclk_sel",
+				   &cpsw_dev->cpts.rftclk_sel);
+	if (ret < 0) {
+		dev_err(dev, "missing cpts rftclk_sel, err %d\n", ret);
+		cpsw_dev->cpts.rftclk_sel = 0;
+	}
+
+	ret = of_property_read_u32(node, "cpts_rftclk_freq",
+				   &cpsw_dev->cpts.rftclk_freq);
+	if (ret < 0) {
+		dev_err(dev, "missing cpts rftclk freq, err %d\n", ret);
+		cpsw_dev->cpts.rftclk_freq = 0;
+	}
+
 	ret = of_property_read_u32(node, "num_slaves", &cpsw_dev->num_slaves);
 	if (ret < 0) {
 		dev_err(dev, "missing num_slaves parameter, err %d\n", ret);
