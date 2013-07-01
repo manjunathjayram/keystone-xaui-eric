@@ -267,17 +267,19 @@ static void cpts_clk_init(struct cpts *cpts)
 
 	cpts->refclk = clk_get(cpts->dev, CPTS_REF_CLOCK_NAME);
 	if (IS_ERR(cpts->refclk)) {
-		pr_err("Failed to clk_get %s\n", CPTS_REF_CLOCK_NAME);
+		pr_info("No %s defined.  Assumes external ref clock.\n",
+			CPTS_REF_CLOCK_NAME);
 		cpts->refclk = NULL;
 		return;
-	}
+	} else
+		cpts->rftclk_freq = clk_get_rate(cpts->refclk);
 
 	if (!cpts->cc.mult && !cpts->cc.shift) {
 		/*
 		   calculate the multiplier/shift to
 		   convert CPTS counter ticks to ns.
 		*/
-		rate = clk_get_rate(cpts->refclk);
+		rate = cpts->rftclk_freq;
 		max_sec = ((1ULL << 48) - 1) + (rate - 1);
 		do_div(max_sec, rate);
 
@@ -288,11 +290,17 @@ static void cpts_clk_init(struct cpts *cpts)
 				rate, cpts->cc.mult, cpts->cc.shift);
 	}
 
-	clk_prepare_enable(cpts->refclk);
+	if (cpts->refclk)
+		clk_prepare_enable(cpts->refclk);
+
+	cpts_write32(cpts, cpts->rftclk_sel & 0x3, rfclk_sel);
 }
 
 static void cpts_clk_release(struct cpts *cpts)
 {
+	if (!cpts->refclk)
+		return;
+
 	clk_disable(cpts->refclk);
 	clk_put(cpts->refclk);
 }
