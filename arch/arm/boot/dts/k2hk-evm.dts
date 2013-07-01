@@ -1803,18 +1803,18 @@
 				ranges;
 				region-12 {
 					id = <12>;
-					values	= <2048 128>;	/* num_desc desc_size */
+					values	= <4096 128>;	/* num_desc desc_size */
 					link-index = <0x4000>;
 				};
 				region-13 {
 					id = <13>;
 					values	= <2048 256>;	/* num_desc desc_size */
-					link-index = <0x4800>;
+					link-index = <0x5000>;
 				};
 				region-14 {
 					id = <14>;
 					values	= <2048 128>;	/* num_desc desc_size */
-					link-index = <0x5000>;
+					link-index = <0x5800>;
 				};
 			};
 			descriptors {
@@ -1833,6 +1833,10 @@
 				pool-xge {
 					values = <2048 128>;
 					region-id = <14>;
+				};
+				pool-crypto {
+					values = <512 128>;	/* num_desc desc_size */
+					region-id = <12>;
 				};
 			};
 			pdsps {
@@ -1966,6 +1970,22 @@
 					/* debug; */
 					/* channel = <0>; */
 					flow		= <31>;
+				};
+				crypto-rx0 {
+					receive;
+					label		= "crypto-rx0";
+					pool		= "pool-crypto";
+					complete-queue 	= <8712>;
+					flow		= <24>;
+					/* debug; */
+				};
+				crypto-tx {
+					transmit;
+					label		= "crypto-tx";
+					pool		= "pool-crypto";
+					submit-queue	= <646>;
+					complete-queue 	= <8713>;
+					/* debug; */
 				};
 				qos0 {
 					transmit;
@@ -2519,6 +2539,14 @@
 			compatible = "ti,keystone-crypto";
 			reg = <0x20c0000 0x40000>;
 			clocks = <&clksa>;
+			tx_channel = "crypto-tx";
+			tx_queue_depth = <128>;
+
+			rx_channel = "crypto-rx0";
+			rx_queue_depth = <128 128 0 0>;
+			rx_buffer_size = <1500 4096 0 0>;
+
+			sc-id = <0x7000 0x71ff>;
 		};
 
 		dwc: dwc@2680000 {
