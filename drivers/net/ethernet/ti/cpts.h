@@ -132,6 +132,8 @@ struct cpts {
 	struct cpts_event pool_data[CPTS_MAX_EVENTS];
 	struct sock_filter *filter;
 	int filter_size;
+	int rftclk_sel;
+	u32 rftclk_freq;
 #endif
 };
 
