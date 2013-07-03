@@ -1167,6 +1167,7 @@ bail:
 }
 
 static struct rio_scan rio_scan_ops = {
+	.owner = THIS_MODULE,
 	.enumerate = rio_enum_mport,
 	.discover = rio_disc_mport,
 };
