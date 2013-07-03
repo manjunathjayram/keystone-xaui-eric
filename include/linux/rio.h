@@ -490,10 +490,12 @@ static inline struct rio_mport *dma_to_mport(struct dma_device *ddev)
 
 /**
  * struct rio_scan - RIO enumeration and discovery operations
+ * @owner: The module owner of this structure
  * @enumerate: Callback to perform RapidIO fabric enumeration.
  * @discover: Callback to perform RapidIO fabric discovery.
  */
 struct rio_scan {
+	struct module *owner;
 	int (*enumerate)(struct rio_mport *mport, u32 flags);
 	int (*discover)(struct rio_mport *mport, u32 flags);
 };
@@ -513,6 +515,19 @@ extern void rio_dev_exit(void);
 extern int rio_dev_add(struct rio_dev *rdev);
 
 #endif /* CONFIG_RAPIDIO_DEV */
+
+/**
+ * struct rio_scan_node - list node to register RapidIO enumeration and
+ * discovery methods with RapidIO core.
+ * @mport_id: ID of an mport (net) serviced by this enumerator
+ * @node: node in global list of registered enumerators
+ * @ops: RIO enumeration and discovery operations
+ */
+struct rio_scan_node {
+	int mport_id;
+	struct list_head node;
+	struct rio_scan *ops;
+};
 
 /* Architecture and hardware-specific functions */
 extern int rio_register_mport(struct rio_mport *);
