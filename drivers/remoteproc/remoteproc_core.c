@@ -1142,6 +1142,19 @@ unlock_mutex:
 	return ret;
 }
 EXPORT_SYMBOL(rproc_boot);
+/**
+ * rrproc_cleanup_vdev_entries() - cleanu vdev entries
+ */
+static void rproc_cleanup_vdev_entries(struct rproc *rproc)
+{
+	struct rproc_vdev *rvdev, *tmp;
+
+	/* clean up remote vdev entries */
+	list_for_each_entry_safe(rvdev, tmp, &rproc->rvdevs, node)
+		rproc_remove_virtio_dev(rvdev);
+
+	return;
+}
 
 /**
  * rproc_shutdown() - power off the remote processor
@@ -1166,6 +1179,10 @@ void rproc_shutdown(struct rproc *rproc)
 {
 	struct device *dev = &rproc->dev;
 	int ret;
+
+	/* If already in offline state skip */
+	if (rproc->state == RPROC_OFFLINE)
+		return;
 
 	ret = mutex_lock_interruptible(&rproc->lock);
 	if (ret) {
@@ -1198,6 +1215,8 @@ void rproc_shutdown(struct rproc *rproc)
 		complete_all(&rproc->crash_comp);
 
 	rproc->state = RPROC_OFFLINE;
+	/* Cleanup vdev entries */
+	rproc_cleanup_vdev_entries(rproc);
 
 	dev_info(dev, "stopped remote processor %s\n", rproc->name);
 
