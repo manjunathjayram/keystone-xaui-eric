@@ -2905,8 +2905,15 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	ret = of_property_read_u32(node, "cpts_rftclk_freq",
 				   &cpsw_dev->cpts.rftclk_freq);
 	if (ret < 0) {
-		dev_err(dev, "missing cpts rftclk freq, err %d\n", ret);
+		dev_err(dev, "cpts rftclk freq not defined\n");
 		cpsw_dev->cpts.rftclk_freq = 0;
+	}
+
+	ret = of_property_read_u32(node, "cpts_ts_comp_length",
+				&cpsw_dev->cpts.ts_comp_length);
+	if (ret < 0) {
+		dev_err(dev, "missing cpts ts_comp length, err %d\n", ret);
+		cpsw_dev->cpts.ts_comp_length = 1;
 	}
 
 	ret = of_property_read_u32(node, "num_slaves", &cpsw_dev->num_slaves);
