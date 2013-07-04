@@ -2437,6 +2437,7 @@
 
 				cpts_rftclk_sel = <0>;
 				/*cpts_rftclk_freq = <399360000>;*/
+				cpts_ts_comp_length = <3>;
 
 				multi-interface;
 				num-interfaces = <2>;
