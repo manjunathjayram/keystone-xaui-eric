@@ -2816,5 +2816,17 @@
 			clocks = <&clkwdtimer0>;
 			clock-names = "watchdog";
 		};
+
+		gpio_poweroff {
+			compatible = "gpio-poweroff";
+			/*
+			 * Change this as needed in the target board to match the
+			 * pin used for signaling Power down event from the SoC.
+			 * It is assumed that external controller reads this pin
+			 * and remove power to the SoC. On EVM, pin 2 output
+			 * can be read from BMC to test this.
+			 */
+			gpios = <&gpio0 2 0>;
+		};
 	};
 };
