@@ -157,7 +157,6 @@ static int sa_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 		netcp_txpipe_init(&sa_dev->tx_pipe, netdev_priv(ndev),
 				  sa_dev->tx_chan_name, sa_dev->tx_queue_depth);
 
-		sa_dev->tx_pipe.dma_psflags = netcp->cpsw_port;
 
 		return 0;
 	} else
