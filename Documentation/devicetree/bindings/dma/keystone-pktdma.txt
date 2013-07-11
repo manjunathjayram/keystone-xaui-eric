@@ -18,6 +18,10 @@ debug:      used to enable debug.To see debug messages the
             CONFIG_DMADEVICES_DEBUG must also be enabled in the .config
 rx-priority: used to set the packet dma global rx priority.
 tx-priority: used to set the packet dma global tx priority.
+rx-retry-timeout: used to set the global timeout duration in pktdma clock
+                  cycles. It controls the minimum amount of time that
+		  an Rx channel will be required to wait when it encounters a
+		  buffer starvation condition. 
 
 The channels that will be used then need to be initialized. Both RX and TX
 channels need to be given bindings.
@@ -37,6 +41,8 @@ channel:	 the actual channel number to be used.
 priority:	 the priority associated with a channel.
 flow:		 the RX flow that will be used. Applicable only for
                  RX.
+rx-error-retry:  if enabled starvation errors result in subsequent re-try of
+                 the descriptor allocation operation.
 logical-queue-managers: number of logical queue managers
 queues-per-queue-manager: the number of queues per queue manager
 qm-base-address: the actual VBUSM address that needs to be programmed into
