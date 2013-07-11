@@ -37,9 +37,13 @@
 #define DMA_RX_PRIO_SHIFT	16
 #define DMA_PRIO_MASK		BITS(3)
 #define DMA_PRIO_DEFAULT	0
+#define DMA_RX_TIMEOUT_DEFAULT	17500 /* cycles */
+#define DMA_RX_TIMEOUT_MASK	BITS(16)
+#define DMA_RX_TIMEOUT_SHIFT	0
 
 #define CHAN_HAS_EPIB		BIT(30)
 #define CHAN_HAS_PSINFO		BIT(29)
+#define CHAN_ERR_RETRY		BIT(28)
 
 #define DMA_TIMEOUT		1000	/* msecs */
 
@@ -160,7 +164,7 @@ struct keystone_dma_device {
 	struct dma_device		 engine;
 	struct clk			*clk;
 	bool				 big_endian, loopback, enable_all;
-	unsigned			 tx_priority, rx_priority;
+	unsigned			 tx_priority, rx_priority, rx_timeout;
 	unsigned			 logical_queue_managers;
 	unsigned			 queues_per_queue_manager;
 	unsigned			 qm_base_address[4];
@@ -218,6 +222,7 @@ struct keystone_dma_chan {
 	unsigned			 channel, flow;
 	const char			*qname_pool;
 	u32				 tag_info;
+	bool				 rx_err_retry;
 	bool				 debug;
 
 	unsigned int			 scatterlist_size;
@@ -903,6 +908,8 @@ static int chan_start(struct keystone_dma_chan *chan)
 
 	if (chan->reg_rx_flow) {
 		v  = CHAN_HAS_EPIB | CHAN_HAS_PSINFO;
+		if (chan->rx_err_retry)
+			v |= CHAN_ERR_RETRY;
 		v |= chan->qnum_complete |
 			(chan->dest_queue_manager << DESC_RETQMGR_SHIFT) |
 			(DESC_TYPE_HOST << DESC_TYPE_SHIFT);
@@ -1172,6 +1179,10 @@ static void keystone_dma_hw_init(struct keystone_dma_device *dma)
 
 	v  = dma->loopback ? DMA_LOOPBACK : 0;
 	__raw_writel(v, &dma->reg_global->emulation_control);
+
+	v = __raw_readl(&dma->reg_global->perf_control);
+	v |= ((dma->rx_timeout & DMA_RX_TIMEOUT_MASK) << DMA_RX_TIMEOUT_SHIFT);
+	__raw_writel(v, &dma->reg_global->perf_control);
 
 	v = ((dma->tx_priority << DMA_TX_PRIO_SHIFT) |
 	     (dma->rx_priority << DMA_RX_PRIO_SHIFT));
@@ -1723,11 +1734,14 @@ static int dma_init_rx_chan(struct keystone_dma_chan *chan,
 		chan->reg_chan = dma->reg_rx_chan + channel;
 	}
 
-	dev_dbg(dev, "%s rx channel: pool %s, "
-		"channel %d (%p), flow %d (%p), submit %d, complete %d\n",
+	chan->rx_err_retry = (of_get_property(node,
+				"rx-error-retry", NULL) != NULL);
+
+	dev_dbg(dev, "%s rx channel: pool %s, channel %d (%p), flow %d (%p), "
+			"submit %d, complete %d, error_retry %d\n",
 		chan_name(chan), chan->qname_pool,
 		chan->channel, chan->reg_chan, chan->flow, chan->reg_rx_flow,
-		chan->qcfg_submit, chan->qcfg_complete);
+		chan->qcfg_submit, chan->qcfg_complete, chan->rx_err_retry);
 
 	return 0;
 }
@@ -2034,7 +2048,7 @@ static int keystone_dma_probe(struct platform_device *pdev)
 	struct dma_device *engine;
 	resource_size_t size;
 	int ret, num_chan = 0;
-	u32 priority;
+	u32 priority, timeout;
 	u32 config[4];
 	u32 i;
 
@@ -2106,6 +2120,14 @@ static int keystone_dma_probe(struct platform_device *pdev)
 		priority = DMA_PRIO_DEFAULT;
 	}
 	dma->tx_priority = priority;
+
+	ret = of_property_read_u32(node, "rx-retry-timeout", &timeout);
+	if (ret < 0) {
+		dev_dbg(&pdev->dev, "unspecified rx timeout using value %d\n",
+				DMA_RX_TIMEOUT_DEFAULT);
+		timeout = DMA_RX_TIMEOUT_DEFAULT;
+	}
+	dma->rx_timeout = timeout;
 
 	ret = of_property_read_u32(node, "logical-queue-managers",
 				   &dma->logical_queue_managers);
