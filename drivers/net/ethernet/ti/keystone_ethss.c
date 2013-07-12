@@ -343,6 +343,7 @@ struct cpsw_priv {
 	struct kobject			stats_kobj;
 	spinlock_t			hw_stats_lock;
 	struct cpts			cpts;
+	int				cpts_registered;
 };
 
 struct cpsw_intf {
@@ -2493,6 +2494,47 @@ static int cpsw_rxtstamp_complete(struct cpsw_intf *cpsw_intf,
 
 	return 0;
 }
+
+static inline void cpsw_register_cpts(struct cpsw_priv *cpsw_dev)
+{
+	if (!cpsw_dev->cpts.reg)
+		return;
+
+	if (cpsw_dev->cpts_registered < 0)
+		/* Should not happen */
+		return;
+
+	if (cpsw_dev->cpts_registered > 0)
+		goto done;
+
+	cpsw_dev->cpts.filter = cpsw_ptp_filter;
+	cpsw_dev->cpts.filter_size = ARRAY_SIZE(cpsw_ptp_filter);
+
+	/* Let cpts calculate the mult and shift */
+	if (cpts_register(cpsw_dev->dev, &cpsw_dev->cpts, 0, 0))
+		dev_err(cpsw_dev->dev, "error registering cpts device\n");
+
+done:
+	++cpsw_dev->cpts_registered;
+}
+
+static inline void cpsw_unregister_cpts(struct cpsw_priv *cpsw_dev)
+{
+	if (!cpsw_dev->cpts.reg)
+		return;
+
+	if (cpsw_dev->cpts_registered <= 0)
+		return;
+
+	--cpsw_dev->cpts_registered;
+
+	if (cpsw_dev->cpts_registered)
+		return;
+
+	cpsw_dev->cpts.filter = 0;
+	cpsw_dev->cpts.filter_size = 0;
+	cpts_unregister(&cpsw_dev->cpts);
+}
 #else
 static inline int cpsw_mark_pkt_txtstamp(struct cpsw_intf *cpsw_intf,
 					struct netcp_packet *p_info)
@@ -2504,6 +2546,14 @@ static inline int cpsw_rxtstamp_complete(struct cpsw_intf *cpsw_intf,
 					struct netcp_packet *p_info)
 {
 	return 0;
+}
+
+static inline void cpsw_register_cpts(struct cpsw_priv *cpsw_dev)
+{
+}
+
+static inline void cpsw_unregister_cpts(struct cpsw_priv *cpsw_dev)
+{
 }
 #endif /* CONFIG_TI_CPTS */
 
@@ -2624,6 +2674,7 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 	netcp_set_streaming_switch(cpsw_dev->netcp_device, netcp->cpsw_port,
 				   PSTREAM_ROUTE_DMA);
 
+	cpsw_register_cpts(cpsw_dev);
 	return 0;
 
 ale_fail:
@@ -2660,6 +2711,7 @@ static int cpsw_close(void *intf_priv, struct net_device *ndev)
 	clk_disable_unprepare(cpsw_dev->cpgmac);
 	clk_put(cpsw_dev->cpgmac);
 
+	cpsw_unregister_cpts(cpsw_dev);
 	return 0;
 }
 
@@ -2787,25 +2839,6 @@ static int cpsw_create_sysfs_entries(struct cpsw_priv *cpsw_dev)
 
 	return 0;
 }
-
-#ifdef CONFIG_TI_CPTS
-static inline void cpsw_register_cpts(struct cpsw_priv *cpsw_dev)
-{
-	if (!cpsw_dev->cpts.reg)
-		return;
-
-	cpsw_dev->cpts.filter = cpsw_ptp_filter;
-	cpsw_dev->cpts.filter_size = ARRAY_SIZE(cpsw_ptp_filter);
-
-	/* Let cpts calculate the mult and shift */
-	if (cpts_register(cpsw_dev->dev, &cpsw_dev->cpts, 0, 0))
-		dev_err(cpsw_dev->dev, "error registering cpts device\n");
-}
-#else
-static inline void cpsw_register_cpts(struct cpsw_priv *cpsw_dev)
-{
-}
-#endif /* CONFIG_TI_CPTS */
 
 static int cpsw_probe(struct netcp_device *netcp_device,
 			struct device *dev,
@@ -3020,7 +3053,6 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	if (ret)
 		goto exit;
 
-	cpsw_register_cpts(cpsw_dev);
 	return 0;
 
 exit:
