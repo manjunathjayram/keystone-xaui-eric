@@ -709,6 +709,7 @@
 				clocks = <&chipclk1rstiso13>;
 				clock-output-names = "srio";
 				base-flags = "ignore-unused";
+				status = "disabled";
 				reg = <0x02350000 4096>;
 				lpsc = <11>;
 				pd = <4>;
@@ -720,6 +721,7 @@
 				clocks = <&chipclk12>;
 				clock-output-names = "hyperlink-0";
 				base-flags = "ignore-unused";
+				status = "disabled";
 				reg = <0x02350000 4096>;
 				lpsc = <12>;
 				pd = <5>;
@@ -1127,6 +1129,7 @@
 				clocks = <&chipclk12>;
 				clock-output-names = "hyperlink-1";
 				base-flags = "ignore-unused";
+				status = "disabled";
 				reg = <0x02350000 4096>;
 				lpsc = <49>;
 				pd = <28>;
