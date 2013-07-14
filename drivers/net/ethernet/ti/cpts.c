@@ -631,7 +631,6 @@ static u64 cpts_find_ts(struct cpts *cpts, struct sk_buff *skb, int ev_type)
 int cpts_rx_timestamp(struct cpts *cpts, struct sk_buff *skb)
 {
 	u64 ns;
-	s64 temp;
 	struct skb_shared_hwtstamps *ssh;
 
 	if (!cpts->rx_enable)
@@ -642,16 +641,12 @@ int cpts_rx_timestamp(struct cpts *cpts, struct sk_buff *skb)
 	ssh = skb_hwtstamps(skb);
 	memset(ssh, 0, sizeof(*ssh));
 	ssh->hwtstamp = ns_to_ktime(ns);
-	temp = ktime_to_ns(ktime_get_monotonic_offset());
-	ns = (u64)((s64)ns - ktime_to_ns(ktime_get_monotonic_offset()));
-	ssh->syststamp = ns_to_ktime(ns);
 	return 0;
 }
 
 int cpts_tx_timestamp(struct cpts *cpts, struct sk_buff *skb)
 {
 	u64 ns;
-	s64 temp;
 	struct skb_shared_hwtstamps ssh;
 
 	if (!(skb_shinfo(skb)->tx_flags & SKBTX_IN_PROGRESS))
@@ -661,10 +656,6 @@ int cpts_tx_timestamp(struct cpts *cpts, struct sk_buff *skb)
 		return -ENOENT;
 	memset(&ssh, 0, sizeof(ssh));
 	ssh.hwtstamp = ns_to_ktime(ns);
-
-	temp = ktime_to_ns(ktime_get_monotonic_offset());
-	ns = (u64)((s64)ns - ktime_to_ns(ktime_get_monotonic_offset()));
-	ssh.syststamp = ns_to_ktime(ns);
 	skb_tstamp_tx(skb, &ssh);
 	return 0;
 }
