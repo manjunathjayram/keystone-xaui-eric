@@ -1532,137 +1532,145 @@
 
 		dsp0: dsp0 {
 			compatible = "linux,rproc-user";
+			mem = <0x10e00000 0x00008000
+			       0x10f00000 0x00008000
+			       0x10800000 0x00100000>;
 			reg = <0x02620040 4
 			       0x0235083c 4
 			       0x02350a3c 4
-			       0x02620240 4
-			       0x10e00000 0x00008000
-			       0x10f00000 0x00008000
-			       0x10800000 0x00100000>;
-			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l1pram", "l1dram", "l2ram";
+			       0x02620240 4>;
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr";
 			interrupt-parent = <&ipcirq0>;
 			interrupts = <8 0 0 0>;
 			kick-gpio = <&ipcgpio0 27 0>;
 			clocks = <&clkgem0>;
+			label = "dsp0";
 		};
 
 		dsp1: dsp1 {
 			compatible = "linux,rproc-user";
+			mem = <0x11e00000 0x00008000
+			       0x11f00000 0x00008000
+			       0x11800000 0x00100000>;
 			reg = <0x02620044 4
 			       0x02350840 4
 			       0x02350a40 4
-			       0x02620244 4
-			       0x11e00000 0x00008000
-			       0x11f00000 0x00008000
-			       0x11800000 0x00100000>;
-			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l1pram", "l1dram", "l2ram";
+			       0x02620244 4>;
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr";
 			interrupt-parent = <&ipcirq0>;
 			interrupts = <9 0 1 0>;
 			kick-gpio = <&ipcgpio1 27 0>;
 			clocks = <&clkgem1>;
+			label = "dsp1";
 		};
 
 		dsp2: dsp2 {
 			compatible = "linux,rproc-user";
+			mem = <0x12e00000 0x00008000
+			       0x12f00000 0x00008000
+			       0x12800000 0x00100000>;
 			reg = <0x02620048 4
 			       0x02350844 4
 			       0x02350a44 4
-			       0x02620248 4
-			       0x12e00000 0x00008000
-			       0x12f00000 0x00008000
-			       0x12800000 0x00100000>;
-			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l1pram", "l1dram", "l2ram";
+			       0x02620248 4>;
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr";
 			interrupt-parent = <&ipcirq0>;
 			interrupts = <10 0 2 0>;
 			kick-gpio = <&ipcgpio2 27 0>;
 			clocks = <&clkgem2>;
+			label = "dsp2";
 		};
 
 		dsp3: dsp3 {
 			compatible = "linux,rproc-user";
+			mem = <0x13e00000 0x00008000
+			       0x13f00000 0x00008000
+			       0x13800000 0x00100000>;
 			reg = <0x0262004c 4
 			       0x02350848 4
 			       0x02350a48 4
-			       0x0262024c 4
-			       0x13e00000 0x00008000
-			       0x13f00000 0x00008000
-			       0x13800000 0x00100000>;
-			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l1pram", "l1dram", "l2ram";
+			       0x0262024c 4>;
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr";
 			interrupt-parent = <&ipcirq0>;
 			interrupts = <11 0 3 0>;
 			kick-gpio = <&ipcgpio3 27 0>;
 			clocks = <&clkgem3>;
+			label = "dsp3";
 		};
 
 		dsp4: dsp4 {
 			compatible = "linux,rproc-user";
+			mem = <0x14e00000 0x00008000
+			       0x14f00000 0x00008000
+			       0x14800000 0x00100000>;
 			reg = <0x02620050 4
 			       0x0235084C 4
 			       0x02350a4C 4
-			       0x02620250 4
-			       0x14e00000 0x00008000
-			       0x14f00000 0x00008000
-			       0x14800000 0x00100000>;
-			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l1pram", "l1dram", "l2ram";
+			       0x02620250 4>;
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr";
 			interrupt-parent = <&ipcirq0>;
 			interrupts = <12 0 4 0>;
 			kick-gpio = <&ipcgpio4 27 0>;
 			clocks = <&clkgem4>;
+			label = "dsp4";
 		};
 
 		dsp5: dsp5 {
 			compatible = "linux,rproc-user";
+			mem = <0x15e00000 0x00008000
+			       0x15f00000 0x00008000
+			       0x15800000 0x00100000>;
 			reg = <0x02620054 4
 			       0x02350850 4
 			       0x02350a50 4
-			       0x02620254 4
-			       0x15e00000 0x00008000
-			       0x15f00000 0x00008000
-			       0x15800000 0x00100000>;
-			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l1pram", "l1dram", "l2ram";
+			       0x02620254 4>;
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr";
 			interrupt-parent = <&ipcirq0>;
 			interrupts = <13 0 5 0>;
 			kick-gpio = <&ipcgpio5 27 0>;
 			clocks = <&clkgem5>;
+			label = "dsp5";
 		};
 
 		dsp6: dsp6 {
 			compatible = "linux,rproc-user";
+			mem = <0x16e00000 0x00008000
+			       0x16f00000 0x00008000
+			       0x16800000 0x00100000>;
 			reg = <0x02620058 4
 			       0x02350854 4
 			       0x02350a54 4
-			       0x02620258 4
-			       0x16e00000 0x00008000
-			       0x16f00000 0x00008000
-			       0x16800000 0x00100000>;
-			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l1pram", "l1dram", "l2ram";
+			       0x02620258 4>;
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr";
 			interrupt-parent = <&ipcirq0>;
 			interrupts = <14 0 6 0>;
 			kick-gpio = <&ipcgpio6 27 0>;
 			clocks = <&clkgem6>;
+			label = "dsp6";
 		};
 
 		dsp7: dsp7 {
 			compatible = "linux,rproc-user";
+			mem = <0x17e00000 0x00008000
+			       0x17f00000 0x00008000
+			       0x17800000 0x00100000>;
 			reg = <0x0262005C 4
 			       0x02350858 4
 			       0x02350a58 4
-			       0x0262025C 4
-			       0x17e00000 0x00008000
-			       0x17f00000 0x00008000
-			       0x17800000 0x00100000>;
-			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr", "l1pram", "l1dram", "l2ram";
+			       0x0262025C 4>;
+			reg-names = "boot-address", "psc-mdstat", "psc-mdctl", "ipcgr";
 			interrupt-parent = <&ipcirq0>;
 			interrupts = <15 0 7 0>;
 			kick-gpio = <&ipcgpio7 27 0>;
 			clocks = <&clkgem7>;
+			label = "dsp7";
 		};
 
 		dspmem: dspmem {
-			compatible = "linux,uio";
-			reg  = <0x0c000000 0x00600000	/* msmc ram */
-				0xa0000000 0x20000000>;	/* corepac's ddr3 */
-			reg-names = "msmcram", "ddr3";
+			compatible = "linux,rproc-user";
+			mem  = <0x0c000000 0x000600000
+					0xa0000000 0x20000000>;
+			label = "dspmem";
 		};
 
 		hwqueue0: hwqueue@2a40000 {
