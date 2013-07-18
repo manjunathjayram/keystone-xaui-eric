@@ -1888,6 +1888,8 @@
 			debug;
 			/* rx-priority = <0>; */
 			/* tx-priority = <0>; */
+			rx-retry-timeout = <3500>; /* Number of pktdma cycles to wait
+						before retry on buffer starvation */
 			logical-queue-managers	= <4>;
 			queues-per-queue-manager = <4096>;
 			qm-base-address = <0x23a80000 0x23a90000
@@ -1986,6 +1988,7 @@
 					pool		= "pool-crypto";
 					complete-queue 	= <8712>;
 					flow		= <24>;
+					rx-error-retry; /* enable retry on buffer starvation */
 					/* debug; */
 				};
 				crypto-tx {
