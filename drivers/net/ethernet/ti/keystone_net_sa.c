@@ -30,15 +30,19 @@
 #include "keystone_net.h"
 #include "keystone_pasahost.h"
 
+#define NET_SA_CHAN_PRFX "satx"
+
 struct sa_device {
-	struct netcp_device		*netcp_device;
-	struct net_device		*net_device;		/* FIXME */
 	struct device			*dev;
-	const char			*tx_chan_name;
-	u32				 tx_queue_depth;
-	struct netcp_tx_pipe		 tx_pipe;
 	struct device_node		*node;
+	u32				 tx_queue_depth;
 	u32				 multi_if;
+};
+
+struct sa_intf {
+	struct net_device		*net_device;
+	char				 tx_chan_name[24];
+	struct netcp_tx_pipe		 tx_pipe;
 };
 
 struct ipsecmgr_mod_sa_ctx_info {
@@ -62,7 +66,7 @@ struct ipsecmgr_mod_sa_ctx_info {
 
 static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 {
-	struct sa_device *sa_dev = data;
+	struct sa_intf *sa_intf = data;
 	u16 offset, len, ihl;
 	u32 *psdata, *swinfo;
 	const struct iphdr *iph;
@@ -104,7 +108,7 @@ static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	SA_SWINFO_UPDATE_DEST_INFO(swinfo, p_info->tx_pipe->dma_queue,
 			ctx_info->flow_id);
 
-	p_info->tx_pipe = &sa_dev->tx_pipe;
+	p_info->tx_pipe = &sa_intf->tx_pipe;
 	kfree(ctx_info);
 	p_info->skb->sp = NULL;
 	return 0;
@@ -112,52 +116,60 @@ static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 
 static int sa_close(void *intf_priv, struct net_device *ndev)
 {
-	struct sa_device *sa_dev = intf_priv;
+	struct sa_intf *sa_intf = intf_priv;
 	struct netcp_priv *netcp_priv = netdev_priv(ndev);
 
-	netcp_unregister_txhook(netcp_priv, SA_TXHOOK_ORDER, sa_tx_hook, sa_dev);
+	netcp_unregister_txhook(netcp_priv, SA_TXHOOK_ORDER, sa_tx_hook, sa_intf);
 
-	netcp_txpipe_close(&sa_dev->tx_pipe);
+	netcp_txpipe_close(&sa_intf->tx_pipe);
 
 	return 0;
 }
 
 static int sa_open(void *intf_priv, struct net_device *ndev)
 {
-	struct sa_device *sa_dev = intf_priv;
+	struct sa_intf *sa_intf = intf_priv;
 	struct netcp_priv *netcp_priv = netdev_priv(ndev);
 	int ret;
 
 	/* Open the SA IPSec data transmit channel */
-	ret = netcp_txpipe_open(&sa_dev->tx_pipe);
+	ret = netcp_txpipe_open(&sa_intf->tx_pipe);
 	if (ret)
-		goto fail;
+		return ret;
 
-	netcp_register_txhook(netcp_priv, SA_TXHOOK_ORDER, sa_tx_hook, sa_dev);
+	netcp_register_txhook(netcp_priv, SA_TXHOOK_ORDER, sa_tx_hook, sa_intf);
 	return 0;
-
-fail:
-	sa_close(intf_priv, ndev);
-	return ret;
 }
 
 static int sa_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
 	struct sa_device *sa_dev = inst_priv;
+	struct sa_intf *sa_intf;
 	char node_name[24];
+	int chan_id = 0;
+
+	if (netcp->cpsw_port)
+		chan_id = netcp->cpsw_port - 1;
 
 	snprintf(node_name, sizeof(node_name), "interface-%d",
-		 (sa_dev->multi_if) ? (netcp->cpsw_port - 1) : 0);
+		 (sa_dev->multi_if) ? chan_id : 0);
 
 	if (of_find_property(sa_dev->node, node_name, NULL)) {
-		sa_dev->net_device = ndev;
-		*intf_priv = sa_dev;
+		sa_intf = devm_kzalloc(sa_dev->dev, sizeof(struct sa_intf), GFP_KERNEL);
+		if (!sa_intf) {
+			dev_err(sa_dev->dev, "memory allocation failed\n");
+			return -ENOMEM;
+		}
 
-		netcp_txpipe_init(&sa_dev->tx_pipe, netdev_priv(ndev),
-				  sa_dev->tx_chan_name, sa_dev->tx_queue_depth);
+		snprintf(sa_intf->tx_chan_name, sizeof(sa_intf->tx_chan_name),
+		 NET_SA_CHAN_PRFX"-%d", chan_id);
 
-
+		sa_intf->net_device = ndev;
+		*intf_priv = sa_intf;
+		netcp_txpipe_init(&sa_intf->tx_pipe, netdev_priv(ndev),
+				  sa_intf->tx_chan_name, sa_dev->tx_queue_depth);
+		dev_dbg(sa_dev->dev, "keystone-sa attached for %s\n", node_name);
 		return 0;
 	} else
 		return -ENODEV;
@@ -165,10 +177,9 @@ static int sa_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 
 static int sa_release(void *intf_priv)
 {
-	struct sa_device *sa_dev = intf_priv;
-
-	printk("%s() called for interface %s\n", __func__, sa_dev->net_device->name);
-	sa_dev->net_device = NULL;
+	struct sa_intf *sa_intf = intf_priv;
+	printk("%s() called for interface %s\n", __func__, sa_intf->net_device->name);
+	kfree(sa_intf);
 	return 0;
 }
 
@@ -204,13 +215,6 @@ static int sa_probe(struct netcp_device *netcp_device,
 
 	if (of_find_property(node, "multi-interface", NULL))
 		sa_dev->multi_if = 1;
-
-	ret = of_property_read_string(node, "tx-channel", &sa_dev->tx_chan_name);
-	if (ret < 0) {
-		dev_err(dev, "missing \"tx-channel\" parameter, err %d\n", ret);
-		sa_dev->tx_chan_name = "satx";
-	}
-	dev_dbg(dev, "tx-channel \"%s\"\n", sa_dev->tx_chan_name);
 
 	ret = of_property_read_u32(node, "tx_queue_depth",
 				   &sa_dev->tx_queue_depth);
