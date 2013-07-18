@@ -1936,9 +1936,15 @@
 					/* channel = <0>; */
 					flow		= <23>;
 				};
-				satx {
+				satx-0 {
 					transmit;
-					label		= "satx";
+					label		= "satx-0";
+					pool		= "pool-net";
+					submit-queue	= <646>;
+				};
+				satx-1 {
+					transmit;
+					label		= "satx-1";
 					pool		= "pool-net";
 					submit-queue	= <646>;
 				};
@@ -2498,7 +2504,7 @@
 				label = "keystone-sa";
 				multi-interface;
 				interface-0;
-				tx-channel = "satx";
+				interface-1;
 				tx_queue_depth = <32>;
 			};
 			qos: qos@0 {
