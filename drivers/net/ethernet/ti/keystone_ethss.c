@@ -2295,10 +2295,10 @@ static void cpsw_hwtstamp(struct cpsw_intf *cpsw_intf)
 			slave->ts_ctl.maddr_map << CPSW_TS_CTL_MADDR_SHIFT);
 
 	if (priv->cpts.tx_enable)
-		ts_en |= CPSW_TS_TX_ANX_ALL_EN;
+		ts_en |= (CPSW_TS_TX_ANX_ALL_EN | CPSW_TS_TX_VLAN_LT1_EN);
 
 	if (priv->cpts.rx_enable)
-		ts_en |= CPSW_TS_RX_ANX_ALL_EN;
+		ts_en |= (CPSW_TS_RX_ANX_ALL_EN | CPSW_TS_RX_VLAN_LT1_EN);
 
 	writel(ts_en, &slave->regs->ts_ctl);
 	writel(seq_id, &slave->regs->ts_seq_ltype);
