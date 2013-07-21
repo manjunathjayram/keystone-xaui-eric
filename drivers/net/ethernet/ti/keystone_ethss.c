@@ -1389,10 +1389,58 @@ static struct cpsw_ts_attribute cpsw_pts_dst_port_attribute =
 			cpsw_port_ts_dst_port_show,
 			cpsw_port_ts_dst_port_store);
 
+static ssize_t cpsw_port_ts_config_show(struct cpsw_priv *cpsw_dev,
+		     struct cpsw_ts_attribute *attr, char *buf, void *context)
+{
+	struct cpsw_slave *slave;
+	int len, port, total_len = 0;
+	u32 reg;
+	char *p = buf;
+
+	port = (int)context;
+
+	slave = cpsw_port_num_get_slave(cpsw_dev, port);
+	if (!slave)
+		return 0;
+
+	reg = readl(&slave->regs->ts_ctl);
+	len = snprintf(p, PAGE_SIZE, "%08x ", reg);
+	p += len;
+	total_len += len;
+
+	reg = readl(&slave->regs->ts_seq_ltype);
+	len = snprintf(p, PAGE_SIZE, "%08x ", reg);
+	p += len;
+	total_len += len;
+
+	reg = readl(&slave->regs->ts_vlan);
+	len = snprintf(p, PAGE_SIZE, "%08x ", reg);
+	p += len;
+	total_len += len;
+
+	reg = readl(&slave->regs->ts_ctl_ltype2);
+	len = snprintf(p, PAGE_SIZE, "%08x ", reg);
+	p += len;
+	total_len += len;
+
+	reg = readl(&slave->regs->ts_ctl2);
+	len = snprintf(p, PAGE_SIZE, "%08x\n", reg);
+	p += len;
+	total_len += len;
+
+	return total_len;
+}
+
+static struct cpsw_ts_attribute cpsw_pts_config_attribute =
+	__CPSW_TS_ATTR(config, S_IRUGO,
+			cpsw_port_ts_config_show,
+			NULL);
+
 static struct attribute *cpsw_pts_n_default_attrs[] = {
 	&cpsw_pts_uni_attribute.attr,
 	&cpsw_pts_maddr_attribute.attr,
 	&cpsw_pts_dst_port_attribute.attr,
+	&cpsw_pts_config_attribute.attr,
 	NULL
 };
 
