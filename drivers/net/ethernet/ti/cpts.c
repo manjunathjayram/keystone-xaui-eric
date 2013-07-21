@@ -41,6 +41,9 @@ static struct sock_filter ptp_default_filter[] = {
 #define CPTS_COUNTER_BITS	32
 #define TS_COMP_LAST_REG(cpts)	(cpts->ts_comp_last & cpts->cc.mask)
 
+#define VLAN_IPV4_HLEN(data) \
+	(((struct iphdr *)(data + OFF_IHL + VLAN_HLEN))->ihl << 2)
+
 static int event_expired(struct cpts_event *event)
 {
 	return time_after(jiffies, event->tmo);
@@ -568,7 +571,7 @@ static int cpts_match(struct sk_buff *skb, unsigned int ptp_class,
 		break;
 	case PTP_CLASS_V1_VLAN_IPV4:
 	case PTP_CLASS_V2_VLAN_IPV4:
-		offset = ETH_HLEN + VLAN_HLEN + IPV4_HLEN(data) + UDP_HLEN;
+		offset = ETH_HLEN + VLAN_HLEN + VLAN_IPV4_HLEN(data) + UDP_HLEN;
 		break;
 	case PTP_CLASS_V1_VLAN_IPV6:
 	case PTP_CLASS_V2_VLAN_IPV6:
