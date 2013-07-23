@@ -1139,7 +1139,7 @@ netcp_addr_add(struct netcp_priv *netcp, const u8 *addr,
 {
 	struct netcp_addr *naddr;
 
-	naddr = kmalloc(sizeof(struct netcp_addr), GFP_KERNEL);
+	naddr = kmalloc(sizeof(struct netcp_addr), GFP_ATOMIC);
 	if (!naddr)
 		return NULL;
 
