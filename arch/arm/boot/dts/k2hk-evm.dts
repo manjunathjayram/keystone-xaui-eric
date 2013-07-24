@@ -1771,14 +1771,6 @@
 					interrupts = <0 218 0xf01>;
 					multi-queue;
 				};
-				accumulator-high {
-					values = <720 8>;
-					// pdsp-id, channel, entries, pacing mode, latency
-					accumulator = <0 16 8 2 0>;
-					interrupts = <0 179 0xf01 0 180 0xf01 0 181 0xf01 0 182 0xf01
-						      0 183 0xf01 0 184 0xf01 0 185 0xf01 0 186 0xf01>;
-					reserved;
-				};
 				qos-inputs-1 {
 					values			= <8000 192>;
 					pdsp-id			= <3>;
