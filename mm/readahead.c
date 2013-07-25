@@ -167,6 +167,8 @@ __do_page_cache_readahead(struct address_space *mapping, struct file *filp,
 
 	end_index = ((isize - 1) >> PAGE_CACHE_SHIFT);
 
+	mapping->flags |= ___GFP_DMA;
+
 	/*
 	 * Preallocate as many pages as we will need.
 	 */
