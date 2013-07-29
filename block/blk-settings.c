@@ -208,6 +208,14 @@ void blk_queue_bounce_limit(struct request_queue *q, u64 dma_mask)
 	unsigned long b_pfn = dma_mask >> PAGE_SHIFT;
 	int dma = 0;
 
+#ifdef CONFIG_ARCH_KEYSTONE
+#define BLK_BOUNCE_ABOVE_2GB 0x7ffff000ULL
+	if (dma_mask > BLK_BOUNCE_ABOVE_2GB) {
+		dma_mask = BLK_BOUNCE_ABOVE_2GB;
+		b_pfn = dma_mask >> PAGE_SHIFT;
+	}
+#endif
+
 	q->bounce_gfp = GFP_NOIO;
 #if BITS_PER_LONG == 64
 	/*
