@@ -160,6 +160,11 @@ int keystone_sgmii_config(void __iomem *sgmii_ofs,
 		control		= 0x1;
 		break;
 
+	case SGMII_LINK_MAC_PHY_100MB:
+		mr_adv_ability	= 0x9401;
+		control		= 0x21;
+		break;
+
 	default:
 		WARN_ONCE(1, "Invalid sgmii interface: %d\n", interface);
 		return -EINVAL;

@@ -1954,20 +1954,13 @@
 					efuse-mac = <1>;
 					/*local-mac-address = [02 18 31 7e 3e 6e]; */
 				};
-				interface-1 {
-					rx-channel = "netrx1";
-					rx-queue-depth = <128 128 0 0>;
-					rx-buffer-size = <1500 4096 0 0>;
-					efuse-mac = <0>;
-					local-mac-address = [02 18 31 7e 3e 6f];
-				};
 			};
 
 			cpsw: cpsw@2090000 {
 				label = "keystone-cpsw";
 				serdes_at_probe = <1>;
 
-				intf_tx_queues = <4>;
+				intf_tx_queues = <6>;
 
 				sgmii_module_ofs  = <0x100>;
 				switch_module_ofs = <0x800>;
@@ -1977,13 +1970,12 @@
 				hw_stats_reg_ofs  = <0xb00>;
 				ale_reg_ofs	  = <0xe00>;
 
-				num_slaves  = <2>;
+				num_slaves  = <4>;
 				ale_ageout  = <30>;
 				ale_entries = <1024>;
-				ale_ports   = <3>;
+				ale_ports   = <5>;
 
-				multi-interface;
-				num-interfaces = <2>;
+				num-interfaces = <1>;
 				slaves-per-interface = <1>;
 
 				interfaces {
@@ -1991,13 +1983,6 @@
 						slave_port = <0>;
 						tx-channel = "nettx0";
 						tx_queue_depth = <32>;
-						intf_tx_queues = <6>;
-					};
-					interface-1 {
-						slave_port = <1>;
-						tx-channel = "nettx1";
-						tx_queue_depth = <32>;
-						intf_tx_queues = <6>;
 					};
 				};
 
@@ -2009,6 +1994,14 @@
 					slave1 {
 						label		= "slave1";
 						link-interface	= <0>;
+					};
+					slave2 {
+						label		= "slave2";
+						link-interface	= <0>;
+					};
+					slave3 {
+						label		= "slave3";
+						link-interface	= <5>;
 					};
 
 				};
