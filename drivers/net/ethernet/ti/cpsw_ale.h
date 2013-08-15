@@ -27,6 +27,12 @@ struct cpsw_ale {
 	struct cpsw_ale_params	params;
 	struct timer_list	timer;
 	unsigned long		ageout;
+	struct device_attribute ale_control_attr;
+#define control_attr_to_ale(attr)	\
+	container_of(attr, struct cpsw_ale, ale_control_attr);
+	struct device_attribute ale_table_attr;
+#define table_attr_to_ale(attr)		\
+	container_of(attr, struct cpsw_ale, ale_table_attr);
 };
 
 enum cpsw_ale_control {
