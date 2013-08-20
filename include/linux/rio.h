@@ -275,6 +275,7 @@ enum rio_phy_type {
  * @priv: Master port private data
  * @dma: DMA device associated with mport
  * @nscan: RapidIO network enumeration/discovery operations
+ * @shutdown: shutdown flag (indicates mport removal from a RapidIO network)
  */
 struct rio_mport {
 	struct list_head dbells;	/* list of doorbell events */
@@ -302,6 +303,7 @@ struct rio_mport {
 	struct dma_device	dma;
 #endif
 	struct rio_scan *nscan;
+	bool shutdown;
 };
 
 /*
@@ -521,6 +523,7 @@ extern int rio_dev_add(struct rio_dev *rdev);
 
 /* Architecture and hardware-specific functions */
 extern int rio_register_mport(struct rio_mport *);
+extern int rio_unregister_mport(struct rio_mport *);
 extern int rio_open_inb_mbox(struct rio_mport *, void *, int, int);
 extern void rio_close_inb_mbox(struct rio_mport *, int);
 extern int rio_open_outb_mbox(struct rio_mport *, void *, int, int);
