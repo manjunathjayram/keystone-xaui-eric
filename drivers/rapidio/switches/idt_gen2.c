@@ -459,6 +459,11 @@ static void idtg2_remove(struct rio_dev *rdev)
 	spin_unlock(&rdev->rswitch->lock);
 }
 
+static void idtg2_shutdown(struct rio_dev *rdev)
+{
+	pr_debug("RIO: %s for %s\n", __func__, rio_name(rdev));
+}
+
 static struct rio_device_id idtg2_id_table[] = {
 	{RIO_DEVICE(RIO_DID_IDTCPS1848, RIO_VID_IDT)},
 	{RIO_DEVICE(RIO_DID_IDTCPS1616, RIO_VID_IDT)},
@@ -473,6 +478,7 @@ static struct rio_driver idtg2_driver = {
 	.id_table = idtg2_id_table,
 	.probe = idtg2_probe,
 	.remove = idtg2_remove,
+	.shutdown = idtg2_shutdown,
 };
 
 static int __init idtg2_init(void)

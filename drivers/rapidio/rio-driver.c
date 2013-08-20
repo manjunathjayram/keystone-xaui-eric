@@ -14,6 +14,7 @@
 #include <linux/module.h>
 #include <linux/rio.h>
 #include <linux/rio_ids.h>
+#include <linux/rio_drv.h>
 
 #include "rio.h"
 
@@ -131,6 +132,17 @@ static int rio_device_remove(struct device *dev)
 	return 0;
 }
 
+static void rio_device_shutdown(struct device *dev)
+{
+	struct rio_dev *rdev = to_rio_dev(dev);
+	struct rio_driver *rdrv = rdev->driver;
+
+	printk(KERN_DEBUG "RIO: %s(%s)\n", __func__, rio_name(rdev));
+
+	if (rdrv && rdrv->shutdown)
+		rdrv->shutdown(rdev);
+}
+
 /**
  *  rio_register_driver - register a new RIO driver
  *  @rdrv: the RIO driver structure to register
@@ -233,6 +245,7 @@ struct bus_type rio_bus_type = {
 	.bus_groups = rio_bus_groups,
 	.probe = rio_device_probe,
 	.remove = rio_device_remove,
+	.shutdown = rio_device_shutdown,
 	.uevent	= rio_uevent,
 };
 
