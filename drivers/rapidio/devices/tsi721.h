@@ -804,6 +804,8 @@ enum tsi721_msix_vect {
 struct msix_irq {
 	u16	vector;
 	char	irq_name[IRQ_DEVICE_NAME_MAX];
+	void	*devid;
+	bool	in_use;
 };
 #endif /* CONFIG_PCI_MSI */
 
@@ -847,6 +849,7 @@ struct tsi721_device {
 #ifdef CONFIG_RAPIDIO_DMA_ENGINE
 extern void tsi721_bdma_handler(struct tsi721_bdma_chan *bdma_chan);
 extern int tsi721_register_dma(struct tsi721_device *priv);
+extern void tsi721_unregister_dma(struct tsi721_device *priv);
 #endif
 
 #endif
