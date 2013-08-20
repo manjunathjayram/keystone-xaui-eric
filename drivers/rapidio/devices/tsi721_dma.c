@@ -531,14 +531,11 @@ static int tsi721_alloc_chan_resources(struct dma_chan *dchan)
 
 #ifdef CONFIG_PCI_MSI
 	if (priv->flags & TSI721_USING_MSIX) {
+		int idx = TSI721_VECT_DMA0_DONE + bdma_chan->id;
+
 		/* Request interrupt service if we are in MSI-X mode */
-		rc = request_irq(
-			priv->msix[TSI721_VECT_DMA0_DONE +
-				   bdma_chan->id].vector,
-			tsi721_bdma_msix, 0,
-			priv->msix[TSI721_VECT_DMA0_DONE +
-				   bdma_chan->id].irq_name,
-			(void *)bdma_chan);
+		rc = request_irq(priv->msix[idx].vector, tsi721_bdma_msix, 0,
+				 priv->msix[idx].irq_name, (void *)bdma_chan);
 
 		if (rc) {
 			dev_dbg(dchan->device->dev,
@@ -547,24 +544,27 @@ static int tsi721_alloc_chan_resources(struct dma_chan *dchan)
 			goto err_out;
 		}
 
-		rc = request_irq(priv->msix[TSI721_VECT_DMA0_INT +
-					    bdma_chan->id].vector,
-				tsi721_bdma_msix, 0,
-				priv->msix[TSI721_VECT_DMA0_INT +
-					   bdma_chan->id].irq_name,
-				(void *)bdma_chan);
+		priv->msix[idx].in_use = true;
+		priv->msix[idx].devid = (void *)bdma_chan;
+
+		idx = TSI721_VECT_DMA0_INT + bdma_chan->id;
+		rc = request_irq(priv->msix[idx].vector, tsi721_bdma_msix, 0,
+				 priv->msix[idx].irq_name, (void *)bdma_chan);
 
 		if (rc)	{
 			dev_dbg(dchan->device->dev,
 				"Unable to allocate MSI-X interrupt for "
 				"BDMA%d-INT\n", bdma_chan->id);
-			free_irq(
-				priv->msix[TSI721_VECT_DMA0_DONE +
-					   bdma_chan->id].vector,
-				(void *)bdma_chan);
+			idx = TSI721_VECT_DMA0_DONE + bdma_chan->id;
+			free_irq(priv->msix[idx].vector, (void *)bdma_chan);
+			priv->msix[idx].in_use = false;
+			priv->msix[idx].devid = NULL;
 			rc = -EIO;
 			goto err_out;
 		}
+
+		priv->msix[idx].in_use = true;
+		priv->msix[idx].devid = (void *)bdma_chan;
 	}
 #endif /* CONFIG_PCI_MSI */
 
@@ -614,10 +614,16 @@ static void tsi721_free_chan_resources(struct dma_chan *dchan)
 
 #ifdef CONFIG_PCI_MSI
 	if (priv->flags & TSI721_USING_MSIX) {
-		free_irq(priv->msix[TSI721_VECT_DMA0_DONE +
-				    bdma_chan->id].vector, (void *)bdma_chan);
-		free_irq(priv->msix[TSI721_VECT_DMA0_INT +
-				    bdma_chan->id].vector, (void *)bdma_chan);
+		int idx = TSI721_VECT_DMA0_DONE + bdma_chan->id;
+
+		free_irq(priv->msix[idx].vector, (void *)bdma_chan);
+		priv->msix[idx].in_use = false;
+		priv->msix[idx].devid = NULL;
+
+		idx = TSI721_VECT_DMA0_INT + bdma_chan->id;
+		free_irq(priv->msix[idx].vector, (void *)bdma_chan);
+		priv->msix[idx].in_use = false;
+		priv->msix[idx].devid = NULL;
 	}
 #endif /* CONFIG_PCI_MSI */
 
@@ -835,4 +841,23 @@ int tsi721_register_dma(struct tsi721_device *priv)
 		dev_err(&priv->pdev->dev, "Failed to register DMA device\n");
 
 	return err;
+}
+
+void tsi721_unregister_dma(struct tsi721_device *priv)
+{
+	int i;
+	int nr_channels = TSI721_DMA_MAXCH;
+	struct rio_mport *mport = priv->mport;
+
+	dma_async_device_unregister(&mport->dma);
+
+	for (i = 0; i < nr_channels; i++) {
+		struct tsi721_bdma_chan *bdma_chan = &priv->bdma[i];
+
+		if (i == TSI721_DMACH_MAINT)
+			continue;
+
+		tasklet_disable(&bdma_chan->tasklet);
+		tasklet_kill(&bdma_chan->tasklet);
+	}
 }
