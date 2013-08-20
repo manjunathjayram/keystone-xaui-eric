@@ -1933,6 +1933,31 @@ int rio_register_mport(struct rio_mport *port)
 }
 EXPORT_SYMBOL_GPL(rio_register_mport);
 
+static int rio_mport_cleanup_callback(struct device *dev, void * _data)
+{
+	struct rio_dev *rdev = to_rio_dev(dev);
+
+	pr_debug("RIO: %s remove %s\n", __func__, rio_name(rdev));
+	device_unregister(dev);
+	list_del(&rdev->global_list);
+	return 0;
+}
+
+int rio_unregister_mport(struct rio_mport *port)
+{
+	pr_debug("RIO: %s %s id=%d\n", __func__, port->name, port->id);
+	/* Unregister all RapidIO devices attached to this mport */
+	device_for_each_child(&port->dev, port, rio_mport_cleanup_callback);
+
+	mutex_lock(&rio_mport_list_lock);
+	list_del(&port->node);
+	mutex_unlock(&rio_mport_list_lock);
+	device_unregister(&port->dev);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(rio_unregister_mport);
+
 EXPORT_SYMBOL_GPL(rio_local_get_device_id);
 EXPORT_SYMBOL_GPL(rio_get_device);
 EXPORT_SYMBOL_GPL(rio_get_asm);
