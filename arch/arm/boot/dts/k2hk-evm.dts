@@ -2828,5 +2828,25 @@
 			 */
 			gpios = <&gpio0 2 0>;
 		};
+
+		gpio_keys {
+			compatible = "gpio-keys";
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			button@1 {
+				label = "Power button";
+				/* this is the key power button defined in Linux input.h */
+				linux,code = <116>;
+				/* EV_KEY */
+				linux,input-type = <1>;
+				/*
+				 * On EVM use GPIO pin 1 since it is also connected to
+				 * BMC to generate a shutdown event to ARM. Change this
+				 * as needed in the target board.
+				 */
+				gpios = <&gpio0 1 0>;
+			};
+               };
 	};
 };
