@@ -1008,9 +1008,9 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 
 	desc->callback_param = p_info;
 	desc->callback = netcp_tx_complete;
-	spin_lock_bh(&netcp->lock);
+	tasklet_disable(&tx_pipe->dma_poll_tasklet);
 	p_info->cookie = dmaengine_submit(desc);
-	spin_unlock_bh(&netcp->lock);
+	tasklet_enable(&tx_pipe->dma_poll_tasklet);
 
 	ndev->trans_start = jiffies;
 
