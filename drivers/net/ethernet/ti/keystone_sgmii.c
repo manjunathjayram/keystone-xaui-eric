@@ -53,12 +53,6 @@
 #define SGMII_RXCFG_REG(x)    (SGMII_OFFSET(x) + 0x034)
 #define SGMII_AUXCFG_REG(x)   (SGMII_OFFSET(x) + 0x038)
 
-struct sgmii_config {
-	u32	interface;
-	u32	mr_adv_ability;
-	u32	control;
-};
-
 static inline void sgmii_write_reg(void __iomem *base, int reg, u32 val)
 {
 	__raw_writel(val, base + reg);
@@ -141,34 +135,34 @@ int keystone_sgmii_config(void __iomem *sgmii_ofs,
 			  int port, u32 interface)
 {
 	unsigned int i, status, mask;
-	struct sgmii_config *config;
-
-	config = kzalloc(sizeof(*config), GFP_KERNEL);
-	if (!config)
-		return -ENOMEM;
+	u32 mr_adv_ability;
+	u32 control;
 
 	switch (interface) {
 	case SGMII_LINK_MAC_MAC_AUTONEG:
-		config->mr_adv_ability	= 0x9801;
-		config->control		= 0x21;
-
+		mr_adv_ability	= 0x9801;
+		control		= 0x21;
 		break;
+
 	case SGMII_LINK_MAC_PHY:
 	case SGMII_LINK_MAC_PHY_NO_MDIO:
-		config->mr_adv_ability	= 1;
-		config->control		= 1;
-
+		mr_adv_ability	= 1;
+		control		= 1;
 		break;
+
 	case SGMII_LINK_MAC_MAC_FORCED:
-		config->mr_adv_ability	= 0x9801;
-		config->control		= 0x20;
-
+		mr_adv_ability	= 0x9801;
+		control		= 0x20;
 		break;
+
 	case SGMII_LINK_MAC_FIBER:
-		config->mr_adv_ability	= 0x20;
-		config->control		= 0x1;
-
+		mr_adv_ability	= 0x20;
+		control		= 0x1;
 		break;
+
+	default:
+		WARN_ONCE(1, "Invalid sgmii interface: %d\n", interface);
+		return -EINVAL;
 	}
 
 	sgmii_write_reg(sgmii_ofs, SGMII_CTL_REG(port), 0);
@@ -184,15 +178,13 @@ int keystone_sgmii_config(void __iomem *sgmii_ofs,
 			break;
 	}
 
-	sgmii_write_reg(sgmii_ofs,
-			SGMII_MRADV_REG(port), config->mr_adv_ability);
-	sgmii_write_reg(sgmii_ofs,
-			SGMII_CTL_REG(port), config->control);
+	sgmii_write_reg(sgmii_ofs, SGMII_MRADV_REG(port), mr_adv_ability);
+	sgmii_write_reg(sgmii_ofs, SGMII_CTL_REG(port), control);
 
 
 	mask = SGMII_REG_STATUS_LINK;
 
-	if (config->control & SGMII_REG_CONTROL_AUTONEG)
+	if (control & SGMII_REG_CONTROL_AUTONEG)
 		mask |= SGMII_REG_STATUS_AUTONEG;
 
 	for (i = 0; i < 1000; i++)  {
@@ -201,7 +193,6 @@ int keystone_sgmii_config(void __iomem *sgmii_ofs,
 			break;
 	}
 
-	kfree(config);
 	return 0;
 }
 
