@@ -1708,6 +1708,7 @@
 
 		hwqueue0: hwqueue@2a40000 {
 			compatible = "ti,keystone-hwqueue";
+			dma-coherent;
 			#address-cells = <1>;
 			#size-cells = <1>;
 			clocks = <&chipclk13>;
