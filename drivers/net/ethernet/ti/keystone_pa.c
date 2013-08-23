@@ -749,7 +749,7 @@ static struct pa_packet *pa_alloc_packet(struct pa_device *pa_dev,
 {
 	struct pa_packet *p_info;
 
-	p_info = kzalloc(sizeof(*p_info) + cmd_size, GFP_KERNEL);
+	p_info = kzalloc(sizeof(*p_info) + cmd_size, GFP_ATOMIC);
 	if (!p_info)
 		return NULL;
 
