@@ -1442,56 +1442,16 @@ static int netcp_ndo_ioctl(struct net_device *ndev,
 static int netcp_ndo_change_mtu(struct net_device *ndev, int new_mtu)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
-	int old_max_frame = ndev->mtu + ETH_HLEN + ETH_FCS_LEN;
-	int max_frame = new_mtu + ETH_HLEN + ETH_FCS_LEN;
-	unsigned long flags;
-	int ret = 0;
 
-	spin_lock_irqsave(&netcp->lock, flags);
-
-	netif_tx_stop_all_queues(ndev);
-	netif_carrier_off(ndev);
-
-	BUG_ON(!netcp_is_alive(netcp));
-
-	netcp_set_rx_state(netcp, RX_STATE_TEARDOWN);
-
-	dmaengine_pause(netcp->rx_channel);
-
-	spin_unlock_irqrestore(&netcp->lock, flags);
-
-	napi_disable(&netcp->napi);
-
-	netcp_set_rx_state(netcp, RX_STATE_INVALID);
-
-	/* MTU < 68 is an error for IPv4 traffic, just don't allow it */
+	/* MTU < 68 is an error for IPv4 traffic */
 	if ((new_mtu < 68) ||
-	    (max_frame > NETCP_MAX_FRAME_SIZE)) {
+	    (new_mtu > (NETCP_MAX_FRAME_SIZE - ETH_HLEN - ETH_FCS_LEN))) {
 		dev_err(netcp->dev, "Invalid mtu size = %d\n", new_mtu);
-		ret = -EINVAL;
-		goto out_change_mtu;
+		return -EINVAL;
 	}
-
-	if (old_max_frame == max_frame) {
-		ret = 0;
-		goto out_change_mtu;
-	}
-
-	netcp->rx_packet_max = max_frame;
 
 	ndev->mtu = new_mtu;
-
-out_change_mtu:
-	netcp_set_rx_state(netcp, RX_STATE_INTERRUPT);
-
-	dmaengine_resume(netcp->rx_channel);
-
-	napi_enable(&netcp->napi);
-
-	netif_tx_start_all_queues(ndev);
-	netif_carrier_on(ndev);
-
-	return ret;
+	return 0;
 }
 
 static void netcp_ndo_tx_timeout(struct net_device *ndev)
