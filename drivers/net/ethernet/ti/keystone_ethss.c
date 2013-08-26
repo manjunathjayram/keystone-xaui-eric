@@ -3056,7 +3056,7 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 		cpsw_dev->cpts.reg = regs + cpsw_dev->cpts_reg_ofs;
 
 	cpsw_dev->host_port = 0;
-	cpsw_dev->rx_packet_max = 9500;
+	cpsw_dev->rx_packet_max = NETCP_MAX_FRAME_SIZE;
 
 	dev_dbg(dev, "num_slaves = %d\n", cpsw_dev->num_slaves);
 	dev_dbg(dev, "ale_ageout = %d\n", cpsw_dev->ale_ageout);
