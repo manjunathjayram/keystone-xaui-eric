@@ -569,7 +569,7 @@ static void netcp_rx_complete(void *data)
 				sg_dma_len(sg), sg_dma_len(sg));
 	}
 
-	dma_unmap_sg(netcp->dev, &p_info->sg[2], frags+1, DMA_FROM_DEVICE);
+	dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], frags+1, DMA_FROM_DEVICE);
 
 	if (unlikely(netcp->rx_state == RX_STATE_TEARDOWN)) {
 		dev_dbg(netcp->dev,
@@ -642,7 +642,7 @@ static void netcp_rxpool_free(void *arg, unsigned q_num, unsigned bufsize,
 		struct netcp_packet *p_info = desc->callback_param;
 		struct sk_buff *skb = p_info->skb;
 
-		dma_unmap_sg(netcp->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
+		dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
 		dev_kfree_skb_any(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
 	} else {
@@ -651,8 +651,8 @@ static void netcp_rxpool_free(void *arg, unsigned q_num, unsigned bufsize,
 
 		sg_init_table(sg, 1);
 		sg_set_buf(&sg[0], bufptr, PAGE_SIZE);
-		sg_dma_address(&sg[0]) = virt_to_dma(netcp->dev, bufptr);
-		dma_unmap_sg(netcp->dev, sg, 1, DMA_FROM_DEVICE);
+		sg_dma_address(&sg[0]) = virt_to_dma(&netcp->pdev->dev, bufptr);
+		dma_unmap_sg(&netcp->pdev->dev, sg, 1, DMA_FROM_DEVICE);
 		free_page((unsigned long)bufptr);
 	}
 }
@@ -699,7 +699,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		sg_set_buf(&p_info->sg[1], p_info->psdata, sizeof(p_info->psdata));
 		sg_set_buf(&p_info->sg[2], skb_tail_pointer(skb), skb_tailroom(skb));
 
-		p_info->sg_ents = 2 + dma_map_sg(netcp->dev, &p_info->sg[2],
+		p_info->sg_ents = 2 + dma_map_sg(&netcp->pdev->dev, &p_info->sg[2],
 						 1, DMA_FROM_DEVICE);
 		if (p_info->sg_ents != 3) {
 			dev_err(netcp->dev, "dma map failed\n");
@@ -712,7 +712,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 					       3, DMA_DEV_TO_MEM,
 					       DMA_HAS_EPIB | DMA_HAS_PSINFO);
 		if (IS_ERR_OR_NULL(desc)) {
-			dma_unmap_sg(netcp->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
+			dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
 			dev_kfree_skb_any(skb);
 			kmem_cache_free(netcp_pinfo_cache, p_info);
 			err = PTR_ERR(desc);
@@ -742,7 +742,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		sg_init_table(sg, 1);
 		sg_set_buf(&sg[0], bufptr, PAGE_SIZE);
 
-		err = dma_map_sg(netcp->dev, sg, 1, DMA_FROM_DEVICE);
+		err = dma_map_sg(&netcp->pdev->dev, sg, 1, DMA_FROM_DEVICE);
 		if (err != 1) {
 			dev_warn(netcp->dev, "map error for pool %d\n", q_num);
 			free_page((unsigned long)bufptr);
@@ -753,7 +753,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 					       DMA_DEV_TO_MEM,
 					       q_num << DMA_QNUM_SHIFT);
 		if (IS_ERR_OR_NULL(desc)) {
-			dma_unmap_sg(netcp->dev, sg, 1, DMA_FROM_DEVICE);
+			dma_unmap_sg(&netcp->pdev->dev, sg, 1, DMA_FROM_DEVICE);
 			free_page((unsigned long)bufptr);
 
 			err = PTR_ERR(desc);
@@ -849,7 +849,7 @@ static void netcp_tx_complete(void *data)
 	}
 
 	sg_ents = sg_count(&p_info->sg[2], p_info->sg_ents);
-	dma_unmap_sg(netcp->dev, &p_info->sg[2], sg_ents, DMA_TO_DEVICE);
+	dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], sg_ents, DMA_TO_DEVICE);
 
 	netcp_dump_packet(p_info, "txc");
 
@@ -977,7 +977,7 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 
 	/* Map all the packet fragments	into the scatterlist */
 	real_sg_ents = skb_to_sgvec(skb, &p_info->sg[2], 0, skb->len);
-	p_info->sg_ents = 2 + dma_map_sg(netcp->dev, &p_info->sg[2],
+	p_info->sg_ents = 2 + dma_map_sg(&netcp->pdev->dev, &p_info->sg[2],
 					 real_sg_ents, DMA_TO_DEVICE);
 	if (p_info->sg_ents != (real_sg_ents + 2)) {
 		ndev->stats.tx_dropped++;
@@ -996,7 +996,7 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 
 	if (IS_ERR_OR_NULL(desc)) {
 		ndev->stats.tx_dropped++;
-		dma_unmap_sg(netcp->dev, &p_info->sg[2], real_sg_ents,
+		dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], real_sg_ents,
 			     DMA_TO_DEVICE);
 		dev_kfree_skb_any(skb);
 		kfree(p_info);
