@@ -475,7 +475,7 @@ static int cpts_ptp_enable(struct ptp_clock_info *ptp,
 
 static struct ptp_clock_info cpts_info = {
 	.owner		= THIS_MODULE,
-	.name		= "CTPS timer",
+	.name		= "CPTS timer",
 	.max_adj	= 1000000,
 	.n_ext_ts	= 0,
 	.pps		= 1,
@@ -512,7 +512,6 @@ static void cpts_clk_init(struct cpts *cpts)
 		pr_info("No %s defined.  Assumes external ref clock.\n",
 			CPTS_REF_CLOCK_NAME);
 		cpts->refclk = NULL;
-		return;
 	} else
 		cpts->rftclk_freq = clk_get_rate(cpts->refclk);
 
@@ -535,7 +534,7 @@ static void cpts_clk_init(struct cpts *cpts)
 	if (cpts->refclk)
 		clk_prepare_enable(cpts->refclk);
 
-	cpts_write32(cpts, cpts->rftclk_sel & 0x3, rfclk_sel);
+	cpts_write32(cpts, cpts->rftclk_sel & 0x1f, rfclk_sel);
 }
 
 static void cpts_clk_release(struct cpts *cpts)
