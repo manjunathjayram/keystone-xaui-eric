@@ -2803,10 +2803,10 @@
 			dma-ranges = <0x02000000 0 0x80000000 0x80000000 0 0x20000000>;
 
 			interrupt-parent = <&gic>;
-			/* First 4 are legacy IRQs, followed by 8 MSI IRQs */
-			interrupts = <0 26 0xf01 0 27 0xf01 0 28 0xf01 0 29 0xf01
-				      0 30 0xf01 0 31 0xf01 0 32 0xf01 0 33 0xf01
-				      0 34 0xf01 0 35 0xf01 0 36 0xf01 0 37 0xf01>;
+			interrupts = <0 26 0xf01 0 27 0xf01 0 28 0xf01 0 29 0xf01 /* 4 Legacy IRQs */
+				      0 30 0xf01 0 31 0xf01 0 32 0xf01 0 33 0xf01 /* 8 MSI IRQs */
+				      0 34 0xf01 0 35 0xf01 0 36 0xf01 0 37 0xf01
+				      0 38 0xf01>; /* Error IRQ */
 			clocks = <&clkpcie>;
 			clock-names = "pcie";
 		};
