@@ -485,12 +485,6 @@
 				0x02620328 4>;	/* rstmux8 register */
 		};
 
-		pcieks2cfg:pcieks2cfg@2320000 {
-			compatible = "ti,keystone2-pcie-cfg";
-			reg = <0x02320000 0x4000	/* Keystone2 serdes cfg */
-				0x0262014c 4>;		/* device cfg */
-		};
-
 		clocks {
 			#address-cells = <1>;
 			#size-cells = <1>;
@@ -2793,7 +2787,9 @@
 			#size-cells = <2>;
 			#interrupt-cells = <2>;
 			compatible = "ti,keystone2-pci";
-			reg = <0x21800000 0x8000>;	/* pcie-regs */
+			reg =  <0x21800000 0x8000	/* pcie-regs */
+				0x0262014c 4		/* device cfg */
+				0x02320000 0x4000>;	/* Keystone2 serdes cfg */
 
 			/* outbound pci resources */
 			ranges = <0x02000000 0 0x50000000 0x50000000 0 0x10000000
@@ -2809,6 +2805,8 @@
 				      0 38 0xf01>; /* Error IRQ */
 			clocks = <&clkpcie>;
 			clock-names = "pcie";
+			enable-linktrain; /* When the boot loader enables link train and configure ep
+					   * remove this attribute */
 		};
 
 		wdt: wdt@22f0080 {
