@@ -299,7 +299,7 @@ struct cpswx_priv {
 	struct kobject			tx_pri_kobj;
 	struct kobject			pvlan_kobj;
 	struct kobject			stats_kobj;
-	struct mutex			hw_stats_lock;
+	spinlock_t			hw_stats_lock;
 };
 
 struct cpswx_intf {
@@ -1196,9 +1196,9 @@ static ssize_t cpsw_stats_mod_store(struct cpswx_priv *cpsw_dev,
 		return -EINVAL;
 
 	stat_mod = (int)(attr->context);
-	mutex_lock(&cpsw_dev->hw_stats_lock);
+	spin_lock_bh(&cpsw_dev->hw_stats_lock);
 	cpsw_reset_mod_stats(cpsw_dev, stat_mod);
-	mutex_unlock(&cpsw_dev->hw_stats_lock);
+	spin_unlock_bh(&cpsw_dev->hw_stats_lock);
 	return count;
 }
 
@@ -1380,9 +1380,9 @@ static void keystone_get_ethtool_stats(struct net_device *ndev,
 	priv = (struct cpswx_priv *)netcp_device_find_module(netcp_device,
 							CPSW_MODULE_NAME);
 	if (priv) {
-		mutex_lock(&priv->hw_stats_lock);
+		spin_lock_bh(&priv->hw_stats_lock);
 		cpswx_update_stats(priv, data);
-		mutex_unlock(&priv->hw_stats_lock);
+		spin_unlock_bh(&priv->hw_stats_lock);
 	}
 
 	return;
@@ -1666,7 +1666,7 @@ static void cpsw_slave_open(struct cpswx_slave *slave,
 				slave->slave_num);
 			slave->phy = NULL;
 		} else {
-			dev_info(priv->dev, "phy found: id is: 0x%s\n",
+			dev_info(priv->dev, "phy found: id is: %s\n",
 				 dev_name(&slave->phy->dev));
 			cpsw_intf->ndev->phydev = slave->phy;
 			phy_start(slave->phy);
@@ -1904,9 +1904,9 @@ static void cpswx_timer(unsigned long arg)
 			netif_stop_queue(cpsw_intf->ndev);
 	}
 
-	mutex_lock(&cpsw_dev->hw_stats_lock);
+	spin_lock_bh(&cpsw_dev->hw_stats_lock);
 	cpswx_update_stats(cpsw_dev, NULL);
-	mutex_unlock(&cpsw_dev->hw_stats_lock);
+	spin_unlock_bh(&cpsw_dev->hw_stats_lock);
 
 	cpsw_intf->timer.expires = jiffies + (HZ/10);
 	add_timer(&cpsw_intf->timer);
@@ -2361,7 +2361,7 @@ static int cpswx_probe(struct netcp_device *netcp_device,
 					       1, 0);
 
 	/* init the hw stats lock */
-	mutex_init(&cpsw_dev->hw_stats_lock);
+	spin_lock_init(&cpsw_dev->hw_stats_lock);
 
 	ret = cpsw_create_sysfs_entries(cpsw_dev);
 	if (ret)
