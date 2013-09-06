@@ -13,6 +13,8 @@
  * You should have received a copy of the GNU General Public License along with
  * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <asm/irq.h>
+
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -28,10 +30,10 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/types.h>
-
-#include <asm/irq.h>
 #include <linux/signal.h>
 #include <linux/pci.h>
+
+#include "pci-pdata.h"
 
 #define DRIVER_NAME	"keystone-pcie"
 #define PCIE_REGS_INDEX			0
@@ -111,6 +113,10 @@
 #define ENABLE_ERR_FATAL_IRQ		BIT(1)
 #define ERR_FATAL_IRQ			BIT(1)
 
+static struct keystone_pcie_pdata keystone2_data = {
+	.setup = k2_pcie_platform_setup,
+};
+
 struct keystone_pcie_info {
 	void __iomem *reg_cfg_virt;
 	/* PCIE resources */
@@ -131,6 +137,8 @@ struct keystone_pcie_info {
 	int msi_virq_base;
 	struct irq_domain *msi_irqd;
 	int error_irq;
+	/* platform customization */
+	struct keystone_pcie_pdata *pdata;
 };
 
 /* abort reg reference */
@@ -249,7 +257,6 @@ static int __init keystone_pcie_get_resources(struct device_node *node,
 	struct resource *res;
 	u32 pci_space, temp;
 	const u32 *ranges;
-
 
 	err = of_address_to_resource(node, 0, &info->cfg_resource);
 	if (err < 0) {
@@ -948,6 +955,7 @@ static int keystone_pcie_setup(int nr, struct pci_sys_data *sys)
 	struct keystone_pcie_info *info;
 	void __iomem *reg_virt;
 	int i, err;
+	u32 temp;
 
 	if (nr != 0)
 		return 0;
@@ -976,25 +984,28 @@ static int keystone_pcie_setup(int nr, struct pci_sys_data *sys)
 	}
 	pci_add_resource(&sys->resources, &info->io_resource);
 
-	/*
-	 * KeyStone devices do not support h/w autonomous
-	 * link up-training to GEN2 from GEN1 in either EP/RC modes.
-	 * The software needs to initiate speed change.
-	 */
-	__raw_writel(DIR_SPD |
-		 __raw_readl(reg_virt + SPACE0_LOCAL_CFG_OFFSET + PL_GEN2),
+	if (info->pdata->en_link_train) {
+		/*
+		 * KeyStone devices do not support h/w autonomous
+		 * link up-training to GEN2 from GEN1 in either EP/RC modes.
+		 * The software needs to initiate speed change.
+		 */
+		temp = __raw_readl(
 				reg_virt + SPACE0_LOCAL_CFG_OFFSET + PL_GEN2);
-	/*
-	 * Initiate Link Training. We will delay for L0 as specified by
-	 * standard, but will still proceed and return success irrespective of
-	 * L0 status as this will be handled by explicit L0 state checks during
-	 * enumeration.
-	 */
-	__raw_writel(LTSSM_EN_VAL |
-		__raw_readl(reg_virt + CMD_STATUS), reg_virt + CMD_STATUS);
+		__raw_writel(DIR_SPD | temp,
+				reg_virt + SPACE0_LOCAL_CFG_OFFSET + PL_GEN2);
+		/*
+		 * Initiate Link Training. We will delay for L0 as specified by
+		 * standard, but will still proceed and return success
+		 * irrespective of L0 status as this will be handled by explicit
+		 * L0 state checks during enumeration.
+		 */
+		temp = __raw_readl(reg_virt + CMD_STATUS);
+		__raw_writel(LTSSM_EN_VAL | temp, reg_virt + CMD_STATUS);
 
-	/* 100ms */
-	msleep(100);
+		/* 100ms */
+		msleep(100);
+	}
 
 	/*
 	 * Identify ourselves as 'Bridge' for enumeration purpose. This also
@@ -1368,7 +1379,6 @@ static int keystone_pcie_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
 		info->virqs[pin - 1] : -1;
 }
 
-
 static struct hw_pci keystone_pcie_hw = {
 	.nr_controllers	= 1,
 	.setup		= keystone_pcie_setup,
@@ -1378,14 +1388,19 @@ static struct hw_pci keystone_pcie_hw = {
 };
 
 /* keystone pcie device tree match tables */
-const struct of_device_id keystone_pci_ids[] __initconst = {
-	{ .type = "pci", .compatible = "ti,keystone2-pci", },
+static const struct of_device_id keystone_pci_match_ids[] __initconst = {
+	{
+		.type = "pci",
+		.compatible = "ti,keystone2-pci",
+		.data = &keystone2_data,
+	},
 	{}
 };
 
 static int __init keystone_pcie_rc_init(void)
 {
 	struct keystone_pcie_info *rc_info;
+	const struct of_device_id *of_id;
 	struct device_node *np;
 	int err = -EINVAL, i;
 	struct clk *pcie_clk;
@@ -1398,11 +1413,22 @@ static int __init keystone_pcie_rc_init(void)
 		return -ENOMEM;
 	}
 
-	np = of_find_matching_node(NULL, keystone_pci_ids);
+	np = of_find_matching_node(NULL, keystone_pci_match_ids);
 	if (!np) {
 		pr_err(DRIVER_NAME ": Unable to find pcie device node\n");
 		goto err;
 	}
+
+	of_id = of_match_node(keystone_pci_match_ids, np);
+	if (of_id)
+		rc_info->pdata = (struct keystone_pcie_pdata *)of_id->data;
+
+	/* Setup platform specific initialization */
+	if (rc_info->pdata)
+		err = rc_info->pdata->setup(rc_info->pdata, np);
+
+	if (err < 0)
+		goto err;
 
 	/* Enable controller Power and Clock domains */
 	pcie_clk = of_clk_get(np, 0);
