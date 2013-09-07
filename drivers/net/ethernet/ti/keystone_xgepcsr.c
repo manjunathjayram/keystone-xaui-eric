@@ -24,6 +24,8 @@
 
 #define XGE_SGMII_1_STATUS	0x02f00114
 #define XGE_SGMII_2_STATUS	0x02f00214
+#define XGE_SW_BASE		0x02f00000
+#define XGE_SW_SIZE		0x00001000
 
 #define PCSR_OFFSET(x)	((x == 0) ? (0x600) : (0x680))
 
@@ -48,7 +50,8 @@
 #define PCSR_SIGNAL_OK_EN	BIT(1)
 
 #define reg_rmw(addr, value, mask) \
-	__raw_writel(((__raw_readl(addr) & (~(mask))) | (value)), (addr))
+	__raw_writel(((__raw_readl(addr) & (~(mask))) | \
+			(value & (mask))), (addr))
 
 struct serdes_cfg {
 	u32 ofs;
@@ -56,18 +59,17 @@ struct serdes_cfg {
 	u32 mask;
 };
 
-struct serdes_cfg cfg_cmu0_1g_slow[] = {
+struct serdes_cfg cfg_cmu0_156p25mhz_10p3125g[] = {
 	{0x0000, 0x00800002, 0x00ff00ff},
 	{0x0014, 0x00003838, 0x0000ffff},
 	{0x0060, 0x1c44e438, 0xffffffff},
 	{0x0064, 0x00c18400, 0x00ffffff},
 	{0x0068, 0x17078200, 0xffffff00},
 	{0x006c, 0x00000014, 0x000000ff},
-	{0x0078, 0x0000c000, 0x0000ff00},
-	{0x0000, 0x00000003, 0x000000ff}
+	{0x0078, 0x0000c000, 0x0000ff00}
 };
 
-struct serdes_cfg cfg_cmu1_10g_slow[] = {
+struct serdes_cfg cfg_cmu1_156p25mhz_10p3125g[] = {
 	{0x0c00, 0x00030002, 0x00ff00ff},
 	{0x0c14, 0x00005252, 0x0000ffff},
 	{0x0c28, 0x80000000, 0xff000000},
@@ -85,21 +87,33 @@ struct serdes_cfg cfg_cmu1_10g_slow[] = {
 	{0x0c68, 0x17078200, 0xffffff00},
 	{0x0c6c, 0x0000001a, 0x000000ff},
 	{0x0c74, 0x00000400, 0x0000ff00},
-	{0x0c78, 0x0000c000, 0x0000ff00},
-	{0x0c00, 0x00000003, 0x000000ff}
+	{0x0c78, 0x0000c000, 0x0000ff00}
 };
 
-struct serdes_cfg cfg_lane1_10g_slow[] = {
-	{0x0204, 0x00000080, 0x000000ff},
-	{0x0208, 0x0000920d, 0x0000ffff},
-	{0x0204, 0xfc000000, 0xff000000},
-	{0x0208, 0x00009104, 0x0000ffff},
+struct serdes_cfg cfg_comlane_156p25mhz_10p3125g[] = {
+	{0x0a00, 0x00000800, 0x0000ff00},
+	{0x0a84, 0x00000000, 0x000000ff},
+	{0x0a8c, 0x00130000, 0x00ff0000},
+	{0x0a90, 0x77a00000, 0xffff0000},
+	{0x0a94, 0x00007777, 0x0000ffff},
+	{0x0b08, 0x000f0000, 0xffff0000},
+	{0x0b0c, 0x000f0000, 0x00ffffff},
+	{0x0b10, 0xbe000000, 0xff000000},
+	{0x0b14, 0x000000ff, 0x000000ff},
+	{0x0b18, 0x00000014, 0x000000ff},
+	{0x0b5c, 0x981b0000, 0xffff0000},
+	{0x0b64, 0x00001100, 0x0000ff00},
+	{0x0b78, 0x00000c00, 0x0000ff00},
+	{0x0abc, 0xff000000, 0xff000000},
+	{0x0ac0, 0x0000008b, 0x000000ff}
+};
+
+struct serdes_cfg cfg_lane_156p25mhz_10p3125g[] = {
+	{0x0204, 0xfc000080, 0xff0000ff},
+	{0x0208, 0x00009341, 0x0000ffff},
 	{0x0210, 0x1a000000, 0xff000000},
-	/* 58 Lane address 0x14 pma_ln_ctrl[32] should be set to 1.
-	   This is dlpf_div2_ena bit and controls the clock speed for
-	   updating the DLPF integral path in the CDR.
-	*/
-	{0x0214, 0x0000b65c, 0x00ffffff},
+	/* Set dlpf_div2_ena. Orig = 0x58 */
+	{0x0214, 0x00006b5c, 0x00ffffff},
 	{0x0218, 0x75800084, 0xffff00ff},
 	{0x022c, 0x00300000, 0x00ff0000},
 	{0x0230, 0x00003800, 0x0000ff00},
@@ -125,129 +139,153 @@ struct serdes_cfg cfg_lane1_10g_slow[] = {
 	{0x03cc, 0x00000000, 0x000000ff},
 };
 
-struct serdes_cfg cfg_lane2_10g_slow[] = {
-	{0x0404, 0x00000080, 0x000000ff},
-	{0x0408, 0x0000920d, 0x0000ffff},
-	{0x0404, 0xfc000000, 0xff000000},
-	{0x0408, 0x00009104, 0x0000ffff},
-	{0x0410, 0x1a000000, 0xff000000},
-	/* 58 Lane address 0x14 pma_ln_ctrl[32] should be set to 1.
-	   This is dlpf_div2_ena bit and controls the clock speed
-	   for updating the DLPF integral path in the CDR.
-	*/
-	{0x0414, 0x0000b6b5c, 0x00ffffff},
-	{0x0418, 0x75800084, 0xffff00ff},
-	{0x042c, 0x00300000, 0x00ff0000},
-	{0x0430, 0x00003800, 0x0000ff00},
-	{0x044c, 0x008f0000, 0x00ff0000},
-	{0x0450, 0x30000000, 0xff000000},
-	{0x0460, 0x00000002, 0x000000ff},
-	{0x0464, 0x00000057, 0x000000ff},
-	{0x0468, 0x00575700, 0x00ffff00},
-	{0x0478, 0xff000000, 0xff000000},
-	{0x0480, 0x00500050, 0x00ff00ff},
-	{0x0484, 0x00001f15, 0x0000ffff},
-	{0x048c, 0x00006f00, 0x0000ff00},
-	{0x0494, 0x00000000, 0xffffff00},
-	{0x0498, 0x00002640, 0xff00ffff},
-	{0x049c, 0x00000003, 0x000000ff},
-	{0x04a4, 0x00000f13, 0x0000ffff},
-	{0x04a8, 0x0001b600, 0x00ffff00},
-	/* CJT, sb=0x30, disable aneg */
-	{0x0580, 0x00000020, 0x000000ff},
-	/* CJT, sb=0x30, disable training */
-	{0x05c0, 0x00000000, 0x0000ff00},
-	{0x05cc, 0x00000018, 0x000000ff},
-	{0x05cc, 0x00000000, 0x000000ff}
-};
-
-struct serdes_cfg cfg_comlane_10g_slow[] = {
-	{0x0a00, 0x00000800, 0x0000ff00},
-	{0x0a84, 0x00000000, 0x000000ff},
-	{0x0a8c, 0x00130000, 0x00ff0000},
-	{0x0a90, 0x77a00000, 0xffff0000},
-	{0x0a94, 0x00007777, 0x0000ffff},
-	{0x0b08, 0x000f0000, 0xffff0000},
-	{0x0b0c, 0x000f0000, 0x00ffffff},
-	{0x0b10, 0xbe000000, 0xff000000},
-	{0x0b14, 0x000000ff, 0x000000ff},
-	{0x0b18, 0x00000014, 0x000000ff},
-	{0x0b5c, 0x981b0000, 0xffff0000},
-	{0x0b64, 0x00001100, 0x0000ff00},
-	{0x0b78, 0x00000c00, 0x0000ff00},
-	{0x0abc, 0xff000000, 0xff000000},
-	{0x0ac0, 0x0000008b, 0x000000ff},
-};
-
-void xge_serdes_10gbps_setup_phy_b(void)
+static inline void keystone_xge_serdes_init(void __iomem *serdes_regs)
 {
-	void __iomem *regs, *sgmii_1_status, *sgmii_2_status;
+	int i;
+
+	/* cmu0 setup */
+	for (i = 0; i < ARRAY_SIZE(cfg_cmu0_156p25mhz_10p3125g); i++) {
+		reg_rmw(serdes_regs + cfg_cmu0_156p25mhz_10p3125g[i].ofs,
+			cfg_cmu0_156p25mhz_10p3125g[i].val,
+			cfg_cmu0_156p25mhz_10p3125g[i].mask);
+	}
+
+	/* cmu1 setup */
+	for (i = 0; i < ARRAY_SIZE(cfg_cmu1_156p25mhz_10p3125g); i++) {
+		reg_rmw(serdes_regs + cfg_cmu1_156p25mhz_10p3125g[i].ofs,
+			cfg_cmu1_156p25mhz_10p3125g[i].val,
+			cfg_cmu1_156p25mhz_10p3125g[i].mask);
+	}
+
+	/* comlane setup */
+	for (i = 0; i < ARRAY_SIZE(cfg_comlane_156p25mhz_10p3125g); i++) {
+		reg_rmw(serdes_regs + cfg_comlane_156p25mhz_10p3125g[i].ofs,
+			cfg_comlane_156p25mhz_10p3125g[i].val,
+			cfg_comlane_156p25mhz_10p3125g[i].mask);
+	}
+}
+
+static inline void keystone_xge_serdes_lane_config(
+			void __iomem *serdes_regs, int lane)
+{
+	int i;
+
+	/* lane setup */
+	for (i = 0; i < ARRAY_SIZE(cfg_lane_156p25mhz_10p3125g); i++) {
+		reg_rmw(serdes_regs +
+				cfg_lane_156p25mhz_10p3125g[i].ofs +
+				(0x200 * lane),
+			cfg_lane_156p25mhz_10p3125g[i].val,
+			cfg_lane_156p25mhz_10p3125g[i].mask);
+	}
+}
+
+static inline void keystone_xge_serdes_com_enable(void __iomem *serdes_regs)
+{
+	/* Bring SerDes out of Reset if SerDes is Shutdown & is in Reset Mode*/
+	reg_rmw(serdes_regs + 0x10, 0x0, 0x10000000);
+	reg_rmw(serdes_regs + 0x0c10, 0x0, 0x10000000);
+
+	/* Enable CMU and COMLANE */
+	reg_rmw(serdes_regs + 0x0000, 0x03, 0x000000ff);
+	reg_rmw(serdes_regs + 0x0c00, 0x03, 0x000000ff);
+	reg_rmw(serdes_regs + 0x0a00, 0x5f, 0x000000ff);
+}
+
+static inline void keystone_xge_serdes_lane_enable(
+			void __iomem *serdes_regs, int lane)
+{
+	/* Bit 28 Toggled. Bring it out of Reset TX PLL for all lanes */
+	reg_rmw(serdes_regs + 0x0200 * (lane + 1) + 0x28, 0x0, 0x20000000);
+
+	/* Set Lane Control Rate */
+	__raw_writel(0xe0e9e038, serdes_regs + 0x1fe0 + (4 * lane));
+
+	/* Set NES bit if Loopback Enabled */
+}
+
+static inline void keystone_xge_serdes_pll_enable(void __iomem *serdes_regs,
+							int enable)
+{
+	/* Set PLL Enable Val */
+	if (enable)
+		__raw_writel(0xee000000, serdes_regs + 0x1ff4);
+	else
+		__raw_writel(0x08000000, serdes_regs + 0x1ff4);
+}
+
+static inline void keystone_xge_wait_pll_locked(
+			void __iomem *sw_regs)
+{
+	u32 val;
+
+	do {
+		/* sgmii 1 status */
+		val = __raw_readl(sw_regs + 0x0114);
+	} while ((val & 0x10) != 0x10);
+
+	do {
+		/* sgmii 2 status */
+		val = __raw_readl(sw_regs + 0x0214);
+	} while ((val & 0x10) != 0x10);
+}
+
+static inline void keystone_xge_serdes_enable_xgmii_port(
+			void __iomem *sw_regs)
+{
+	__raw_writel(0x03, sw_regs + 0x0c);
+}
+
+static inline void keystone_xge_serdes_fixup(void __iomem *serdes_regs)
+{
 	u32 i, val;
 
-	regs = ioremap(XGE_SERDES_BASE, XGE_SERDES_SIZE);
-	sgmii_1_status = ioremap(XGE_SGMII_1_STATUS, 4);
-	sgmii_2_status = ioremap(XGE_SGMII_2_STATUS, 4);
-
-	/* preamble */
-	__raw_writel(37500, regs + 0x1ffc);
-
-	/* cmu0_1g_slow */
-	for (i = 0; i < ARRAY_SIZE(cfg_cmu0_1g_slow); i++) {
-		reg_rmw(regs + cfg_cmu0_1g_slow[i].ofs,
-			cfg_cmu0_1g_slow[i].val,
-			cfg_cmu0_1g_slow[i].mask);
+	/* Kick the PCS block...
+	   This is temporary workaround for SERDES PCS not coming
+	   up correctly. Not adding to CSL just yet.
+	*/
+	for (i = 0; i < 2; i++) {
+		val = __raw_readl(serdes_regs + 0x204 + (i * 0x200));
+		reg_rmw(serdes_regs + 0x204 + (i * 0x200),
+				0x00000004, 0x00000006);
+		reg_rmw(serdes_regs + 0x204 + (i * 0x200),
+				val & 0x00000006, 0x00000006);
 	}
+	/* wait... 2uS */
+	udelay(20);
+}
 
-	/* cmu1_10g_slow */
-	for (i = 0; i < ARRAY_SIZE(cfg_cmu1_10g_slow); i++) {
-		reg_rmw(regs + cfg_cmu1_10g_slow[i].ofs,
-			cfg_cmu1_10g_slow[i].val,
-			cfg_cmu1_10g_slow[i].mask);
-	}
+static void keystone_xge_serdes_start(void)
+{
+	void __iomem *serdes_regs, *xge_sw_regs;
+	u32 i;
 
-	/* lane1_10g_slow */
-	for (i = 0; i < ARRAY_SIZE(cfg_lane1_10g_slow); i++) {
-		reg_rmw(regs + cfg_lane1_10g_slow[i].ofs,
-			cfg_lane1_10g_slow[i].val,
-			cfg_lane1_10g_slow[i].mask);
-	}
+	serdes_regs = ioremap(XGE_SERDES_BASE, XGE_SERDES_SIZE);
+	xge_sw_regs = ioremap(XGE_SW_BASE, XGE_SW_SIZE);
 
-	/* lane2_10g_slow */
-	for (i = 0; i < ARRAY_SIZE(cfg_lane2_10g_slow); i++) {
-		reg_rmw(regs + cfg_lane2_10g_slow[i].ofs,
-			cfg_lane2_10g_slow[i].val,
-			cfg_lane2_10g_slow[i].mask);
-	}
+	keystone_xge_serdes_pll_enable(serdes_regs, 0);
 
-	/* comlane_10g_slow */
-	for (i = 0; i < ARRAY_SIZE(cfg_comlane_10g_slow); i++) {
-		reg_rmw(regs + cfg_comlane_10g_slow[i].ofs,
-			cfg_comlane_10g_slow[i].val,
-			cfg_comlane_10g_slow[i].mask);
-	}
+	keystone_xge_serdes_init(serdes_regs);
 
-	/* reset_clr */
-	reg_rmw(regs + 0x0a00, 0x0000005f, 0x000000ff);
+	for (i = 0; i < 2; i++)
+		keystone_xge_serdes_lane_config(serdes_regs, i);
 
-	/*Enable pll via the pll_ctrl 0x0014*/
-	__raw_writel(0xee000000, regs + 0x1ff4);
+	keystone_xge_serdes_com_enable(serdes_regs);
 
-	/* Enable TX and RX via the LANExCTL_STS 0x0000 + x*4 */
-	/* Full Rate mode, 16b width */
-	__raw_writel(0xe0e9e038, regs + 0x1fe0);
-	__raw_writel(0xe0e9e038, regs + 0x1fe4);
-	udelay(200);
+	for (i = 0; i < 2; i++)
+		keystone_xge_serdes_lane_enable(serdes_regs, i);
 
-	/* Wait for SGMII Serdes PLL lock */
-	do {
-		val = __raw_readl(sgmii_1_status);
-	} while ((val & 0x10) != 0x10);
+	keystone_xge_serdes_pll_enable(serdes_regs, 1);
 
-	do {
-		/* sgmii_2 status */
-	} while ((val & 0x10) != 0x10);
+	/* SB PLL Status Poll */
+	keystone_xge_wait_pll_locked(xge_sw_regs);
 
-	iounmap(regs);
+	keystone_xge_serdes_enable_xgmii_port(xge_sw_regs);
+
+	keystone_xge_serdes_fixup(serdes_regs);
+
+	iounmap(serdes_regs);
+	iounmap(xge_sw_regs);
 }
 
 static int keystone_xge_serdes_configured;  /* FIXME */
@@ -258,7 +296,7 @@ void xge_serdes_init_156p25Mhz(void)
 	if (keystone_xge_serdes_configured)
 		return;
 
-	xge_serdes_10gbps_setup_phy_b();
+	keystone_xge_serdes_start();
 	keystone_xge_serdes_configured = 1;
 }
 
