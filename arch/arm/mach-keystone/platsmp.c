@@ -22,7 +22,6 @@
 
 #include <asm/smp.h>
 #include <asm/smp_plat.h>
-#include <asm/hardware/gic.h>
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
 #include <asm/memory.h>
@@ -43,8 +42,6 @@ static void __init keystone_smp_init_cpus(void)
 
 	for (i = 0; i < ncores; i++)
 		set_cpu_possible(i, true);
-
-	set_smp_cross_call(gic_raise_softirq);
 }
 
 static void __init keystone_smp_prepare_cpus(unsigned int max_cpus)
@@ -63,7 +60,6 @@ static void __cpuinit keystone_smp_secondary_initmem(void)
 
 static void __cpuinit keystone_smp_secondary_init(unsigned int cpu)
 {
-	gic_secondary_init(0);
 	keystone_smp_secondary_initmem();
 }
 
