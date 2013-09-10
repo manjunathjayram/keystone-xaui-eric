@@ -17,11 +17,14 @@
 #include <linux/of.h>
 #include <linux/init.h>
 #include <linux/slab.h>
+#include <linux/clocksource.h>
 #include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/of_address.h>
+#include <linux/irqchip/arm-gic.h>
 #include <linux/dma-mapping.h>
 #include <linux/irqchip/keystone-ipc.h>
+#include <linux/irqchip.h>
 #include <linux/platform_data/davinci-clock.h>
 
 #include <asm/setup.h>
@@ -29,8 +32,6 @@
 #include <asm/mach/map.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/time.h>
-#include <asm/arch_timer.h>
-#include <asm/hardware/gic.h>
 
 #include "keystone.h"
 
@@ -74,42 +75,11 @@ static void __init keystone_map_io(void)
 	iotable_init(io_desc, ARRAY_SIZE(io_desc));
 }
 
-static const struct of_device_id irq_match[] = {
-	{
-		.compatible = "arm,cortex-a15-gic",
-		.data = gic_of_init,
-	},
-	{
-		.compatible = "ti,keystone-ipc-irq",
-		.data = keystone_ipc_irq_of_init,
-	},
-	{}
-};
-
-static void __init keystone_init_irq(void)
-{
-	of_irq_init(irq_match);
-}
-
-
 static void __init keystone_timer_init(void)
 {
-	int error;
-
 	davinci_of_clk_init();
-
-	error = arch_timer_of_register();
-	if (!error) {
-		arch_timer_sched_clock_init();
-		return;
-	}
-
-	panic("no timer!\n");
+	clocksource_of_init();
 }
-
-static struct sys_timer keystone_timer = {
-	.init = keystone_timer_init,
-};
 
 static bool is_coherent(struct device *dev)
 {
@@ -441,13 +411,12 @@ void keystone_restart(char mode, const char *cmd)
 
 DT_MACHINE_START(KEYSTONE2, "KeyStone2")
 	.map_io		= keystone_map_io,
-	.init_irq	= keystone_init_irq,
-	.timer		= &keystone_timer,
+	.init_irq	= irqchip_init,
+	.init_time	= keystone_timer_init,
 	.init_machine	= keystone_init,
 	.init_meminfo	= keystone_init_meminfo,
 	.restart	= keystone_restart,
 	.smp		= smp_ops(keystone_smp_ops),
-	.handle_irq	= gic_handle_irq,
 	.dt_compat	= keystone2_match,
 #ifdef CONFIG_ZONE_DMA
 	.dma_zone_size	= SZ_2G,
