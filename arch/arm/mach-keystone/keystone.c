@@ -97,15 +97,11 @@ static void __init keystone_init_irq(void)
 }
 
 
-static void __init keystone_timer_init(void)
+static void __init keystone2_timer_init(void)
 {
 	int error;
 
 	davinci_of_clk_init();
-
-	error = tci6614_timer_init();
-	if (!error)
-		return;
 
 	error = arch_timer_of_register();
 	if (!error) {
@@ -116,8 +112,25 @@ static void __init keystone_timer_init(void)
 	panic("no timer!\n");
 }
 
-static struct sys_timer keystone_timer = {
-	.init = keystone_timer_init,
+static void __init keystone1_timer_init(void)
+{
+	int error;
+
+	davinci_of_clk_init();
+
+	error = tci6614_timer_init();
+	if (!error)
+		return;
+
+	panic("no timer!\n");
+}
+
+static struct sys_timer keystone1_timer = {
+	.init = keystone1_timer_init,
+};
+
+static struct sys_timer keystone2_timer = {
+	.init = keystone2_timer_init,
 };
 
 static bool is_coherent(struct device *dev)
@@ -456,7 +469,6 @@ void keystone_restart(char mode, const char *cmd)
 #define KEYSTONE_MACHINE_DEFS				\
 	.map_io		= keystone_map_io,		\
 	.init_irq	= keystone_init_irq,		\
-	.timer		= &keystone_timer,		\
 	.init_machine	= keystone_init,		\
 	.init_meminfo	= keystone_init_meminfo,	\
 	.restart	= keystone_restart,
@@ -465,6 +477,7 @@ DT_MACHINE_START(KEYSTONE1, "KeyStone1")
 	KEYSTONE_MACHINE_DEFS
 	.handle_irq	= tci6614_handle_irq,
 	.dt_compat	= keystone1_match,
+	.timer		= &keystone1_timer,
 MACHINE_END
 
 DT_MACHINE_START(KEYSTONE2, "KeyStone2")
@@ -472,6 +485,7 @@ DT_MACHINE_START(KEYSTONE2, "KeyStone2")
 	.smp		= smp_ops(keystone_smp_ops),
 	.handle_irq	= gic_handle_irq,
 	.dt_compat	= keystone2_match,
+	.timer		= &keystone2_timer,
 #ifdef CONFIG_ZONE_DMA
 	.dma_zone_size	= SZ_2G,
 #endif
