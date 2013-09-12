@@ -1156,7 +1156,8 @@ static void cpsw_reset_mod_stats(struct cpswx_priv *cpsw_dev, int stat_mod)
 	struct cpswx_host_hw_stats __iomem *cpsw_stats0;
 	struct cpswx_hw_stats __iomem *cpsw_statsa;
 	struct cpswx_hw_stats __iomem *cpsw_statsb;
-	void *p = NULL;
+	void __iomem *base;
+	u32  __iomem *p;
 	int i;
 
 	cpsw_stats0 = cpsw_dev->host_hw_stats_regs;
@@ -1165,21 +1166,24 @@ static void cpsw_reset_mod_stats(struct cpswx_priv *cpsw_dev, int stat_mod)
 
 	switch (stat_mod) {
 	case CPSW_STATS0_MODULE:
-		p = cpsw_stats0;
+		base = cpsw_stats0;
 		break;
 	case CPSW_STATS1_MODULE:
-		p = cpsw_statsa;
+		base = cpsw_statsa;
 		break;
 	case CPSW_STATS2_MODULE:
-		p  = cpsw_statsb;
+		base  = cpsw_statsb;
 		break;
+	default:
+		dev_err(cpsw_dev->dev, "Unknown stat module %d\n", stat_mod);
+		return;
 	}
 
 	for (i = 0; i < ETHTOOL_STATS_NUM; i++) {
 		if (et_stats[i].type == stat_mod) {
 			cpsw_dev->hw_stats[i] = 0;
-			p = (u8 *)p + et_stats[i].offset;
-			*(u32 *)p = 0xffffffff;
+			p = base + et_stats[i].offset;
+			*p = 0xffffffff;
 		}
 	}
 	return;
@@ -1336,7 +1340,8 @@ static void cpswx_update_stats(struct cpswx_priv *cpsw_dev, uint64_t *data)
 	struct cpswx_host_hw_stats __iomem *cpsw_stats0;
 	struct cpswx_hw_stats __iomem *cpsw_statsa;
 	struct cpswx_hw_stats __iomem *cpsw_statsb;
-	void *p = NULL;
+	void __iomem *base = NULL;
+	u32  __iomem *p;
 	u32 tmp = 0;
 	int i;
 
@@ -1347,22 +1352,26 @@ static void cpswx_update_stats(struct cpswx_priv *cpsw_dev, uint64_t *data)
 	for (i = 0; i < ETHTOOL_STATS_NUM; i++) {
 		switch (et_stats[i].type) {
 		case CPSW_STATS0_MODULE:
-			p = cpsw_stats0;
+			base = cpsw_stats0;
 			break;
 		case CPSW_STATS1_MODULE:
-			p = cpsw_statsa;
+			base = cpsw_statsa;
 			break;
 		case CPSW_STATS2_MODULE:
-			p  = cpsw_statsb;
+			base = cpsw_statsb;
 			break;
+		default:
+			dev_err(cpsw_dev->dev, "Unknown stat module %d\n",
+				et_stats[i].type);
+			return;
 		}
 
-		p = (u8 *)p + et_stats[i].offset;
-		tmp = *(u32 *)p;
+		p = base + et_stats[i].offset;
+		tmp = *p;
 		cpsw_dev->hw_stats[i] = cpsw_dev->hw_stats[i] + tmp;
 		if (data)
 			data[i] = cpsw_dev->hw_stats[i];
-		*(u32 *)p = tmp;
+		*p = tmp;
 	}
 
 	return;
@@ -1666,8 +1675,11 @@ static void cpsw_slave_open(struct cpswx_slave *slave,
 				slave->slave_num);
 			slave->phy = NULL;
 		} else {
-			dev_info(priv->dev, "phy found: id is: %s\n",
-				 dev_name(&slave->phy->dev));
+			dev_info(priv->dev, "phy found: id is: %s, drv: %s\n",
+				 dev_name(&slave->phy->dev),
+				 (slave->phy->drv ?
+				   (slave->phy->drv->name ?
+					slave->phy->drv->name : "") : ""));
 			cpsw_intf->ndev->phydev = slave->phy;
 			phy_start(slave->phy);
 		}
