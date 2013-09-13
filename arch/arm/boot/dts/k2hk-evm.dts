@@ -45,6 +45,7 @@
 		serial0	= &uart0;
 		gpio0	= &gpio0;
 		ethernet1 = &interface1;
+		mdio-gpio0 = <&mdiox0>;
 	};
 
 	chosen {
@@ -1479,6 +1480,10 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 
+			pca@20 {
+				compatible = "nxp,pca9555";
+				reg = <0x20>;
+			};
 		};
 
 		gpio0: gpio@260bf00 {
@@ -2684,14 +2689,12 @@
 			};
 		};
 
-		mdiox: mdiox@2f00500 {
-			compatible	= "ti,keystone_mdiox";
+		mdiox0: mdiox {
+			compatible = "virtual,mdio-gpio";
 			#address-cells = <1>;
 			#size-cells = <0>;
-			reg		= <0x2f00500 0x100>;
-			bus_freq	= <500000>;
-			clocks		= <&clkxge>;
-			clock-names	= "fck";
+			gpios = <&gpio0 2 0x2		/* mdc */
+				 &gpio0 0 0x2>;		/* mdio */
 
 			phyx0: phyx@0 {
 				compatible = "Marvell,88x2242", "ethernet-phy-ieee802.3-c45";
@@ -2769,7 +2772,7 @@
 				slaves {
 					slave0 {
 						label		= "slave0";
-						link-interface	= <10>;        /* 4 - XGMII_LINK_MAC_PHY */
+						link-interface	= <10>;        /* 10 - XGMII_LINK_MAC_PHY */
 						phy-handle	= <&phyx0>;
 					};
 					slave1 {
