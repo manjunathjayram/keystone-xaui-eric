@@ -2749,9 +2749,6 @@ static int cpsw_close(void *intf_priv, struct net_device *ndev)
 	
 	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_dev);
 
-	if (!cpsw_dev->ale_refcnt)
-		cpsw_ale_destroy(cpsw_dev->ale);
-
 	netcp_unregister_txhook(netcp, CPSW_TXHOOK_ORDER, cpsw_tx_hook,
 				cpsw_intf);
 	netcp_txpipe_close(&cpsw_intf->tx_pipe);
@@ -2769,6 +2766,8 @@ static int cpsw_remove(struct netcp_device *netcp_device, void *inst_priv)
 	struct cpsw_intf *cpsw_intf, *tmp;
 
 	of_node_put(cpsw_dev->interfaces);
+
+	cpsw_ale_destroy(cpsw_dev->ale);
 
 	list_for_each_entry_safe(cpsw_intf, tmp, &cpsw_dev->cpsw_intf_head,
 				 cpsw_intf_list) {
