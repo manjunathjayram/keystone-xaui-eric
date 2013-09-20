@@ -114,13 +114,51 @@ static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	return 0;
 }
 
+#define SA_RXHOOK_ORDER	30
+#define SA_IS_IPSEC_ESP_MASK	BIT(25)
+
+static int sa_rx_hook(int order, void *data, struct netcp_packet *p_info)
+{
+	struct sk_buff *skb = p_info->skb;
+	const struct iphdr *iph;
+
+	/*
+	 * Check to see if this is an ESP packet, if not just return.
+	 * ESP packet indication is in word 3, bit 25 of psdata
+	 * This is valid only for first fragment.
+	 */
+	if (!(p_info->psdata[3] & SA_IS_IPSEC_ESP_MASK))
+		return 0;
+
+	/*
+	 * Get offset to L3 header which is
+	 * stored in word 2, bits 24-31 of psdata.
+	 */
+	iph = (struct iphdr *)
+		((u8 *)((u8 *)skb->data + (p_info->psdata[2] >> 24)));
+
+	if (iph->version != IPVERSION)
+		return 0;
+
+	/*
+	 * See if packet is the first fragment, if so, mark the local_df
+	 * flag of skb which will be checked by the ipsecmgr kernel module
+	 * to indicate packet has not been decrypted by NETCP SA.
+	 */
+	if (ip_is_fragment(iph))
+		skb->local_df = 1;
+
+	return 0;
+}
+
 static int sa_close(void *intf_priv, struct net_device *ndev)
 {
 	struct sa_intf *sa_intf = intf_priv;
 	struct netcp_priv *netcp_priv = netdev_priv(ndev);
 
 	netcp_unregister_txhook(netcp_priv, SA_TXHOOK_ORDER, sa_tx_hook, sa_intf);
-
+	netcp_unregister_rxhook(netcp_priv, SA_RXHOOK_ORDER,
+				sa_rx_hook, sa_intf);
 	netcp_txpipe_close(&sa_intf->tx_pipe);
 
 	return 0;
@@ -138,6 +176,7 @@ static int sa_open(void *intf_priv, struct net_device *ndev)
 		return ret;
 
 	netcp_register_txhook(netcp_priv, SA_TXHOOK_ORDER, sa_tx_hook, sa_intf);
+	netcp_register_rxhook(netcp_priv, SA_RXHOOK_ORDER, sa_rx_hook, sa_intf);
 	return 0;
 }
 
