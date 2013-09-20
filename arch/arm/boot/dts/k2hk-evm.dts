@@ -2521,7 +2521,7 @@
 			};
 			pa: pa@2000000 {
 				label = "keystone-pa";
-				checksum-offload	= <2>;
+				checksum-offload	= <1>; /* 1 - HW offload */
 				txhook-order		= <10>;
 				txhook-softcsum		= <40>;
 				rxhook-order		= <10>;
