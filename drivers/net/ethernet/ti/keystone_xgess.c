@@ -77,7 +77,6 @@
 #define CPSW_MASK_ALL_PORTS			7
 #define CPSW_MASK_PHYS_PORTS			6
 #define CPSW_MASK_NO_PORTS			0
-#define CPSW_NON_VLAN_ADDR			-1
 
 #define CPSW_STATS0_MODULE			0
 #define CPSW_STATS1_MODULE			1
@@ -1650,8 +1649,7 @@ static void cpsw_slave_open(struct cpswx_slave *slave,
 			     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
 
 	cpsw_ale_add_mcast(priv->ale, cpsw_intf->ndev->broadcast,
-			   1 << slave_port, 0, ALE_MCAST_FWD_2,
-			   CPSW_NON_VLAN_ADDR);
+			   1 << slave_port, 0, 0, ALE_MCAST_FWD_2);
 
 	if (slave->link_interface == SGMII_LINK_MAC_PHY) {
 		has_phy = 1;
@@ -1735,11 +1733,11 @@ static void cpsw_add_mcast_addr(struct cpswx_intf *cpsw_intf, u8 *addr)
 	struct cpswx_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 	u16 vlan_id;
 
-	cpsw_ale_add_mcast(cpsw_dev->ale, addr, CPSW_MASK_ALL_PORTS, 0,
-			   ALE_MCAST_FWD_2, -1);
+	cpsw_ale_add_mcast(cpsw_dev->ale, addr, CPSW_MASK_ALL_PORTS, 0, 0,
+			   ALE_MCAST_FWD_2);
 	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID) {
-		cpsw_ale_add_mcast(cpsw_dev->ale, addr, CPSW_MASK_ALL_PORTS, 0,
-				   ALE_MCAST_FWD_2, vlan_id);
+		cpsw_ale_add_mcast(cpsw_dev->ale, addr, CPSW_MASK_ALL_PORTS,
+				   ALE_VLAN, vlan_id, ALE_MCAST_FWD_2);
 	}
 }
 
@@ -1748,11 +1746,11 @@ static void cpsw_add_ucast_addr(struct cpswx_intf *cpsw_intf, u8 *addr)
 	struct cpswx_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 	u16 vlan_id;
 
-	cpsw_ale_add_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port, 0, -1);
+	cpsw_ale_add_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port, 0, 0);
 
 	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID)
-		cpsw_ale_add_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port, 0,
-				   vlan_id);
+		cpsw_ale_add_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port,
+				   ALE_VLAN, vlan_id);
 }
 
 static void cpsw_del_mcast_addr(struct cpswx_intf *cpsw_intf, u8 *addr)
@@ -1760,11 +1758,10 @@ static void cpsw_del_mcast_addr(struct cpswx_intf *cpsw_intf, u8 *addr)
 	struct cpswx_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 	u16 vlan_id;
 
-	cpsw_ale_del_mcast(cpsw_dev->ale, addr, CPSW_MASK_ALL_PORTS, -1);
+	cpsw_ale_del_mcast(cpsw_dev->ale, addr, 0, 0, 0);
 
 	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID) {
-		cpsw_ale_del_mcast(cpsw_dev->ale, addr, CPSW_MASK_ALL_PORTS,
-				   vlan_id);
+		cpsw_ale_del_mcast(cpsw_dev->ale, addr, 0, ALE_VLAN, vlan_id);
 	}
 }
 
@@ -1773,11 +1770,11 @@ static void cpsw_del_ucast_addr(struct cpswx_intf *cpsw_intf, u8 *addr)
 	struct cpswx_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 	u16 vlan_id;
 
-	cpsw_ale_del_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port, -1);
+	cpsw_ale_del_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port, 0, 0);
 
 	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID) {
 		cpsw_ale_del_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port,
-				   vlan_id);
+				   ALE_VLAN, vlan_id);
 	}
 }
 
@@ -1841,8 +1838,8 @@ static int cpswx_add_vid(void *intf_priv, int vid)
 	set_bit(vid, cpsw_intf->active_vlans);
 
 	cpsw_ale_add_vlan(cpsw_dev->ale, vid, CPSW_MASK_ALL_PORTS,
-			  CPSW_MASK_ALL_PORTS, CPSW_MASK_PHYS_PORTS,
-			  CPSW_MASK_NO_PORTS);
+			  CPSW_MASK_NO_PORTS,
+			  CPSW_MASK_ALL_PORTS, CPSW_MASK_PHYS_PORTS);
 
 	return 0;
 }
@@ -1852,7 +1849,7 @@ static int cpswx_del_vid(void *intf_priv, int vid)
 	struct cpswx_intf *cpsw_intf = intf_priv;
 	struct cpswx_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 
-	cpsw_ale_del_vlan(cpsw_dev->ale, vid);
+	cpsw_ale_del_vlan(cpsw_dev->ale, vid, 0);
 
 	clear_bit(vid, cpsw_intf->active_vlans);
 
