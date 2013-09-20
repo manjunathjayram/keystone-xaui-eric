@@ -2601,6 +2601,7 @@
 
 		crypto: crypto@20c0000 {
 			compatible = "ti,keystone-crypto";
+			dma-coherent;
 			reg = <0x20c0000 0x40000>;
 			clocks = <&clksa>;
 			tx_channel = "crypto-tx";
