@@ -1463,7 +1463,7 @@ static void netcp_ndo_tx_timeout(struct net_device *ndev)
 	netif_tx_wake_all_queues(ndev);
 }
 
-static int netcp_rx_add_vid(struct net_device *ndev, u16 vid)
+static int netcp_rx_add_vid(struct net_device *ndev, __be16 proto, u16 vid)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
 	struct netcp_intf_modpriv *intf_modpriv;
@@ -1492,7 +1492,7 @@ static int netcp_rx_add_vid(struct net_device *ndev, u16 vid)
 	return 0;
 }
 
-static int netcp_rx_kill_vid(struct net_device *ndev, u16 vid)
+static int netcp_rx_kill_vid(struct net_device *ndev, __be16 proto, u16 vid)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
 	struct netcp_intf_modpriv *intf_modpriv;
