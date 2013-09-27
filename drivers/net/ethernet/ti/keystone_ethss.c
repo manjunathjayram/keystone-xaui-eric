@@ -68,8 +68,8 @@
 #define CPSW_CTL_VLAN_AWARE			BIT(1)
 #define CPSW_REG_VAL_STAT_ENABLE_ALL		0xf
 
-#define CPSW_MASK_ALL_PORTS			7
-#define CPSW_MASK_PHYS_PORTS			6
+#define CPSW_MASK_ALL_PORTS			0x1f
+#define CPSW_MASK_PHYS_PORTS			0x1e
 #define CPSW_MASK_NO_PORTS			0
 #define CPSW_NON_VLAN_ADDR			-1
 
