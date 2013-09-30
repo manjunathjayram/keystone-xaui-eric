@@ -1980,7 +1980,7 @@
 
 				interfaces {
 					interface-0 {
-						slave_port = <0>;
+						slave_port = <3>;
 						tx-channel = "nettx0";
 						tx_queue_depth = <32>;
 					};
@@ -2001,7 +2001,7 @@
 					};
 					slave3 {
 						label		= "slave3";
-						link-interface	= <5>;
+						link-interface	= <0>;
 					};
 
 				};
@@ -2022,10 +2022,7 @@
 			qos: qos@0 {
 				label = "keystone-qos";
 
-				multi-interface;
-				interface-0;
-
-				input-channels {
+				interface-0 {
 					chan-0 {
 						tx-channel = "qos0";
 						tx_queue_depth = <128>;
