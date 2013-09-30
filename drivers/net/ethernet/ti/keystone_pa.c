@@ -1278,20 +1278,6 @@ static int pa_fmtcmd_tx_csum(struct netcp_packet *p_info)
 
 	start = skb_checksum_start_offset(skb);
 	len = skb->len - start;
-	if (len & 0x01) {
-		int err = skb_pad(skb, 1);
-		if (err < 0) {
-			if (unlikely(net_ratelimit())) {
-				dev_warn(p_info->netcp->dev,
-					"padding failed (%d), packet discarded\n",
-					err);
-			}
-			p_info->skb = NULL;
-			return err;
-		}
-		dev_dbg(p_info->netcp->dev, "padded packet to even length");
-		++len;
-	}
 
 	PASAHO_SET_CMDID(ptx, PASAHO_PAMOD_CMPT_CHKSUM);
 	PASAHO_CHKCRC_SET_START(ptx, start);
