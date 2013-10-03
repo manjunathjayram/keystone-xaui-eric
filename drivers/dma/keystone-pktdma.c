@@ -60,6 +60,8 @@
 #define DESC_LEN_MASK		BITS(22)
 #define DESC_TYPE_HOST		0
 #define DESC_TYPE_SHIFT		26
+#define DESC_EFLAGS_MASK	BITS(4)
+#define DESC_EFLAGS_SHIFT	20
 
 #define DMA_DEFAULT_NUM_DESCS	128
 #define DMA_DEFAULT_PRIORITY	DMA_PRIO_MED_L
@@ -632,6 +634,15 @@ static int chan_complete(struct keystone_dma_chan *chan, struct hwqueue *queue,
 				sg++;
 				sg_retlen++;
 				desc_copy(chan, data, hwdesc->psdata, len);
+			}
+
+			if ((desc->options & DMA_HAS_EFLAGS)) {
+				data = sg_virt(sg);
+				sg++;
+				sg_retlen++;
+				*data =
+				(hwval_to_host(chan, hwdesc->packet_info) >>
+				 DESC_EFLAGS_SHIFT) & DESC_EFLAGS_MASK;
 			}
 		}
 
@@ -1573,6 +1584,24 @@ chan_prep_slave_sg(struct dma_chan *achan, struct scatterlist *_sg,
 			return ERR_PTR(-EINVAL);
 		}
 		pslen /= sizeof(u32);
+	}
+
+	 /* Error flag is valid only for Rx channel */
+	if (unlikely((options & DMA_HAS_EFLAGS) &&
+			(direction == DMA_MEM_TO_DEV))) {
+		dev_err(chan_dev(chan), "eflag requested for Tx channel\n");
+		return ERR_PTR(-EINVAL);
+	}
+
+	if (options & DMA_HAS_EFLAGS) {
+		num_sg--;
+		sg++;
+
+		if (unlikely(sg->length < sizeof(u32))) {
+			dev_err(chan_dev(chan), "invalid eflag length %d\n",
+				sg->length);
+			return ERR_PTR(-EINVAL);
+		}
 	}
 
 	if (unlikely(options & DMA_HAS_FLOWTAG))
