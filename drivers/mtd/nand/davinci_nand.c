@@ -652,8 +652,10 @@ static int __init nand_davinci_probe(struct platform_device *pdev)
 	}
 
 	vaddr = devm_request_and_ioremap(&pdev->dev, res1);
-	base = devm_request_and_ioremap(&pdev->dev, res2);
-	if (!vaddr || !base) {
+	/* res2 is the emif config registers region accessed by both the aemif
+	   and this driver */
+	base = devm_ioremap(&pdev->dev, res2->start, resource_size(res2));
+	if (!vaddr || IS_ERR(base)) {
 		dev_err(&pdev->dev, "ioremap failed\n");
 		ret = -EADDRNOTAVAIL;
 		goto err_ioremap;
