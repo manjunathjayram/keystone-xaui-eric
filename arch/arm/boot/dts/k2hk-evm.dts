@@ -2826,10 +2826,10 @@
 			 * Change this as needed in the target board to match the
 			 * pin used for signaling Power down event from the SoC.
 			 * It is assumed that external controller reads this pin
-			 * and remove power to the SoC. On EVM, pin 2 output
+			 * and remove power to the SoC. On EVM, pin 4 output
 			 * can be read from BMC to test this.
 			 */
-			gpios = <&gpio0 2 0>;
+			gpios = <&gpio0 4 0>;
 		};
 
 		gpio_keys {
@@ -2844,11 +2844,11 @@
 				/* EV_KEY */
 				linux,input-type = <1>;
 				/*
-				 * On EVM use GPIO pin 1 since it is also connected to
+				 * On EVM use GPIO pin 3 since it is also connected to
 				 * BMC to generate a shutdown event to ARM. Change this
 				 * as needed in the target board.
 				 */
-				gpios = <&gpio0 1 0>;
+				gpios = <&gpio0 3 0>;
 			};
 		};
 
