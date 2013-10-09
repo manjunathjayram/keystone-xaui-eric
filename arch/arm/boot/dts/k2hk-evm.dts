@@ -2856,5 +2856,14 @@
 			compatible = "arm,cortex-a15-pmu";
 			interrupts = <0 20 0xf01 0 21 0xf01 0 22 0xf01 0 23 0xf01 >;
 		};
+
+		sysctrl {
+			/*
+			 * add all system level resources here that are used by
+			 * keystone soc code. Move rstctrl contents to this node
+			 */
+			compatible = "ti,keystone-sys";
+			interrupts = <0 24 0xf01>;
+		};
 	};
 };
