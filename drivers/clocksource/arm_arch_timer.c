@@ -125,7 +125,7 @@ static int arch_timer_set_next_event_phys(unsigned long evt,
 
 static int __cpuinit arch_timer_setup(struct clock_event_device *clk)
 {
-	clk->features = CLOCK_EVT_FEAT_ONESHOT | CLOCK_EVT_FEAT_C3STOP;
+	clk->features = CLOCK_EVT_FEAT_ONESHOT;
 	clk->name = "arch_sys_timer";
 	clk->rating = 450;
 	if (arch_timer_use_virtual) {
