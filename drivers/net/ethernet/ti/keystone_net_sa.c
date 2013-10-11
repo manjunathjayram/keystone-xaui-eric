@@ -27,6 +27,8 @@
 #include <linux/keystone-dma.h>
 #include <linux/errqueue.h>
 
+#include <net/ipv6.h>
+
 #include "keystone_net.h"
 #include "keystone_pasahost.h"
 
@@ -62,8 +64,22 @@ struct ipsecmgr_mod_sa_ctx_info {
 	((info[2]) & 0xFF000000L); \
 }
 
-#define	SA_TXHOOK_ORDER	30
+static inline void calc_ipv6_esp_info(const struct sk_buff *skb,
+					u16 *p_offset, u16 *p_len)
+{
+	const struct ipv6hdr *ipv6h = ipv6_hdr(skb);
 
+	/* type of the 1st exthdr */
+	WARN_ON(ipv6_hdr(skb)->nexthdr != NEXTHDR_ESP);
+
+	*p_offset = (u16)(skb_network_header(skb) -
+			skb->data) + skb_network_header_len(skb);
+
+	/* payload length */
+	*p_len = ntohs(ipv6h->payload_len);
+}
+
+#define	SA_TXHOOK_ORDER	30
 static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 {
 	struct sa_intf *sa_intf = data;
@@ -78,23 +94,30 @@ static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 
 	iph = ip_hdr(p_info->skb);
 
-	if (iph->version != IPVERSION)
-		return 0;
-
-	ihl = iph->ihl * 4;
-
-	if (iph->protocol == IPPROTO_UDP) {
-		/* UDP encapsulation for IPSec NAT-T */
-		offset = (ulong)(skb_network_header(p_info->skb) -
-			p_info->skb->data) + ihl + sizeof(struct udphdr);
-		len = ntohs(iph->tot_len) - ihl - sizeof(struct udphdr);
-	} else if (iph->protocol == IPPROTO_ESP) {
-		offset = (ulong)(skb_network_header(p_info->skb) -
+	if (iph->version == IPVERSION) {
+		ihl = iph->ihl * 4;
+		if (iph->protocol == IPPROTO_UDP) {
+			/* UDP encapsulation for IPSec NAT-T */
+			offset = (ulong)(skb_network_header(p_info->skb) -
+					p_info->skb->data) + ihl +
+					sizeof(struct udphdr);
+			len = ntohs(iph->tot_len) - ihl - sizeof(struct udphdr);
+		} else if (iph->protocol == IPPROTO_ESP) {
+			offset = (ulong)(skb_network_header(p_info->skb) -
 			p_info->skb->data) + ihl;
-		len = ntohs(iph->tot_len) - ihl;
-	} else {
-	    return 0;
-	}
+			len = ntohs(iph->tot_len) - ihl;
+		} else
+			return 0;
+	} else if (iph->version == 6) {
+		if ((ipv6_hdr(p_info->skb)->nexthdr) == IPPROTO_ESP)
+			/* need to calculate offset to where ESP header
+			 * starts and total length of the payload
+			 */
+			calc_ipv6_esp_info(p_info->skb, &offset, &len);
+		else
+			return 0;
+	} else
+		return 0;
 
 	psdata = netcp_push_psdata(p_info, (2 * sizeof(u32)));
 	if (!psdata)
@@ -116,36 +139,24 @@ static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 
 #define SA_RXHOOK_ORDER	30
 #define SA_IS_IPSEC_ESP_MASK	BIT(25)
+#define SA_IS_FLAG_FRAG_MASK	BIT(3)
 
 static int sa_rx_hook(int order, void *data, struct netcp_packet *p_info)
 {
 	struct sk_buff *skb = p_info->skb;
-	const struct iphdr *iph;
 
-	/*
-	 * Check to see if this is an ESP packet, if not just return.
+	/* Check to see if this is an ESP packet, if not just return.
 	 * ESP packet indication is in word 3, bit 25 of psdata
 	 * This is valid only for first fragment.
 	 */
 	if (!(p_info->psdata[3] & SA_IS_IPSEC_ESP_MASK))
 		return 0;
 
-	/*
-	 * Get offset to L3 header which is
-	 * stored in word 2, bits 24-31 of psdata.
-	 */
-	iph = (struct iphdr *)
-		((u8 *)((u8 *)skb->data + (p_info->psdata[2] >> 24)));
-
-	if (iph->version != IPVERSION)
-		return 0;
-
-	/*
-	 * See if packet is the first fragment, if so, mark the local_df
+	/* See if packet is the first fragment, if so, mark the local_df
 	 * flag of skb which will be checked by the ipsecmgr kernel module
 	 * to indicate packet has not been decrypted by NETCP SA.
 	 */
-	if (ip_is_fragment(iph))
+	if ((p_info->psdata[3] & SA_IS_FLAG_FRAG_MASK))
 		skb->local_df = 1;
 
 	return 0;
