@@ -737,7 +737,6 @@
 				clocks = <&chipclk1rstiso13>;
 				clock-output-names = "srio";
 				base-flags = "ignore-unused";
-				status = "disabled";
 				reg = <0x02350000 4096>;
 				lpsc = <11>;
 				pd = <4>;
@@ -1802,6 +1801,10 @@
 					values = <800 12>;
 					reserved;
 				};
+				riotx {
+					values = <672 1>; /* ref: KS Arch Multicore Navi */
+					reserved;
+				};
 				xge {
 					values = <8752 8>;
 					reserved;
@@ -2691,6 +2694,71 @@
 			clock-names = "usb";
 			interrupt-controller;
 			#interrupt-cells = <2>;
+		};
+
+		riodma: pktdma@2901000 {
+			compatible = "ti,keystone-pktdma";
+			reg = <0x2901000 0x100		/* 0 - global  */
+			       0x2901400 0x200		/* 1 - txchan  */
+			       0x2901800 0x200		/* 2 - rxchan  */
+			       0x2901c00 0x200		/* 3 - txsched */
+			       0x2902000 0x300>;	/* 4 - rxflow  */
+			/* clocks = <&clkpktproc>; */
+			enable-all;
+			debug;
+
+			logical-queue-managers	= <4>;
+			queues-per-queue-manager = <4096>;
+			qm-base-address = <0x23a80000 0x23a90000
+					   0x23aa0000 0x23ab0000>;
+
+			channels {
+				riotx {
+					transmit;
+					label		= "riotx";
+					pool		= "pool-rio";
+					submit-queue	= <672>;
+					/*complete-queue	= <657>;*/
+					/*debug;*/
+				};
+				riorx {
+					receive;
+					label		= "riorx";
+					pool		= "pool-rio";
+					debug;
+					/* complete-queue	= <653>; */
+					flow		= <19>;
+				};
+			};
+		};
+
+		rapidio: rapidio@2900000 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			reg = <0x2900000 0x40000	/* rio regs */
+			       0x2620000 0x1000		/* boot config regs */
+                               0x232c000 0x1000>;	/* serdes config regs */
+			clocks = <&clksrio>;
+			clock-names = "clk_srio";
+			compatible = "ti,keystone-rapidio";
+
+			keystone2-serdes;
+
+			tx_channel = "riotx";
+			tx_queue_depth = <32>;
+
+			rx_channel = "riorx";
+			rx_queue_depth	= <64 0 0 0>;
+			rx_buffer_size	= <1552 0 0 0>;
+
+                        ports = <0x1>;      /* bitfield of port(s) to probe */
+                        dev-id-size = <0>;  /* RapidIO common transport system
+					     * size.
+					     * 0 - Small size. 8-bit deviceID
+					     *     fields. 256 devices.
+					     * 1 - Large size, 16-bit deviceID
+					     *     fields. 65536 devices.
+					     */
 		};
 
 		xgedma: pktdma@2fa1000 {
