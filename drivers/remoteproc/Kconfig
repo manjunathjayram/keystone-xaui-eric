@@ -65,7 +65,7 @@ config DA8XX_REMOTEPROC
 
 config REMOTEPROC_USER
 	tristate "OMAP remoteproc support"
-	depends on EXPERIMENTAL && UIO
+	depends on UIO
 	select REMOTEPROC
 	select RPMSG
 	help
