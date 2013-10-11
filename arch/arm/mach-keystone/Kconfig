@@ -9,6 +9,9 @@ config KEYSTONE2_DMA_COHERENT
 	bool "MPAX based coherency support"
 	default n
 
+config RAPIDIO
+	bool "RapidIO Subsystem support"
+
 endmenu
 
 endif

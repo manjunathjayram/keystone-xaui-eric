@@ -1342,8 +1342,6 @@ no_disc:
 	return 0;
 }
 
-device_initcall_sync(rio_init_mports);
-
 static int hdids[RIO_MAX_MPORTS + 1];
 
 static int rio_get_hdid(int index)
@@ -1372,6 +1370,7 @@ int rio_register_mport(struct rio_mport *port)
 	port->id = next_portid++;
 	port->host_deviceid = rio_get_hdid(port->id);
 	list_add_tail(&port->node, &rio_mports);
+	rio_init_mports();
 	return 0;
 }
 
