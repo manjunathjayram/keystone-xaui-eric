@@ -34,6 +34,7 @@
 #include <linux/of_address.h>
 #include <linux/firmware.h>
 #include <linux/interrupt.h>
+#include <asm/div64.h>
 
 #include "hwqueue_internal.h"
 #include "keystone_hwqueue.h"
@@ -1958,8 +1959,6 @@ static int khwq_qos_tree_map_nodes(struct ktree_node *node, void *arg)
 	qnode->child_count	=  0;
 	qnode->parent_input	=  0;
 	qnode->child_weight_sum	=  0;
-	qnode->child_weight_max	=  0;
-	qnode->child_weight_min	= -1;
 	qnode->is_drop_input	= false;
 
 	if (qnode->drop_policy)
@@ -1973,10 +1972,6 @@ static int khwq_qos_tree_map_nodes(struct ktree_node *node, void *arg)
 		/* provide our parent with info */
 		parent->child_count ++;
 		parent->child_weight_sum += qnode->weight;
-		if (qnode->weight > parent->child_weight_max)
-			parent->child_weight_max = qnode->weight;
-		if (qnode->weight < parent->child_weight_min)
-			parent->child_weight_min = qnode->weight;
 
 		/* inherit if parent is an input to drop sched */
 		if (parent->is_drop_input)
@@ -2083,7 +2078,7 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 	struct khwq_device *kdev = info->kdev;
 	bool sync = false;
 	int inputs, i;
-	u64 scale, tmp;
+	u64 scale = 0ULL, tmp;
 
 	if (!qnode->has_sched_port)
 		return 0;
@@ -2147,6 +2142,14 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 	if (WARN_ON(error))
 		return error;
 
+	if (qnode->type == QOS_NODE_WRR) {
+		scale = inputs * ((qnode->acct == QOS_BYTE_ACCT) ?
+					QOS_BYTE_NORMALIZATION_FACTOR :
+					QOS_PACKET_NORMALIZATION_FACTOR);
+		scale <<= 48;
+		do_div(scale, qnode->child_weight_sum);
+	}
+
 	for (i = 0; i < inputs; i++) {
 		val = 0;
 		error = khwq_qos_set_sched_cong_thresh(info, idx, i, val, sync);
@@ -2155,25 +2158,17 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 
 		val = 0;
 		if (qnode->type == QOS_NODE_WRR) {
-			tmp = 0;
-			tmp = (qnode->child_weight[i] * inputs * 10) /
-				qnode->child_weight_sum;
+			tmp = qnode->child_weight[i];
+			tmp *= scale;
 
 			if (qnode->acct == QOS_BYTE_ACCT) {
-				scale = QOS_BYTE_NORMALIZATION_FACTOR;
-				scale <<= 48;
-				tmp *= scale;
-				tmp += 1ll << (47- QOS_CREDITS_BYTE_SHIFT);
+				tmp += 1ULL << (47 - QOS_CREDITS_BYTE_SHIFT);
 				tmp >>= (48 - QOS_CREDITS_BYTE_SHIFT);
 			} else {
-				scale = QOS_PACKET_NORMALIZATION_FACTOR;
-				scale <<= 48;
-				tmp *= scale;
-				tmp += 1ll << (47 - QOS_CREDITS_PACKET_SHIFT);
+				tmp += 1ULL << (47 - QOS_CREDITS_PACKET_SHIFT);
 				tmp >>= (48 - QOS_CREDITS_PACKET_SHIFT);
 			}
 			val = (u32)(tmp);
-			val /= 10;
 
 			dev_dbg(kdev->dev, "node weight = %d, weight "
 				 "credits = %d\n", qnode->child_weight[i], val);
