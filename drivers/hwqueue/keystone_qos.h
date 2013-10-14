@@ -208,8 +208,6 @@ struct khwq_qos_tree_node {
 	int	 child_port_count;	/* children that need ports	*/
 	int	 child_count;		/* number of children		*/
 	int	 parent_input;		/* input number of parent	*/
-	u32	 child_weight_min;	/* min of child weights		*/
-	u32	 child_weight_max;	/* max of child weights		*/
 	u32	 child_weight[4];
 	u32	 child_weight_sum;	/* sum of child weights		*/
 	bool	 is_drop_input;		/* indicates that child's output
