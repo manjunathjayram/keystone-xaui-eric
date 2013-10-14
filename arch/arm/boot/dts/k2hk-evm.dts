@@ -61,3 +61,55 @@
 &usb {
 	status = "okay";
 };
+
+&aemif {
+	cs0 {
+		#address-cells = <2>;
+		#size-cells = <1>;
+		clock-ranges;
+		ranges;
+
+		ti,cs-chipselect = <0>;
+		/* all timings in nanoseconds */
+		ti,cs-ta = <12>;
+		ti,cs-rhold = <6>;
+		ti,cs-rstrobe = <23>;
+		ti,cs-rsetup = <9>;
+		ti,cs-whold = <8>;
+		ti,cs-wstrobe = <23>;
+		ti,cs-wsetup = <8>;
+
+		nand@0,0 {
+			compatible = "ti,keystone-nand","ti,davinci-nand";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			reg = <0 0 0x4000000
+			       1 0 0x0000100>;
+
+			ti,davinci-chipselect = <0>;
+			ti,davinci-mask-ale = <0x2000>;
+			ti,davinci-mask-cle = <0x4000>;
+			ti,davinci-mask-chipsel = <0>;
+			nand-ecc-mode = "hw";
+			ti,davinci-ecc-bits = <4>;
+			nand-on-flash-bbt;
+
+			partition@0 {
+				label = "u-boot";
+				reg = <0x0 0x100000>;
+				read-only;
+			};
+
+			partition@100000 {
+				label = "params";
+				reg = <0x100000 0x80000>;
+				read-only;
+			};
+
+			partition@180000 {
+				label = "ubifs";
+				reg = <0x180000 0x7E80000>;
+			};
+		};
+	};
+};
