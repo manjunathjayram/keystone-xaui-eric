@@ -975,6 +975,68 @@ out:
 	complete_all(&rproc->firmware_loading_complete);
 }
 
+/**
+ * rproc_boot_ext_download() - boot a remote processor with download done externally
+ * @rproc: handle of a remote processor
+ *
+ * Boot a remote processor ( with firmware download and power on done externally ...).
+ *
+ *
+ * Returns 0 on success, and an appropriate error value otherwise.
+ */
+
+int rproc_boot_ext_download(struct rproc *rproc)
+{
+	int ret;
+	struct device *dev;
+
+	if (!rproc) {
+		pr_err("invalid rproc handle\n");
+		return -EINVAL;
+	}
+
+	dev = &rproc->dev;
+
+	ret = mutex_lock_interruptible(&rproc->lock);
+	if (ret) {
+		dev_err(dev, "can't lock rproc %s: %d\n", rproc->name, ret);
+		return ret;
+	}
+
+	/* prevent underlying implementation from being removed */
+	if (!try_module_get(dev->parent->driver->owner)) {
+		dev_err(dev, "%s: can't get owner\n", __func__);
+		ret = -EINVAL;
+		goto unlock_mutex;
+	}
+
+	/* skip the boot process if rproc is already powered up */
+	if (atomic_inc_return(&rproc->power) > 1) {
+		ret = 0;
+		goto unlock_mutex;
+	}
+
+	dev_info(dev, "powering up %s\n", rproc->name);
+
+	/* power up the remote processor */
+	ret = rproc->ops->start(rproc);
+	if (ret) {
+		dev_err(dev, "can't start rproc %s: %d\n", rproc->name, ret);
+		goto unlock_mutex;
+	}
+
+	/* Set state to indicate RPROC is loaded so that the call from virtio to rproc boot returns*/
+	rproc->state = RPROC_LOADED;
+	rproc_fw_config_virtio(NULL, (void *)rproc);
+	rproc->state = RPROC_RUNNING;
+unlock_mutex:
+	mutex_unlock(&rproc->lock);
+	return ret;
+
+}
+
+EXPORT_SYMBOL(rproc_boot_ext_download);
+
 static int rproc_add_virtio_devices(struct rproc *rproc)
 {
 	int ret;

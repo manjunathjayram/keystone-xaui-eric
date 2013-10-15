@@ -158,7 +158,7 @@ static int uproc_set_state(struct uproc_info *uproc,
 	int error = 0;
 
 	if (state == RPROC_USER_RUNNING)
-		error = rproc_boot(rproc);
+		error = rproc_boot_ext_download(rproc);
 	else if (state == RPROC_USER_OFFLINE)
 		rproc_shutdown(rproc);
 	else
@@ -385,6 +385,13 @@ uproc_find_rsc_table(struct rproc *rproc, const struct firmware *fw,
 		*tablesz = uproc->rsc_table_size;
 	return uproc->rsc_table;
 }
+static struct resource_table *
+uproc_find_loaded_rsc_table(struct rproc *rproc, const struct firmware *fw)
+{
+	struct uproc_info *uproc = rproc->priv;
+
+	return uproc->rsc_table;
+}
 
 static int uproc_load_segments(struct rproc *rproc, const struct firmware *fw)
 {
@@ -400,7 +407,10 @@ static const struct file_operations uproc_dev_fops = {
 
 static struct rproc_fw_ops uproc_fw_ops = {
 	.find_rsc_table		= uproc_find_rsc_table,
+	.find_loaded_rsc_table  = uproc_find_loaded_rsc_table,
 	.load			= uproc_load_segments,
+	.sanity_check		= NULL,
+	.get_boot_addr		= NULL,
 };
 
 /**
