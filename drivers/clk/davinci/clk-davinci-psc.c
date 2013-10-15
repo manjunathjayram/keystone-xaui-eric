@@ -72,7 +72,6 @@ static void clk_psc_config(void __iomem *base, unsigned int domain,
 	u32 next_state = PSC_STATE_ENABLE;
 	void __iomem *psc_base = base;
 	u32 count = STATE_TRANS_MAX_COUNT;
-	int err = 0;
 
 	if (!enable) {
 		if (flags & PSC_SWRSTDISABLE)
