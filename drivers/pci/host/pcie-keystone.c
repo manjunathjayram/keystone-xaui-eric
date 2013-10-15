@@ -950,7 +950,7 @@ static irqreturn_t pcie_err_irq_handler(int irq, void *reg_virt)
  * - Additional delay/handshaking for EPs indulging in CRRS
  */
 
-static int keystone_pcie_setup(int nr, struct pci_sys_data *sys)
+static __init int keystone_pcie_setup(int nr, struct pci_sys_data *sys)
 {
 	struct keystone_pcie_info *info;
 	void __iomem *reg_virt;
@@ -1327,7 +1327,8 @@ static struct pci_ops keystone_pci_ops = {
 	.write	= keystone_pci_write_config,
 };
 
-static struct pci_bus *keystone_pcie_scan(int nr, struct pci_sys_data *sys)
+static __init struct pci_bus *keystone_pcie_scan(int nr,
+					struct pci_sys_data *sys)
 {
 	struct keystone_pcie_info *info;
 	struct pci_bus *bus = NULL;
@@ -1355,7 +1356,8 @@ static struct pci_bus *keystone_pcie_scan(int nr, struct pci_sys_data *sys)
  * @pin: Pin number for the function
  *
  */
-static int keystone_pcie_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
+static __init int keystone_pcie_map_irq(const struct pci_dev *dev, u8 slot,
+					u8 pin)
 {
 	struct keystone_pcie_info *info = pbus_to_kspci(dev->bus);
 
@@ -1379,7 +1381,7 @@ static int keystone_pcie_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
 		info->virqs[pin - 1] : -1;
 }
 
-static struct hw_pci keystone_pcie_hw = {
+static struct hw_pci __initdata keystone_pcie_hw = {
 	.nr_controllers	= 1,
 	.setup		= keystone_pcie_setup,
 	.scan		= keystone_pcie_scan,
