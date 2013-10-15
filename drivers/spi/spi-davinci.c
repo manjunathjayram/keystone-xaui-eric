@@ -967,9 +967,9 @@ static int davinci_spi_probe(struct platform_device *pdev)
 			goto free_clk;
 
 		dev_info(&pdev->dev, "DMA: supported\n");
-		dev_info(&pdev->dev, "DMA: RX channel: %d, TX channel: %d, "
-				"event queue: %d\n", dma_rx_chan, dma_tx_chan,
-				pdata->dma_event_q);
+		dev_info(&pdev->dev,
+			"DMA: RX chan: %pa, TX chan: %pa, event queue: %d\n",
+			&dma_rx_chan, &dma_tx_chan, pdata->dma_event_q);
 	}
 
 	dspi->get_rx = davinci_spi_rx_buf_u8;
