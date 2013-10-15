@@ -2614,6 +2614,11 @@
 			sc-id = <0x7000 0x71ff>;
 		};
 
+
+		ssusb3_phy: ssusb3_phy {
+			compatible = "usb-nop-xceiv";
+		};
+
 		dwc: dwc@2680000 {
 			compatible = "ti,keystone-dwc3";
 			#address-cells = <1>;
