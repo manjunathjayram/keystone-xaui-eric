@@ -1331,6 +1331,37 @@ static ssize_t qnode_weight_show(struct khwq_qos_tree_node *qnode,
 	return snprintf(buf, PAGE_SIZE, "%d\n", qnode->weight);
 }
 
+static ssize_t qnode_weight_store(struct khwq_qos_tree_node *qnode,
+				  const char *buf, size_t size)
+{
+	struct khwq_qos_tree_node *parent = qnode->parent;
+	struct khwq_qos_info *info = qnode->info;
+	unsigned int weight;
+	int error;
+
+	if (!parent || parent->type != QOS_NODE_WRR)
+		return -EINVAL;
+
+	error = kstrtouint(buf, 0, &weight);
+	if (error)
+		return error;
+
+	if (weight == 0 || weight > QOS_MAX_WEIGHT)
+		return -EINVAL;
+
+	qnode->weight = weight;
+
+	parent->child_weight_sum -= parent->child_weight[qnode->parent_input];
+	parent->child_weight_sum += weight;
+	parent->child_weight[qnode->parent_input] = weight;
+
+	khwq_qos_stop(info);
+
+	khwq_qos_start(info);
+
+	return size;
+}
+
 static ssize_t qnode_priority_show(struct khwq_qos_tree_node *qnode,
 					     char *buf)
 {
@@ -1510,8 +1541,8 @@ static KHWQ_QOS_QNODE_ATTR(priority, S_IRUGO,
 static KHWQ_QOS_QNODE_ATTR(output_queue, S_IRUGO,
 			   qnode_output_queue_show,
 			   NULL);
-static KHWQ_QOS_QNODE_ATTR(weight, S_IRUGO,
-			   qnode_weight_show, NULL);
+static KHWQ_QOS_QNODE_ATTR(weight, S_IRUGO|S_IWUSR,
+			   qnode_weight_show, qnode_weight_store);
 static KHWQ_QOS_QNODE_ATTR(output_rate, S_IRUGO|S_IWUSR,
 			   qnode_output_rate_show, qnode_output_rate_store);
 static KHWQ_QOS_QNODE_ATTR(burst_size, S_IRUGO|S_IWUSR,
@@ -1724,8 +1755,9 @@ static int khwq_qos_tree_parse(struct khwq_qos_info *info,
 	qnode->weight = -1;
 	of_property_read_u32(node, "weight", &qnode->weight);
 	if (qnode->weight != -1) {
-		if (qnode->weight > QOS_MAX_WEIGHT) {
-			dev_err(kdev->dev, "cannot have weight more than 1M\n");
+		if (qnode->weight == 0 || qnode->weight > QOS_MAX_WEIGHT) {
+			dev_err(kdev->dev, "weight must be between 1 and %d\n",
+				QOS_MAX_WEIGHT);
 			error = -EINVAL;
 			goto error_free;
 		}
@@ -1930,10 +1962,6 @@ static int khwq_qos_tree_parse(struct khwq_qos_info *info,
 		int o = offsetof(struct khwq_qos_tree_node, priority);
 		ktree_sort_children(&qnode->node, khwq_qos_cmp, (void *)o);
 	}
-	else if (qnode->type == QOS_NODE_WRR) {
-		int o = offsetof(struct khwq_qos_tree_node, weight);
-		ktree_sort_children(&qnode->node, khwq_qos_cmp, (void *)o);
-	}
 
 	return 0;
 
@@ -1970,7 +1998,7 @@ static int khwq_qos_tree_map_nodes(struct ktree_node *node, void *arg)
 
 		parent->child_weight[parent->child_count] = qnode->weight;
 		/* provide our parent with info */
-		parent->child_count ++;
+		parent->child_count++;
 		parent->child_weight_sum += qnode->weight;
 
 		/* inherit if parent is an input to drop sched */
@@ -2170,8 +2198,8 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 			}
 			val = (u32)(tmp);
 
-			dev_dbg(kdev->dev, "node weight = %d, weight "
-				 "credits = %d\n", qnode->child_weight[i], val);
+			dev_dbg(kdev->dev, "node %d weight = %d, credits = %d\n",
+					i, qnode->child_weight[i], val);
 		}
 
 		error = khwq_qos_set_sched_wrr_credit(info, idx, i, val, sync);

@@ -53,7 +53,7 @@
 #define QOS_BYTE_NORMALIZATION_FACTOR	3000
 #define QOS_PACKET_NORMALIZATION_FACTOR	2
 
-#define	QOS_MAX_WEIGHT			SZ_1M
+#define	QOS_MAX_WEIGHT			((1 << 28) - 1)
 
 #define to_qnode(_n)	container_of(_n, struct khwq_qos_tree_node, node)
 
