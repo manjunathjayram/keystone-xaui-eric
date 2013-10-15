@@ -3331,7 +3331,7 @@ int pci_dev_specific_acs_enabled(struct pci_dev *dev, u16 acs_flags)
  * The KeyStone PCIe controller has maximum read request size of 256 bytes.
  * Force this configuration for all EP including bridges.
  */
-static void __init quirk_limit_readrequest(struct pci_dev *dev)
+static void quirk_limit_readrequest(struct pci_dev *dev)
 {
        pcie_set_readrq(dev, 256);
 }
