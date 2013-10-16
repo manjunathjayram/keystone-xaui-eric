@@ -385,6 +385,7 @@ uproc_find_rsc_table(struct rproc *rproc, const struct firmware *fw,
 		*tablesz = uproc->rsc_table_size;
 	return uproc->rsc_table;
 }
+
 static struct resource_table *
 uproc_find_loaded_rsc_table(struct rproc *rproc, const struct firmware *fw)
 {
@@ -494,6 +495,8 @@ static int uproc_driver_probe(struct platform_device *pdev)
 			    sizeof(*uproc));
 	if (!rproc)
 		return -ENOMEM;
+	/* Override default firmware name, as we the firwmare download is done externally */
+	rproc->firmware = NULL;
 
 	rproc->fw_ops	= &uproc_fw_ops;
 
