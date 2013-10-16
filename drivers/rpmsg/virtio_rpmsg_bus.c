@@ -1017,17 +1017,12 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	mutex_init(&vrp->tx_lock);
 	init_waitqueue_head(&vrp->sendq);
 
-	if (!idr_pre_get(&vprocs, GFP_KERNEL))
-		goto free_vrp;
-
 	mutex_lock(&vprocs_mutex);
-
-	err = idr_get_new(&vprocs, vrp, &vproc_id);
-
+	vproc_id = idr_alloc(&vprocs, vrp, 0, 0, GFP_KERNEL);
 	mutex_unlock(&vprocs_mutex);
 
-	if (err) {
-		dev_err(&vdev->dev, "idr_get_new failed: %d\n", err);
+	if (vproc_id < 0) {
+		dev_err(&vdev->dev, "idr_alloc failed: %d\n", vproc_id);
 		goto free_vrp;
 	}
 
@@ -1190,7 +1185,6 @@ static void __exit rpmsg_fini(void)
 	unregister_virtio_driver(&virtio_ipc_driver);
 	bus_unregister(&rpmsg_bus);
 
-	idr_remove_all(&vprocs);
 	idr_destroy(&vprocs);
 }
 module_exit(rpmsg_fini);
