@@ -895,15 +895,6 @@ static int rproc_fw_boot(struct rproc *rproc, const struct firmware *fw)
 	/* Set state to indicate RPROC is loaded */
 	rproc->state = RPROC_LOADED;
 
-	if (!fw) {
-		/* handle vdev resources */
-		ret = rproc_handle_resources(rproc, tablesz, rproc_vdev_handler);
-		if (ret) {
-			dev_err(dev, "Failed to process resources: %d\n", ret);
-			goto clean_up;
-		}
-	}
-
 	/*
 	 * Update table_ptr so that all subsequent vring allocations and
 	 * virtio fields manipulation update the actual loaded resource table
