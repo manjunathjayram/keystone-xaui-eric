@@ -1640,8 +1640,8 @@ static int riocm_add_mport(struct device *dev,
 	rc = rio_request_outb_mbox(mport, (void *)mport, cmbox,
 				   RIOCM_TX_RING_SIZE, riocm_outb_msg_event);
 	if (rc) {
-		pr_err("%s: %s failed to allocate IBMBOX on %s\n",
-			DRV_NAME, __func__, mport->name);
+		pr_err("%s: %s failed to allocate OBMBOX_%d on %s\n",
+			DRV_NAME, __func__, cmbox, mport->name);
 		kfree(cm);
 		return -ENODEV;
 	}
@@ -1649,8 +1649,8 @@ static int riocm_add_mport(struct device *dev,
 	rc = rio_request_inb_mbox(mport, (void *)mport, cmbox,
 				  RIOCM_RX_RING_SIZE, riocm_inb_msg_event);
 	if (rc) {
-		pr_err("%s: %s failed to allocate OBMBOX on %s\n",
-			DRV_NAME, __func__, mport->name);
+		pr_err("%s: %s failed to allocate IBMBOX_%d on %s\n",
+			DRV_NAME, __func__, cmbox, mport->name);
 		rio_release_outb_mbox(mport, cmbox);
 		kfree(cm);
 		return -ENODEV;
