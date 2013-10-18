@@ -89,6 +89,7 @@
 #define RIO_MSG_OSR_QEI		0x00000001
 
 #define RIO_MSG_IMR_MI		0x00000002
+#define RIO_MSG_IMR_MIQIE	0x00000040
 #define RIO_MSG_ISR_TE		0x00000080
 #define RIO_MSG_ISR_QFI		0x00000010
 #define RIO_MSG_ISR_DIQI	0x00000001
@@ -264,6 +265,10 @@ fsl_rio_rx_handler(int irq, void *dev_instance)
 
 	/* XXX Need to check/dispatch until queue empty */
 	if (isr & RIO_MSG_ISR_DIQI) {
+
+		/* Disable message-in-queue interrupt to prevent re-fire */
+		clrbits32(&rmu->msg_regs->imr, RIO_MSG_IMR_MIQIE);
+
 		/*
 		* Can receive messages for any mailbox/letter to that
 		* mailbox destination. So, make the callback with an
@@ -981,8 +986,10 @@ void *fsl_get_inb_message(struct rio_mport *mport, int mbox)
 	phys_buf = in_be32(&rmu->msg_regs->ifqdpar);
 
 	/* If no more messages, then bail out */
-	if (phys_buf == in_be32(&rmu->msg_regs->ifqepar))
+	if (phys_buf == in_be32(&rmu->msg_regs->ifqepar)) {
+		setbits32(&rmu->msg_regs->imr, RIO_MSG_IMR_MIQIE);
 		goto out2;
+	}
 
 	virt_buf = rmu->msg_rx_ring.virt + (phys_buf
 						- rmu->msg_rx_ring.phys);
