@@ -39,10 +39,10 @@
 #ifndef _RIO_MSG_H
 #define _RIO_MSG_H
 
-#define RIO_MSG_HDR_SIZE 16
+#define RIO_MSG_HDR_SIZE 20
 
 struct rio_channel_msg {
-	__be32 hdr[4];
+	__be32 hdr[5];
 };
 
 static inline u32 rio_msg_word(struct rio_channel_msg *m, u32 pos)
