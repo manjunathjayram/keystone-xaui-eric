@@ -292,7 +292,7 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 		return -EINVAL;
 	}
 
-	rem_destid = hh->bhdr.src_id;
+	rem_destid = ntohl(hh->bhdr.src_id);
 
 	/* Find requester's device object */
 	spin_lock_bh(&cm->cm_lock);
@@ -312,24 +312,21 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 	}
 
 	found = 0;
+	snum = ntohs(hh->dst_ch);
 
 	/* Find if there is any listener on request's destination port */
 	spin_lock(&rio_list_lock);
-	list_for_each_entry(listen_id, &listen_any_list, listen_list) {
-		//snum = ntohs(listen_id->id);
-		snum = listen_id->id;
-		pr_debug("RIO_CM: listener loc_id=%d\n", snum);
-
-		//if (ntohs(hh->dst_ch) == snum) {
-		if (hh->dst_ch == snum) {
-			pr_debug("RIO_CM: matching listener on channel %d\n", snum);
+	list_for_each_entry(listen_id, &listen_any_list, listen_list)
+		if (listen_id->id == snum) {
+			pr_debug("RIO_CM: matching listener on ch=%d\n", snum);
 			found++;
 			break;
 		}
-	}
+
 	spin_unlock(&rio_list_lock);
 
 	if (!found) {
+		pr_debug("RIO_CM: listener on channel %d not found\n", snum);
 		listen_id = NULL;
 		hh->msg_len = CM_NACK_NOLIS;
 		goto out_nack;
@@ -348,8 +345,8 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 	conn_id->cmdev = listen_id->cmdev;
 
 	conn_id->loc_destid = listen_id->loc_destid;
-	conn_id->rem_destid = hh->bhdr.src_id;
-	conn_id->rem_channel = hh->src_ch;
+	conn_id->rem_destid = ntohl(hh->bhdr.src_id);
+	conn_id->rem_channel = ntohs(hh->src_ch);
 	conn_id->rdev = peer->rdev;
 	conn_id->state = RIO_CM_CONNECTED;
 
@@ -361,14 +358,14 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 	 * Acknowledge the connection request.
 	 * Send back the same buffer with modified fields.
 	 */
-	hh->bhdr.src_id = conn_id->loc_destid;
-	hh->bhdr.dst_id = conn_id->rem_destid;
+	hh->bhdr.src_id = htonl(conn_id->loc_destid);
+	hh->bhdr.dst_id = htonl(conn_id->rem_destid);
 	hh->bhdr.src_mbox = cmbox;
 	hh->bhdr.dst_mbox = cmbox;
 	hh->bhdr.type = RIO_CM_CHAN;
 	hh->ch_op = CM_CONN_ACK;
-	hh->dst_ch = conn_id->rem_channel;
-	hh->src_ch = conn_id->id;
+	hh->dst_ch = htons(conn_id->rem_channel);
+	hh->src_ch = htons(conn_id->id);
 
 	/* FIXME: the function call below relies on the fact that underlying
 	 * add_outb_message() routine copies TX data into its internal transfer
@@ -392,8 +389,8 @@ out_nack:
 	 * NOTE: hh->msg_len holds a corresponding NACK error code and
 	 *       must be preserved.
 	 */
-	hh->bhdr.dst_id = hh->bhdr.src_id;//conn_id->rem_destid;
-	hh->bhdr.src_id = cm->mport->host_deviceid;
+	hh->bhdr.dst_id = htonl(rem_destid);
+	hh->bhdr.src_id = htonl(cm->mport->host_deviceid);
 	hh->bhdr.src_mbox = cmbox;
 	hh->bhdr.dst_mbox = cmbox;
 	hh->bhdr.type = RIO_CM_CHAN;
@@ -422,15 +419,14 @@ static int riocm_resp_handler(void *resp_data)
 		return -EINVAL;
 	}
 
-	/* Find if any requester waits on resp's destination port */
-	list_for_each_entry(conn_id, &connect_list, con_list) {
-		snum = ntohs(conn_id->id);
+	snum = ntohs(hh->dst_ch);
 
-		if (ntohs(hh->dst_ch) == snum) {
+	/* Find if any requester waits on resp's destination port */
+	list_for_each_entry(conn_id, &connect_list, con_list)
+		if (conn_id->id == snum) {
 			found++;
 			break;
 		}
-	}
 
 	if (!found)
 		return -ECONNABORTED;
@@ -444,7 +440,7 @@ static int riocm_resp_handler(void *resp_data)
 		/* Update remote channel number
 		 * (changed as result of connection acceptance by remote)
 		 */
-		conn_id->rem_channel = hh->src_ch;
+		conn_id->rem_channel = ntohs(hh->src_ch);
 	} else { /* hh->ch_op == CM_CONN_NACK */
 		riocm_exch(conn_id, RIO_CM_NACK);
 	}
@@ -465,10 +461,10 @@ static int riocm_close_handler(void *data)
 		return -EINVAL;
 	}
 
+	pr_debug("RIO_CM: %s for ch=%d\n", __func__, ntohs(hh->dst_ch));
+
 	/* Find if there is an active channel with specified ID */
-// FIXME_??? : CHECK ALL HEADER HANDLING ROUTINES IF WE HAVE APPROPRIATE ENDING CONVERSIONS
-//	ch = riocm_get_channel(ntohs(hh->dst_ch));
-	ch = riocm_get_channel(hh->dst_ch);
+	ch = riocm_get_channel(ntohs(hh->dst_ch));
 
 	if (!ch)
 		return -ENODEV;
@@ -492,8 +488,10 @@ static void rio_cm_handler(struct work_struct *_work)
 	struct rio_ch_chan_hdr *hdr;
 
 	hdr = (struct rio_ch_chan_hdr *)data;
-pr_debug("RIO_CM: %s: OP=%x for ch=%d from %d\n", __func__, hdr->ch_op, hdr->dst_ch, hdr->src_ch);
-
+#if (0)
+	pr_debug("RIO_CM: %s: OP=%x for ch=%d from %d\n", __func__, hdr->ch_op,
+		 ntohs(hdr->dst_ch), ntohs(hdr->src_ch));
+#endif
 	switch (hdr->ch_op) {
 	case CM_CONN_REQ:
 		riocm_req_handler(work->cm, data);
@@ -520,13 +518,12 @@ static int rio_rx_data_handler(struct cm_dev *cm, void *buf)
 	struct rio_channel *ch;
 
 	hdr = (struct rio_ch_chan_hdr *)buf;
-
-	pr_debug("RIO_CM: %s: for ch=%d\n", __func__, hdr->dst_ch);
-
-//	ch = riocm_get_channel(ntohs(hdr->dst_ch));
+#if (0)
+	pr_debug("RIO_CM: %s: for ch=%d\n", __func__, ntohs(hdr->dst_ch));
+#endif
 
 	spin_lock(&idr_lock);
-	ch = idr_find(&ch_idr, hdr->dst_ch);
+	ch = idr_find(&ch_idr, ntohs(hdr->dst_ch));
 	spin_unlock(&idr_lock);
 
 	if (!ch) {
@@ -534,11 +531,11 @@ static int rio_rx_data_handler(struct cm_dev *cm, void *buf)
 		kfree(buf);
 		return -ENODEV;
 	}
-
+#if (0)
 	pr_debug("RIO_CM: %s: found ch=%d\n", __func__, ch->id);
-
-	pr_debug("RIO_CM: %s: msg=%s\n", __func__, (char *)((u8 *)buf + sizeof(struct rio_ch_chan_hdr)));
-
+	pr_debug("RIO_CM: %s: msg=%s\n", __func__,
+		 (char *)((u8 *)buf + sizeof(struct rio_ch_chan_hdr)));
+#endif
 	/* Place pointer to the buffer into channel's RX queue */
 	spin_lock(&ch->lock);
 
@@ -746,15 +743,15 @@ int riocm_ch_send(int ch_id, void *buf, int len)
 	 */
 	hdr = (struct rio_ch_chan_hdr *)buf;
 
-	hdr->bhdr.src_id = ch->loc_destid;
-	hdr->bhdr.dst_id = ch->rem_destid;
+	hdr->bhdr.src_id = htonl(ch->loc_destid);
+	hdr->bhdr.dst_id = htonl(ch->rem_destid);
 	hdr->bhdr.src_mbox = cmbox;
 	hdr->bhdr.dst_mbox = cmbox;
 	hdr->bhdr.type = RIO_CM_CHAN;
 	hdr->ch_op = CM_DATA_MSG;
-	hdr->dst_ch = ch->rem_channel;
-	hdr->src_ch = ch->id;
-	hdr->msg_len = len;
+	hdr->dst_ch = htons(ch->rem_channel);
+	hdr->src_ch = htons(ch->id);
+	hdr->msg_len = htons((u16)len);
 
 	/* FIXME: the function call below relies on the fact that underlying
 	 * add_outb_message() routine copies TX data into its internal transfer
@@ -1037,14 +1034,14 @@ int riocm_ch_connect(int loc_ch, struct rio_mport *mport,
 	 * Send connect request to the remote RapidIO device
 	 */
 
-	hdr.bhdr.src_id = mport->host_deviceid;
-	hdr.bhdr.dst_id = rem_destid;
+	hdr.bhdr.src_id = htonl(mport->host_deviceid);
+	hdr.bhdr.dst_id = htonl(rem_destid);
 	hdr.bhdr.src_mbox = cmbox;
 	hdr.bhdr.dst_mbox = cmbox;
 	hdr.bhdr.type = RIO_CM_CHAN;
 	hdr.ch_op = CM_CONN_REQ;
-	hdr.dst_ch = rem_ch;
-	hdr.src_ch = loc_ch;
+	hdr.dst_ch = htons(rem_ch);
+	hdr.src_ch = htons(loc_ch);
 
 	/* FIXME: the function call below relies on the fact that underlying
 	 * add_outb_message() routine copies TX data into its internal transfer
@@ -1240,7 +1237,7 @@ int riocm_ch_bind(int ch_id, struct rio_mport *mport, void *context)
 	struct rio_channel *ch = NULL;
 	struct cm_dev *cm;
 
-pr_debug("RIO_CM: %s ch_%d to mport_%d\n", __func__, ch_id, mport->id);
+	pr_debug("RIO_CM: %s ch_%d to mport_%d\n", __func__, ch_id, mport->id);
 
 	/* Find matching cm_dev object */
 	list_for_each_entry(cm, &cm_dev_list, list) {
@@ -1254,8 +1251,6 @@ found:
 	if (!ch)
 		return -ENODEV;
 
-//	if (!riocm_comp_exch(ch, RIO_CM_IDLE, RIO_CM_CHAN_BOUND))
-//		return -EINVAL;
 	spin_lock_bh(&ch->lock);
 	if (ch->state != RIO_CM_IDLE) {
 		spin_unlock_bh(&ch->lock);
@@ -1412,14 +1407,14 @@ pr_debug("RIO_CM: %s(%d)\n", __func__, ch_id);
 		struct rio_ch_chan_hdr hdr;
 
 		cm = ch->cmdev;
-		hdr.bhdr.src_id = ch->loc_destid;
-		hdr.bhdr.dst_id = ch->rem_destid;
+		hdr.bhdr.src_id = htonl(ch->loc_destid);
+		hdr.bhdr.dst_id = htonl(ch->rem_destid);
 		hdr.bhdr.src_mbox = cmbox;
 		hdr.bhdr.dst_mbox = cmbox;
 		hdr.bhdr.type = RIO_CM_CHAN;
 		hdr.ch_op = CM_CONN_CLOSE;
-		hdr.dst_ch = ch->rem_channel;
-		hdr.src_ch = ch_id;
+		hdr.dst_ch = htons(ch->rem_channel);
+		hdr.src_ch = htons((u16)ch_id);
 
 		/* FIXME: the function call below relies on the fact that underlying
 		 * add_outb_message() routine copies TX data into its internal transfer
