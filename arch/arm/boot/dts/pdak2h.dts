@@ -1808,12 +1808,6 @@
 					/* channel = <0>; */
 					flow		= <23>;
 				};
-				satx {
-					transmit;
-					label		= "satx";
-					pool		= "pool-net";
-					submit-queue	= <646>;
-				};
 				patx-pdsp0 {
 					transmit;
 					label		= "patx-pdsp0";
@@ -2360,11 +2354,6 @@
 				rx_buffer_size		= <128>;
 				lut-ranges		= <0 43 56 63>;
 				/* force_no_hwtstamp; */
-			};
-			sa: sa@20c0000 {
-				label = "keystone-sa";
-				interface-0;
-				tx_queue_depth = <32>;
 			};
 			qos: qos@0 {
 				label = "keystone-qos";
