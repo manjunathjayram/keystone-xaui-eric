@@ -1888,7 +1888,7 @@
 					id = <0>;
 				};
 				pdsp3@0x2a13000 {
-					firmware = "keystone/qmss_pdsp_qos_k2_le_2_0_1_5.fw";
+					firmware = "keystone/qmss_pdsp_qos_k2_le_2_0_1_6.fw";
 					reg = <0x2a13000 0x1000    /*iram */
 					       0x2a0f300 0x100     /*reg*/
 					       0x2a0c000 0x3c8	   /*intd */
@@ -1896,7 +1896,7 @@
 					id = <3>;
 				};
 				pdsp7@0x2a17000 {
-					firmware = "keystone/qmss_pdsp_qos_k2_le_2_0_1_5.fw";
+					firmware = "keystone/qmss_pdsp_qos_k2_le_2_0_1_6.fw";
 					reg = <0x2a17000 0x1000    /*iram */
 					       0x2a0f700 0x100     /*reg*/
 					       0x2a0c000 0x3c8	   /*intd */
