@@ -1439,7 +1439,7 @@ static ssize_t qnode_overhead_bytes_store(struct khwq_qos_tree_node *qnode,
 	struct khwq_qos_info *info = qnode->info;
 	int error, field;
 
-	error = kstrtouint(buf, 0, &field);
+	error = kstrtoint(buf, 0, &field);
 	if (error)
 		return error;
 	
@@ -2129,9 +2129,17 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 		return error;
 
 	val = qnode->overhead_bytes;
-	error = khwq_qos_set_sched_overhead_bytes(info, idx, val, sync);
+	error = khwq_qos_set_sched_overhead_bytes(info, idx,
+			(val < 0) ? 0 : val, sync);
 	if (WARN_ON(error))
 		return error;
+	error = khwq_qos_set_sched_remove_bytes(info, idx,
+			(val < 0) ? (-val) : 0, sync);
+	if (WARN_ON(error))
+		return error;
+	dev_dbg(kdev->dev, "%s overhead_bytes %d: %d/%d\n", qnode->name, val,
+			(val < 0) ? 0 : val,
+			(val < 0) ? (-val) : 0);
 
 	val = qnode->output_rate / info->ticks_per_sec;
 	error = khwq_qos_set_sched_out_throttle(info, idx, val, sync);
@@ -2524,6 +2532,11 @@ static int khwq_qos_stop_sched_port_queues(struct khwq_qos_info *info)
 				return error;
 
 			error = khwq_qos_set_sched_overhead_bytes(info, idx, 0,
+								  false);
+			if (WARN_ON(error))
+				return error;
+
+			error = khwq_qos_set_sched_remove_bytes(info, idx, 0,
 								  false);
 			if (WARN_ON(error))
 				return error;
@@ -2926,7 +2939,7 @@ static ssize_t khwq_qos_sched_port_read(struct file *filp, char __user *buffer,
 	size_t len = 0;
 	ssize_t ret;
 	char *buf;
-	u32 temp, queues;
+	u32 temp, temp2, queues;
 
 	if (*ppos != 0)
 		return 0;
@@ -2977,8 +2990,13 @@ static ssize_t khwq_qos_sched_port_read(struct file *filp, char __user *buffer,
 			if (WARN_ON(error))
 				goto free;
 
+			error = khwq_qos_get_sched_remove_bytes(info, idx,
+								  &temp2);
+			if (WARN_ON(error))
+				goto free;
+
 			len += snprintf(buf + len, buf_len - len,
-					"overhead bytes %d ", temp);
+					"overhead bytes %d ", temp - temp2);
 
 			error = khwq_qos_get_sched_out_throttle(info, idx,
 								&temp);
@@ -3309,6 +3327,7 @@ static int khwq_qos_init_range(struct khwq_range_info *range)
 		__khwq_qos_set_sched_overhead_bytes(info, idx,
 						    QOS_DEFAULT_OVERHEAD_BYTES,
 						    false);
+		__khwq_qos_set_sched_remove_bytes(info, idx, 0, false);
 	}
 
 	for (i = 0 ; i < info->shadows[QOS_DROP_CFG_PROF].count; i++) {
