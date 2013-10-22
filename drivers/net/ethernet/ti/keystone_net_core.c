@@ -685,7 +685,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		}
 		p_info->netcp = netcp;
 
-		skb = netdev_alloc_skb(netcp->ndev, bufsize);
+		skb = netdev_alloc_skb_ip_align(netcp->ndev, bufsize);
 		if (!skb) {
 			dev_err(netcp->dev, "skb alloc failed\n");
 			kmem_cache_free(netcp_pinfo_cache, p_info);
