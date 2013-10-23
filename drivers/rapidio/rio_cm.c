@@ -139,7 +139,7 @@ struct chan_rx_ring {
 };
 
 struct rio_channel {
-	int			id;	/* local channel ID */
+	u16			id;	/* local channel ID */
 	struct cm_dev		*cmdev;
 	struct rio_dev		*rdev;	/* remote RapidIO device */
 	enum rio_cm_state	state;
@@ -148,7 +148,7 @@ struct rio_channel {
 	void			*context;
 	u32			loc_destid;	/* local destID */
 	u32			rem_destid;	/* remote destID */
-	u32			rem_channel;	/* remote channel ID */
+	u16			rem_channel;	/* remote channel ID */
 	struct list_head	accept_queue;	// TODO_???: review lists to replace by single node acting according channel state
 	struct list_head	listen_list;	//           ^^^^^ ???
 	struct list_head	con_list;	/* connect_list: waiting for connect response ^^^^^ ??? */
@@ -167,15 +167,15 @@ struct rio_cm_work {
 	void *data;
 };
 
-static struct rio_channel *riocm_ch_alloc(int ch_num);
+static struct rio_channel *riocm_ch_alloc(u16 ch_num);
 static void riocm_ch_free(struct rio_channel *ch);
 static int riocm_post_send(struct cm_dev *cm, struct rio_dev *rdev,
 			   void *buffer, size_t len, void *context);
 
 static DEFINE_SPINLOCK(idr_lock);
 static DEFINE_IDR(ch_idr);
-#define RIOCM_MAX_CHNUM		0xffff
-#define RIOCM_CHNUM_AUTO	(-1)
+#define RIOCM_MAX_CHNUM		0xffff /* Use full range of u16 field */
+#define RIOCM_CHNUM_AUTO	0
 
 
 static LIST_HEAD(cm_dev_list);
@@ -224,7 +224,7 @@ static enum rio_cm_state riocm_exch(struct rio_channel *ch,
 	return old;
 }
 
-static struct rio_channel *riocm_get_channel(int nr)
+static struct rio_channel *riocm_get_channel(u16 nr)
 {
 	struct rio_channel *ch;
 
@@ -722,7 +722,7 @@ err_out:
  *          -EAGAIN if a channel is not in connected state,
  *	    error codes returned by HW send routine.
  */
-int riocm_ch_send(int ch_id, void *buf, int len)
+int riocm_ch_send(u16 ch_id, void *buf, int len)
 {
 	struct rio_channel *ch;
 	struct rio_ch_chan_hdr *hdr;
@@ -813,7 +813,7 @@ static int riocm_wait_for_rx_data(struct rio_channel *ch)
  *          -EINVAL if one or more input parameters is/are not valid,
  *          -ENODEV if cannot find a channel with specified ID,
  */
-int riocm_ch_free_rxbuf(int ch_id, void *buf)
+int riocm_ch_free_rxbuf(u16 ch_id, void *buf)
 {
 	struct rio_channel *ch;
 	int i, ret = -EINVAL;
@@ -859,7 +859,7 @@ EXPORT_SYMBOL_GPL(riocm_ch_free_rxbuf);
  *          -EAGAIN if a channel is not in connected state,
  *          -ENOMEM if there is no free entry for buffer tracking.
  */
-int riocm_ch_receive(int ch_id, void **buf, int *len)
+int riocm_ch_receive(u16 ch_id, void **buf, int *len)
 {
 	struct rio_channel *ch;
 	void *rxmsg = NULL;
@@ -961,7 +961,8 @@ static int riocm_wait_for_connect_resp(struct rio_channel *ch, long timeo)
 /*
  * riocm_ch_connect - sends a connect request to a remote device
  * @loc_ch: local channel ID
- * @rdev: remote RapidIO device
+ * @mport:  corresponding RapidIO mport device
+ * @rem_destid: destination ID of target RapidIO device
  * @rem_ch: remote channel ID
  *
  * Returns: 0 if success, or
@@ -969,8 +970,8 @@ static int riocm_wait_for_connect_resp(struct rio_channel *ch, long timeo)
  *          -EINVAL if the channel is not in IDLE state,
  *          -EAGAIN if no connection request available immediately.
  */
-int riocm_ch_connect(int loc_ch, struct rio_mport *mport,
-		     u32 rem_destid, int rem_ch)
+int riocm_ch_connect(u16 loc_ch, struct rio_mport *mport,
+		     u32 rem_destid, u16 rem_ch)
 {
 	struct rio_channel *ch = NULL;
 	struct rio_ch_chan_hdr hdr;
@@ -1141,7 +1142,7 @@ static int riocm_wait_for_connect_req(struct rio_channel *ch, long timeo)
  *          -EINVAL if the channel is not in IDLE state,
  *          -EAGAIN if no connection request available immediately.
  */
-int riocm_ch_accept(int ch_id, int *new_ch_id, long timeout)
+int riocm_ch_accept(u16 ch_id, u16 *new_ch_id, long timeout)
 {
 	struct rio_channel *ch = NULL;
 	struct rio_channel *new_ch = NULL;
@@ -1194,7 +1195,7 @@ EXPORT_SYMBOL_GPL(riocm_ch_accept);
  *          -EINVAL if the specified channel does not exists or
  *                  is not in CHAN_BOUND state.
  */
-int riocm_ch_listen(int ch_id)
+int riocm_ch_listen(u16 ch_id)
 {
 	struct rio_channel *ch = NULL;
 
@@ -1232,7 +1233,7 @@ EXPORT_SYMBOL_GPL(riocm_ch_listen);
  *          -ENODEV if cannot find specified channel or mport,
  *          -EINVAL if the channel is not in IDLE state.
  */
-int riocm_ch_bind(int ch_id, struct rio_mport *mport, void *context)
+int riocm_ch_bind(u16 ch_id, struct rio_mport *mport, void *context)
 {
 	struct rio_channel *ch = NULL;
 	struct cm_dev *cm;
@@ -1269,19 +1270,16 @@ EXPORT_SYMBOL_GPL(riocm_ch_bind);
 
 /*
  * riocm_ch_alloc - channel object allocation helper routine
- * @ch_num: channel ID (1 ... RIOCM_MAX_CHNUM, 0 = reserved, -1 = automatic)
+ * @ch_num: channel ID (1 ... RIOCM_MAX_CHNUM, 0 = automatic)
  *
  * Return value: pointer to newly created channel object, or error code
  */
-static struct rio_channel *riocm_ch_alloc(int ch_num)
+static struct rio_channel *riocm_ch_alloc(u16 ch_num)
 {
 	int id;
 	int start, end;
 	struct rio_channel *ch = NULL;
 	int ret;
-
-	if (ch_num == 0 || (ch_num > 0 && ch_num >= RIOCM_MAX_CHNUM))
-		return ERR_PTR(-EINVAL);
 
 	ch = kzalloc(sizeof(struct rio_channel), GFP_KERNEL);
 	if (!ch)
@@ -1296,7 +1294,7 @@ static struct rio_channel *riocm_ch_alloc(int ch_num)
 	ch->rx_ring.count = 0;
 	ch->rx_ring.inuse_cnt = 0;
 
-	if (ch_num > 0) {
+	if (ch_num) {
 		/* If requested, try to obtain the specified channel ID */
 		start = ch_num;
 		end = ch_num + 1;
@@ -1321,38 +1319,40 @@ static struct rio_channel *riocm_ch_alloc(int ch_num)
 		return ERR_PTR(ret == -ENOSPC ? -EBUSY : ret);
 	}
 
-	ch->id = id;
+	ch->id = (u16)id;
 	return ch;
 }
 
 /*
  * riocm_ch_create - creates a new channel object and allocates ID for it
- * @ch_num: channel ID (1 ... RIOCM_MAX_CHNUM, 0 = reserved, -1 = automatic)
+ * @ch_num: channel ID (1 ... RIOCM_MAX_CHNUM, 0 = automatic)
  *
  * Allocates and initializes a new channel object. If the parameter ch_num > 0
  * and is within the valid range, riocm_ch_create tries to allocate the
- * specified ID for the new channel. If ch_num = -1, channel ID will be assigned
+ * specified ID for the new channel. If ch_num = 0, channel ID will be assigned
  * automatically from the range (chstart ... RIOCM_MAX_CHNUM).
  * Module parameter 'chstart' defines start of an ID range available for dynamic
  * allocation. Range below 'chstart' is reserved for pre-defined ID numbers.
+ * Available channel numbers are limited by 16-bit size of channel numbers used
+ * in the packet header.
  *
- * Return value: ID (handle) assigned to newly created channel object, or
+ * Return value: 0 if successful (with channel number updated via pointer) or
  *               -1 if error.
  */
-int riocm_ch_create(int ch_num)
+int riocm_ch_create(u16 *ch_num)
 {
 	struct rio_channel *ch = NULL;
 
-pr_debug("RIO_CM: %s(%d)\n", __func__, ch_num);
-	ch = riocm_ch_alloc(ch_num);
+	ch = riocm_ch_alloc(*ch_num);
 
 	if (IS_ERR(ch)) {
 		pr_debug("RIO: failed to allocate channel %d (err=%ld)\n",
-			 ch_num, PTR_ERR(ch));
+			 *ch_num, PTR_ERR(ch));
 		return -1;
 	}
 
-	return ch->id;
+	*ch_num = ch->id;
+	return 0;
 }
 EXPORT_SYMBOL_GPL(riocm_ch_create);
 
@@ -1373,7 +1373,7 @@ static void riocm_ch_free(struct rio_channel *ch)
  * @ch_id: channel ID to be closed
  *
  */
-int riocm_ch_close(int ch_id)
+int riocm_ch_close(u16 ch_id)
 {
 	struct rio_channel *ch;
 	struct cm_dev *cm;

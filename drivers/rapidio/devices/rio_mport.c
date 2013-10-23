@@ -163,8 +163,8 @@ out:
  */
 static int channel_close(struct channel_dev *data, void __user *arg)
 {
-	int __user *p = arg;
-	int ch_num;
+	u16 __user *p = arg;
+	u16 ch_num;
 
 	if (get_user(ch_num, p))
 		return -EFAULT;
@@ -178,12 +178,16 @@ static int channel_close(struct channel_dev *data, void __user *arg)
  */
 static int channel_create(struct channel_dev *data, void __user *arg)
 {
-	int __user *p = arg;
-	int ch_num;
+	u16 __user *p = arg;
+	u16 ch_num;
+	int ret;
 
 	if (get_user(ch_num, p))
 		return -EFAULT;
-	ch_num = riocm_ch_create(ch_num);
+	ret = riocm_ch_create(&ch_num);
+	if (ret)
+		return ret;
+
 	return put_user(ch_num, p);
 }
 
@@ -193,8 +197,8 @@ static int channel_create(struct channel_dev *data, void __user *arg)
  */
 static int channel_bind(struct channel_dev *data, void __user *arg)
 {
-	int __user *p = arg;
-	int ch_num;
+	u16 __user *p = arg;
+	u16 ch_num;
 
 	if (get_user(ch_num, p))
 		return -EFAULT;
@@ -208,8 +212,8 @@ static int channel_bind(struct channel_dev *data, void __user *arg)
  */
 static int channel_listen(struct channel_dev *data, void __user *arg)
 {
-	int __user *p = arg;
-	int ch_num;
+	u16 __user *p = arg;
+	u16 ch_num;
 
 	if (get_user(ch_num, p))
 		return -EFAULT;
@@ -223,8 +227,8 @@ static int channel_listen(struct channel_dev *data, void __user *arg)
  */
 static int channel_accept(struct channel_dev *data, void __user *arg)
 {
-	int __user *p = arg;
-	int ch_num;
+	u16 __user *p = arg;
+	u16 ch_num;
 	int rc;
 
 	if (get_user(ch_num, p))

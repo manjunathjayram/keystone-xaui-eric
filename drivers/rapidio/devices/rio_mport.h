@@ -22,7 +22,7 @@ struct rio_mport_channel {
 	uint16_t id;
 	uint32_t remote_destid;
 	uint32_t remote_mbox;
-	uint32_t remote_channel;
+	uint16_t remote_channel;
 };
 
 struct rio_mport_channel_msg {
@@ -49,16 +49,12 @@ struct rio_mport_ch_msg {
 #define RIO_MPORT_CHANNEL_EP_GET_LIST_SIZE	_IOWR(RIO_MPORT_CHANNEL_IOC_MAGIC, 1, uint32_t *)
 #define RIO_MPORT_CHANNEL_EP_GET_LIST		_IOWR(RIO_MPORT_CHANNEL_IOC_MAGIC, 2, uint32_t *)
 
-//#define RIO_MPORT_CHANNEL_CREATE		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 3, struct rio_mport_channel)
-#define RIO_MPORT_CHANNEL_CREATE		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 3, int)
-//#define RIO_MPORT_CHANNEL_CLOSE			_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 4, struct rio_mport_channel)
-#define RIO_MPORT_CHANNEL_CLOSE			_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 4, int)
-#define RIO_MPORT_CHANNEL_BIND			_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 5, uint16_t)
-//#define RIO_MPORT_CHANNEL_LISTEN		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 6, struct rio_mport_channel)
-#define RIO_MPORT_CHANNEL_LISTEN		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 6, int)
-//#define RIO_MPORT_CHANNEL_ACCEPT		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 7, struct rio_mport_channel)
-#define RIO_MPORT_CHANNEL_ACCEPT		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 7, int)
-#define RIO_MPORT_CHANNEL_CONNECT		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 8, struct rio_mport_channel)
+#define RIO_MPORT_CHANNEL_CREATE		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 3, uint16_t *)
+#define RIO_MPORT_CHANNEL_CLOSE			_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 4, uint16_t *)
+#define RIO_MPORT_CHANNEL_BIND			_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 5, uint16_t *)
+#define RIO_MPORT_CHANNEL_LISTEN		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 6, uint16_t *)
+#define RIO_MPORT_CHANNEL_ACCEPT		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 7, uint16_t *)
+#define RIO_MPORT_CHANNEL_CONNECT		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 8, struct rio_mport_channel *)
 
 //#define RIO_MPORT_CHANNEL_SEND		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 9, struct rio_mport_channel_msg *)
 #define RIO_MPORT_CHANNEL_SEND			_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 9, struct rio_mport_ch_msg *)
