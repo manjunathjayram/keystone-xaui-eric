@@ -1893,8 +1893,8 @@
 					region-id = <12>;
 				};
 				pool-rio {
-					values = <128 256>;
-					region-id = <13>;
+					values = <1024 128>;
+					region-id = <12>;
 				};
 				pool-udma {
 					values = <1636 256>;	/* num_desc desc_size */
@@ -2741,14 +2741,15 @@
 			clocks = <&clksrio>;
 			clock-names = "clk_srio";
 			compatible = "ti,keystone-rapidio";
+			dma-coherent;
 
 			keystone2-serdes;
 
 			tx_channel = "riotx";
-			tx_queue_depth = <32>;
+			tx_queue_depth = <512>;
 
 			rx_channel = "riorx";
-			rx_queue_depth	= <64 0 0 0>;
+			rx_queue_depth	= <512 0 0 0>;
 			rx_buffer_size	= <1552 0 0 0>;
 
                         ports = <0x1>;      /* bitfield of port(s) to probe */
