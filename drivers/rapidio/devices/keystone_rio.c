@@ -387,8 +387,16 @@ static inline void serdes_lane_enable(struct keystone_rio_data *krio_priv,
 	val &= ~BIT(29);
 	__raw_writel(val, regs + 0x200 * (lane + 1) + 0x28);
 
-	/* Set Lane Control Rate 5G full rate */
+	/* Set Lane Control Rate full rate */
 	__raw_writel(0xF0C0F0F0, regs + 0x1fe0 + 4 * lane);
+
+#if 0
+	/* Set Lane Control Rate half rate */
+	__raw_writel(0xF4C0F4F0, regs + 0x1fe0 + 4 * lane);
+
+	/* Set Lane Control Rate quarte rate */
+	__raw_writel(0xF8C0F8F0, regs + 0x1fe0 + 4 * lane);
+#endif
 }
 
 static void k2_rio_serdes_config(u32 mode, struct keystone_rio_data *krio_priv)
@@ -407,28 +415,23 @@ static void k2_rio_serdes_config(u32 mode, struct keystone_rio_data *krio_priv)
 	if (mode == 0) {
 		/*srio_lane_rate_5p000Gbps*/
 		serdes_init_5g(krio_priv);
-		serdes_lane_enable(krio_priv, 0);
-		serdes_lane_enable(krio_priv, 1);
-		serdes_lane_enable(krio_priv, 2);
-		serdes_lane_enable(krio_priv, 3);
 	} else {
-#if 0
 		/*srio_lane_rate_3p125Gbps*/
 		serdes_3G(krio_priv);
-		__raw_writel(0xF4C0F4F0, regs + 0x1fe0);
-		__raw_writel(0xF4C0F4F0, regs + 0x1fe4);
-		__raw_writel(0xF4C0F4F0, regs + 0x1fe8);
-		__raw_writel(0xF4C0F4F0, regs + 0x1fec);
-#endif
 	}
+
+	serdes_lane_enable(krio_priv, 0);
+	serdes_lane_enable(krio_priv, 1);
+	serdes_lane_enable(krio_priv, 2);
+	serdes_lane_enable(krio_priv, 3);
 
 	/* Enable pll via the pll_ctrl 0x0014 */
 	__raw_writel(0xe0000000, regs + 0x1ff4);
 
-	/* Wait for the SerDes PLL lock */
+	/* Wait untill CMU_OK bit is set */
 	do {
-		val = __raw_readl(regs + 0x1ff4);
-	} while ((val & 0xf0f) != 0xf0f);
+		val = __raw_readl(regs + 0xbf8);
+	} while (!(val & BIT(16)));
 
 	/* TBD SRIO SERDES configuration for different modes */
 }
@@ -667,12 +670,18 @@ static int keystone_rio_port_status(int port,
 
 	if ((value & RIO_PORT_N_ERR_STS_PORT_OK) != 0) {
 		res = keystone_rio_test_link(krio_priv);
-		if (0 != res)
+		if (0 != res) {
+			dev_err(krio_priv->dev,
+				"Link test failed on port %d\n", port);
 			return -EIO;
-		else
+		} else
 			return 0; /* port must be solid OK */
-	} else
+	} else {
+		dev_err(krio_priv->dev,
+			"Port %d is not initialized - PORT_OK not set\n",
+			port);
 		return -EIO;
+	}
 }
 
 /**
@@ -708,7 +717,12 @@ static int keystone_rio_port_init(u32 port, u32 mode,
 	__raw_writel(0x600000, &(krio_priv->serial_port_regs->sp[port].ctl));
 
 	/* Program channel allocation to ports (1x, 2x or 4x) */
-	__raw_writel(path_mode, &(krio_priv->phy_regs->phy_sp[port].path_ctl));
+	if (!K2_SERDES(krio_priv)) {
+		__raw_writel(path_mode, &(krio_priv->phy_regs->phy_sp[port].path_ctl));
+	} else {
+		/* TODO: Allow other values than 4x link for Keystone2 */
+		__raw_writel(0x00000004, &(krio_priv->phy_regs->phy_sp[port].path_ctl));
+	}
 
 	return 0;
 }
@@ -1920,6 +1934,8 @@ static void keystone_rio_port_chk_task(struct work_struct *work)
 static int keystone_rio_setup_controller(struct platform_device *pdev,
 					 struct keystone_rio_data *krio_priv)
 {
+	void __iomem *regs = (void __iomem *)krio_priv->serdes_regs;
+	u32 val;
 	u32 ports;
 	u32 p;
 	u32 mode;
@@ -1961,6 +1977,13 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 
 	/* Start the controller */
 	keystone_rio_start(krio_priv);
+
+	if (K2_SERDES(krio_priv)) {
+		/* Wait for the SerDes PLL lock */
+		do {
+			val = __raw_readl(regs + 0x1ff4);
+		} while ((val & 0xf0f) != 0xf0f);
+	}
 
 	/* Use and check ports status (but only the requested ones) */
 	krio_priv->ports_registering = 0;
