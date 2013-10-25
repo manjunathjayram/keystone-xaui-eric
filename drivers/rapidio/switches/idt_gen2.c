@@ -10,6 +10,7 @@
  * option) any later version.
  */
 
+#include <asm/page.h>
 #include <linux/stat.h>
 #include <linux/rio.h>
 #include <linux/rio_drv.h>
