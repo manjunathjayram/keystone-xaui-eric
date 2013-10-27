@@ -35,9 +35,9 @@
 #include "rio_cm.h"
 
 #define DRV_NAME        "rio_cm"
-#define DRV_VERSION     "0.1"
-#define DRV_AUTHOR      "AB <ab@idt.com>"
-#define DRV_DESC        "RapidIO Channel Manager"
+#define DRV_VERSION     "0.5"
+#define DRV_AUTHOR      "Alexandre Bounine <alexandre.bounine@idt.com>"
+#define DRV_DESC        "RapidIO Messaging Channel Manager"
 
 static int cmbox = 1;
 module_param(cmbox, int, S_IRUGO);
@@ -102,7 +102,7 @@ struct rio_ch_chan_hdr {
 	u8 ch_op;
 	u16 dst_ch;
 	u16 src_ch;
-	u16 msg_len; // ??? Error code for NACK
+	u16 msg_len; /* for NACK response acts as an error code */
 	u16 rsrvd;
 } __attribute__((__packed__));
 
@@ -140,7 +140,7 @@ struct chan_rx_ring {
 
 struct rio_channel {
 	u16			id;	/* local channel ID */
-	struct cm_dev		*cmdev;
+	struct cm_dev		*cmdev;	/* associated CM device object */
 	struct rio_dev		*rdev;	/* remote RapidIO device */
 	enum rio_cm_state	state;
 	int			error;
@@ -174,9 +174,6 @@ static int riocm_post_send(struct cm_dev *cm, struct rio_dev *rdev,
 
 static DEFINE_SPINLOCK(idr_lock);
 static DEFINE_IDR(ch_idr);
-#define RIOCM_MAX_CHNUM		0xffff /* Use full range of u16 field */
-#define RIOCM_CHNUM_AUTO	0
-
 
 static LIST_HEAD(cm_dev_list);
 static LIST_HEAD(listen_any_list);
@@ -234,7 +231,7 @@ static struct rio_channel *riocm_get_channel(u16 nr)
 	return ch;
 }
 
-static int cm_rx_get_one(struct cm_dev *cm, void **msg)
+static int riocm_rx_get_one(struct cm_dev *cm, void **msg)
 {
 	int i;
 	void *data = NULL;
@@ -298,8 +295,10 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 	spin_lock_bh(&cm->cm_lock);
 	list_for_each_entry(peer, &cm->peers, node) {
 		if (peer->rdev->destid == rem_destid) {
+#if (0)
 			pr_debug("RIO_CM: %s found matching device(%s)\n",
 				 __func__, rio_name(peer->rdev));
+#endif
 			found++;
 			break;
 		}
@@ -318,7 +317,9 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 	spin_lock(&rio_list_lock);
 	list_for_each_entry(listen_id, &listen_any_list, listen_list)
 		if (listen_id->id == snum) {
+#if (0)
 			pr_debug("RIO_CM: matching listener on ch=%d\n", snum);
+#endif
 			found++;
 			break;
 		}
@@ -326,7 +327,9 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 	spin_unlock(&rio_list_lock);
 
 	if (!found) {
+#if (0)
 		pr_debug("RIO_CM: listener on channel %d not found\n", snum);
+#endif
 		listen_id = NULL;
 		hh->msg_len = CM_NACK_NOLIS;
 		goto out_nack;
@@ -336,8 +339,8 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 	conn_id = riocm_ch_alloc(RIOCM_CHNUM_AUTO);
 
 	if (IS_ERR(conn_id)) {
-		pr_debug("RIO_CM: failed to get channel for new req (%ld)\n",
-			 PTR_ERR(conn_id));
+		pr_err("RIO_CM: failed to get channel for new req (%ld)\n",
+			PTR_ERR(conn_id));
 		return -ENOMEM;
 	}
 
@@ -376,7 +379,6 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 	//if (ret)
 	//	goto err;
 
-	//mutex_unlock(&listen_id->handler_mutex);
 	if (waitqueue_active(&listen_id->wait_q))
 		wake_up(&listen_id->wait_q);
 	return ret;
@@ -569,7 +571,7 @@ static void rio_ibmsg_handler(unsigned long context)
 
 	for (i = 0; i < 8; i++) {
 		spin_lock(&cm->cm_lock);
-		n = cm_rx_get_one(cm, &data);
+		n = riocm_rx_get_one(cm, &data);
 		if (n != cm->rx_slot)
 			riocm_rx_fill(cm, n);
 		spin_unlock(&cm->cm_lock);
@@ -644,7 +646,9 @@ static void rio_txcq_handler(unsigned long context)
 	 * transfer is implemented. At this moment only correct tracking
 	 * of tx_count is important.
 	 */
+#if (0)
 	pr_debug("RIO_CM: TXCQ_handler: for mport_id=%d\n", cm->mport->id);
+#endif
 
 	spin_lock(&cm->tx_lock);
 	ack_slot = cm->tx_ack_slot;
@@ -694,8 +698,10 @@ static int riocm_post_send(struct cm_dev *cm, struct rio_dev *rdev,
 	cm->tx_buf[cm->tx_slot] = buffer;
 	cm->tx_ctxt[cm->tx_slot] = context;
 	rc = rio_add_outb_message(cm->mport, rdev, cmbox, buffer, len);
+#if (0)
 	pr_debug("RIO_CM: Add buf@%p destid=%x tx_slot=%d tx_cnt=%d\n",
 		 buffer, rdev->destid, cm->tx_slot, cm->tx_cnt);
+#endif
 
 	if (++cm->tx_cnt == RIOCM_TX_RING_SIZE)
 		pr_warn("RIO_CM: ATTN: TX QUEUE FULL\n");
@@ -781,7 +787,9 @@ static int riocm_wait_for_rx_data(struct rio_channel *ch)
 	int err;
 	DEFINE_WAIT(wait);
 
+#if (0)
 	pr_debug("RIO_CM: %s on %d\n", __func__, ch->id);
+#endif
 
 	for (;;) {
 		prepare_to_wait_exclusive(&ch->wait_q, &wait,
@@ -800,7 +808,9 @@ static int riocm_wait_for_rx_data(struct rio_channel *ch)
 	}
 
 	finish_wait(&ch->wait_q, &wait);
+#if (0)
 	pr_debug("RIO_CM: %s on %d returns %d\n", __func__, ch->id, err);
+#endif
 	return err;
 }
 
@@ -932,7 +942,9 @@ static int riocm_wait_for_connect_resp(struct rio_channel *ch, long timeo)
 	int err;
 	DEFINE_WAIT(wait);
 
+#if (0)
 	pr_debug("RIO_CM: %s on %d\n", __func__, ch->id);
+#endif
 
 	for (;;) {
 		prepare_to_wait_exclusive(&ch->wait_q, &wait,
@@ -954,7 +966,9 @@ static int riocm_wait_for_connect_resp(struct rio_channel *ch, long timeo)
 	}
 
 	finish_wait(&ch->wait_q, &wait);
+#if (0)
 	pr_debug("RIO_CM: %s on %d returns %d\n", __func__, ch->id, err);
+#endif
 	return err;
 }
 
@@ -1101,7 +1115,9 @@ static int riocm_wait_for_connect_req(struct rio_channel *ch, long timeo)
 	int err;
 	DEFINE_WAIT(wait);
 
+#if (0)
 	pr_debug("RIO_CM: %s on %d\n", __func__, ch->id);
+#endif
 
 	for (;;) {
 		prepare_to_wait_exclusive(&ch->wait_q, &wait,
@@ -1126,7 +1142,9 @@ static int riocm_wait_for_connect_req(struct rio_channel *ch, long timeo)
 	}
 
 	finish_wait(&ch->wait_q, &wait);
+#if (0)
 	pr_debug("RIO_CM: %s on %d returns %d\n", __func__, ch->id, err);
+#endif
 	return err;
 }
 
@@ -1199,13 +1217,12 @@ int riocm_ch_listen(u16 ch_id)
 {
 	struct rio_channel *ch = NULL;
 
-pr_debug("RIO_CM: %s(ch_%d)\n", __func__, ch_id);
+	pr_debug("RIO_CM: %s(ch_%d)\n", __func__, ch_id);
+
 	ch = riocm_get_channel(ch_id);
 	if (!ch)
 		return -EINVAL;
 
-//	if (!riocm_comp_exch(ch, RIO_CM_CHAN_BOUND, RIO_CM_LISTEN))
-//		return -EINVAL;
 	spin_lock_bh(&ch->lock);
 	if (ch->state != RIO_CM_CHAN_BOUND) {
 		spin_unlock_bh(&ch->lock);
@@ -1346,7 +1363,7 @@ int riocm_ch_create(u16 *ch_num)
 	ch = riocm_ch_alloc(*ch_num);
 
 	if (IS_ERR(ch)) {
-		pr_debug("RIO: failed to allocate channel %d (err=%ld)\n",
+		pr_err("RIO: failed to allocate channel %d (err=%ld)\n",
 			 *ch_num, PTR_ERR(ch));
 		return -1;
 	}
@@ -1380,7 +1397,7 @@ int riocm_ch_close(u16 ch_id)
 	enum rio_cm_state state;
 	int ret;
 
-pr_debug("RIO_CM: %s(%d)\n", __func__, ch_id);
+	pr_debug("RIO_CM: %s(%d)\n", __func__, ch_id);
 	ch = riocm_get_channel(ch_id);
 	if (!ch)
 		return -ENODEV;
@@ -1532,7 +1549,6 @@ static int riocm_add_dev(struct device *dev, struct subsys_interface *sif)
 	struct cm_peer *peer;
 	struct rio_dev *rdev = to_rio_dev(dev);
 	struct cm_dev *cm;
-//	struct rio_mport *mport = to_rio_mport(dev->parent);  ???
 
 	/* Check if the remote device has capabilities required to support CM */
 	if (!dev_cm_capable(rdev))

@@ -20,12 +20,11 @@
  * MA 02110-1301 USA.
  */
 
-#ifndef RIO_CM_H
-#define RIO_CM_H
+#ifndef _RIO_CM_H
+#define _RIO_CM_H
 
-//#define RIOCM_MAX_CHNUM		0xffff
-//#define RIOCM_CHNUM_AUTO	(-1)
-//#define RIOCM_CONNECT_TO	3 /* connect response TO (in sec) */
+#define RIOCM_MAX_CHNUM		0xffff /* Use full range of u16 field */
+#define RIOCM_CHNUM_AUTO	0
 
 extern int riocm_get_peer_count(struct rio_mport *mport, u32 *npeers);
 extern int riocm_get_peer_list(struct rio_mport *mport, void *buf, u32 *nent);
@@ -40,4 +39,4 @@ extern int riocm_ch_send(u16 ch_id, void *buf, int len);
 extern int riocm_ch_receive(u16 ch_id, void **buf, int *len);
 extern int riocm_ch_free_rxbuf(u16 ch_id, void *buf);
 
-#endif /* RIO_CM_H */
+#endif /* _RIO_CM_H */
