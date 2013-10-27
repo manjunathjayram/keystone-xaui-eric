@@ -4,6 +4,9 @@
  * Copyright 2013 Prodrive B.V.
  * Jerry Jacobs <jerry.jacobs@prodrive.nl>
  *
+ * Original version was modified by Alex Bounine <alexandre.bounine@idt.com>
+ * for testing of RIO_CM RapidIO Messaging Chanel Management driver.
+ *
  * This program is free software; you can redistribute  it and/or modify it
  * under  the terms of  the GNU General  Public License as published by the
  * Free Software Foundation;  either version 2 of the  License, or (at your
@@ -26,18 +29,14 @@
 
 #include <linux/rio.h>
 #include <linux/rio_ids.h>
-//#include <linux/rio_buff.h>
 #include <linux/rio_drv.h>
-
 #include "../rio_cm.h"
-
 #include "rio_mport.h"
-
 #include "channel_msg.h"
 
-#define DRV_NAME        "rio-mport-channel"
+#define DRV_NAME        "rio-mport-cdev"
 #define DRV_AUTHOR      "Jerry Jacobs <jerry.jacobs@prodrive.nl>"
-#define DRV_DESC        "RapidIO driver to manage channels on mports"
+#define DRV_DESC        "RapidIO mport character device driver"
 
 MODULE_AUTHOR(DRV_AUTHOR);
 MODULE_DESCRIPTION(DRV_DESC);
@@ -46,64 +45,31 @@ MODULE_LICENSE("GPL");
 #define DRV_PREFIX		"RIO " DRV_NAME ": "
 #define DEV_NAME		"rio_mport"
 #define CHANNEL_MINORS	256
-#define CHANNELS_MAX	65535	/* 16 bit channel IDs */
-
-#define CHANNEL_MAILBOX			0
 
 /*
  * An channel_dev represents a structure on mport
- * @mport	Associated master port
+ * @node	List node to maintain list of registered mports
  * @cdev	Character device
- * @state	Channel state
- * @rdev	Channels associated rio_dev
- * @rx_lock	Receive spinlock
- * @rx_head	buffer enqueue index (hardware)
- * @rx_tail	buffer dequeue index (user-space)
- * @rx_dropped	Dropped rx packet counter
- * @buffer	Receive ringbuffer
+ * @dev		Associated device object
+ * @mport	Associated master port
  */
 struct channel_dev {
 	struct list_head node;
-	struct cdev		cdev;
+	struct cdev	cdev;
 	struct device	*dev;
 	struct rio_mport *mport;
-	socket_state	state[CHANNELS_MAX];
-	struct rio_dev	*rdev[CHANNELS_MAX];
-	struct semaphore sem;
-	spinlock_t lock;
-	spinlock_t tx_lock;
-//	struct rio_buffer rx_buffer;
-//	struct rio_buffer tx_buffer;
-
-	int tx_slot;
-	void *tx_ack[RIO_MPORT_CHANNEL_TX_RING];
 };
 
 static LIST_HEAD(channel_devs);
 static DEFINE_MUTEX(channel_devs_lock);
+#if (0) /* used by commented out portion of poll function : FIXME */
 static DECLARE_WAIT_QUEUE_HEAD(channel_cdev_wait);
+#endif
 
 static struct class *dev_class;
 static int dev_count;
 static int dev_major;
 static dev_t dev_number;
-
-void channel_queue_tx_msg(struct channel_dev *chdev,
-	struct rio_mport *mport, struct rio_dev *dev,
-	void *buffer, size_t size)
-{
-	chdev->tx_slot++;
-	if (chdev->tx_slot >= RIO_MPORT_CHANNEL_TX_RING)
-		chdev->tx_slot = 0;
-	pr_debug("Adding buffer 0x%p at slot %d\n", buffer, chdev->tx_slot);
-	rio_add_outb_message(mport, dev, CHANNEL_MAILBOX,
-		buffer, size);
-	chdev->tx_ack[chdev->tx_slot] = buffer;
-}
-
-/*
- * Channel management
- */
 
 /**
  * channel_ep_get_list_size() - Get amount of endpoints in network
@@ -129,7 +95,7 @@ static int channel_ep_get_list_size(struct channel_dev *data,
 /**
  * channel_ep_get_list() - Get next endpoint in network
  * @data:	Driver private data
- * @list:	List of endpoint destination IDs in the network
+ * @arg:	List of endpoint destination IDs in the network
  */
 static int channel_ep_get_list(struct channel_dev *data,
 		void __user *arg)
@@ -194,6 +160,7 @@ static int channel_create(struct channel_dev *data, void __user *arg)
 /**
  * channel_bind() - Bind channel
  * @data:	Driver private data
+ * @arg:	Channel number
  */
 static int channel_bind(struct channel_dev *data, void __user *arg)
 {
@@ -209,6 +176,7 @@ static int channel_bind(struct channel_dev *data, void __user *arg)
 /**
  * channel_listen() - Listen on channel
  * @data:	Driver private data
+ * @arg:	Channel number
  */
 static int channel_listen(struct channel_dev *data, void __user *arg)
 {
@@ -224,6 +192,7 @@ static int channel_listen(struct channel_dev *data, void __user *arg)
 /**
  * channel_accept() - Accept incomming connection
  * @data:	Driver private data
+ * @arg:	Channel number
  */
 static int channel_accept(struct channel_dev *data, void __user *arg)
 {
@@ -261,91 +230,6 @@ static int channel_connect(struct channel_dev *data, void __user *arg)
 
 err:
 	return ret;
-
-#if (0) // AB
-	struct rio_dev *dev;
-	struct rio_mport_channel *channel;
-	struct rio_channel_msg *msg;
-	void *buffer = NULL;
-	uint32_t channel_id;
-	uint32_t src_id;
-
-	channel = kmalloc(sizeof(struct rio_mport_channel), GFP_KERNEL);
-	if (!channel) {
-		ret = -ENOMEM;
-		goto err;
-	}
-
-	if (copy_from_user(channel, arg, sizeof(struct rio_mport_channel))) {
-		ret = -EFAULT;
-		goto err;
-	}
-
-	ret = rio_buff_request_slot(&data->tx_buffer, &buffer, RIO_BUFF_FREE);
-	if (ret < 0) {
-		ret = -EBUSY;
-		goto err;
-	}
-
-	channel_id = channel->id;
-	if (channel_id > CHANNELS_MAX) {
-		ret = -EADDRNOTAVAIL;
-		goto err;
-	}
-
-	if (data->state[channel->id] != SS_UNCONNECTED) {
-		ret = -EADDRINUSE;
-		pr_debug(DRV_PREFIX
-			"Channel %u currently in use\n", channel->id);
-		goto err;
-	}
-
-	src_id = rio_local_get_device_id(data->mport);
-
-	/* Search for rio_dev endpoint in network */
-	list_for_each_entry(dev, &data->mport->net->devices, net_list) {
-		if ((!rio_is_switch(dev)) &&
-				(dev->destid == channel->remote_destid)) {
-			data->rdev[channel->id] = dev;
-			data->state[channel->id] = SS_CONNECTING;
-			pr_debug(DRV_PREFIX "Connected on Channel %d to EP %d\n",
-				channel->id,
-				channel->remote_destid);
-
-			/* Create header */
-			msg = kzalloc(sizeof(*msg), GFP_KERNEL);
-			if(!msg) {
-				ret = -ENOMEM;
-				goto err;
-			}
-
-			/* Create header */
-			rio_msg_set_src_id(msg, src_id);
-			rio_msg_set_dest_id(msg, channel->remote_destid);
-			rio_msg_set_src_mbox(msg, 127);
-			rio_msg_set_dest_mbox(msg, 127);
-			rio_msg_set_type(msg, 127);
-			rio_msg_set_sock_type(msg, 3);
-			rio_msg_set_dest_chan(msg, 255);
-			rio_msg_set_src_chan(msg, 255);
-
-			/* Write header and data */
-			memcpy(buffer, msg, sizeof(*msg));
-			snprintf(buffer + RIO_MSG_HDR_SIZE, 32, "Connecting...");
-
-			/* TODO example first handshake */
-			channel_queue_tx_msg(data, data->mport, dev, buffer, 128);
-
-			kfree(msg);
-
-			return 0;
-		}
-	}
-
-err:
-	kfree(channel);
-	return ret;
-#endif
 }
 
 /**
@@ -383,7 +267,7 @@ out:
 /*
  * channel_msg_rcv() - Connect on channel
  * @data:	Driver private data
- * @arg:	Outbound message information
+ * @arg:	Inbound message information
  */
 static int channel_msg_rcv(struct channel_dev *data, void __user *arg)
 {
@@ -434,13 +318,6 @@ static int channel_cdev_open(struct inode *inode, struct file *filp)
 	chdev = container_of(inode->i_cdev, struct channel_dev, cdev);
 	filp->private_data = chdev;
 
-	/* Test for rio_net */
-//	if (!chdev->mport->net) {
-//		pr_warn(DRV_PREFIX "Network on mport%d is not enumerated\n",
-//			chdev->mport->id);
-//		return -ENETDOWN;
-//	}
-
 	return 0;
 }
 
@@ -460,8 +337,6 @@ static long channel_cdev_ioctl(struct file *filp,
 {
 	int err = 0;
 	struct channel_dev *data = filp->private_data;
-//	void __user *argp = (void __user *)arg;
-//	int __user *p = argp;
 
 	switch (cmd) {
 	case RIO_MPORT_CHANNEL_EP_GET_LIST_SIZE:
@@ -502,126 +377,6 @@ static long channel_cdev_ioctl(struct file *filp,
 	return err;
 }
 
-#if (0) //AB
-void channel_vma_open(struct vm_area_struct *vma)
-{
-	pr_debug(DRV_PREFIX "%s\n", __func__);
-}
-
-void channel_vma_close(struct vm_area_struct *vma)
-{
-	int ret;
-	int state;
-	struct rio_buff_vma_info *info = vma->vm_private_data;
-
-	if (!info)
-		return;
-
-	pr_debug(DRV_PREFIX "%s\n\tinfo->buffer: %p\n"
-			"\tinfo->slot: %p\n"
-			"\tinfo->state: %d\n",
-			__func__,
-			info->buffer,
-			info->slot,
-			info->state
-		);
-
-	switch(info->state) {
-		case RIO_BUFF_FREE:
-			state = RIO_BUFF_FILLED;
-#if 0
-			rio_add_outb_message(data->mport, dev, 0,
-				msg_buffer, 128);
-#endif
-			break;
-		case RIO_BUFF_FILLED:
-			state = RIO_BUFF_FREE;
-			ret = rio_add_inb_buffer(info->mport, CHANNEL_MAILBOX, info->slot);
-			if (ret < 0)
-				pr_debug(DRV_PREFIX "%s, Error in rio_inb_buffer for mport%d\n", __func__, info->mport->id);
-			break;
-		default:
-			return;
-	}
-
-	ret = rio_buff_release_slot(info->buffer, info->slot, state);
-	if (ret < 0)
-		pr_debug(DRV_PREFIX "%s, Error in rio_buff_release_slot\n", __func__);
-
-	kfree(info);
-}
-
-struct vm_operations_struct channel_vm_ops = {
-	.open  = channel_vma_open,
-	.close = channel_vma_close,
-};
-
-static int channel_mmap(struct file *filp, struct vm_area_struct *vma)
-{
-	int ret;
-	void *buffer = NULL;
-	uint32_t packets = 0;
-	struct channel_dev *dev = filp->private_data;
-	struct rio_buff_vma_info *info = NULL;
-
-	pr_debug(DRV_PREFIX "MMAP request at offset %lu\n", vma->vm_pgoff);
-
-	/* Only map exact one packet */
-	packets = (vma->vm_end - vma->vm_start) / RIO_MAX_MSG_SIZE;
-	if (packets != 1) {
-		pr_debug(DRV_PREFIX "MMAP request failed, invalid size\n");
-		return -EBADSLT;
-	}
-
-	/* Test page offset for buffer type */
-	switch(vma->vm_pgoff) {
-		case RIO_BUFF_FILLED:
-			pr_debug(DRV_PREFIX "MMAP request of filled rx buffer\n");
-
-			ret = rio_buff_request_slot(&dev->rx_buffer, &buffer, RIO_BUFF_FILLED);
-			if (ret < 0)
-				return -ENODATA;
-
-			/* Map receive buffer */
-			ret = remap_pfn_range(vma,
-				vma->vm_start,
-				virt_to_phys((void *)buffer) >> PAGE_SHIFT,
-				RIO_MAX_MSG_SIZE,
-				vma->vm_page_prot);
-			if (ret < 0)
-				return -EIO;
-
-			/* Append mmap information */
-			info = (struct rio_buff_vma_info *)kmalloc(sizeof(*info), GFP_KERNEL);
-			info->state  = RIO_BUFF_FILLED;
-			info->mport  = dev->mport;
-			info->buffer = &dev->rx_buffer;
-			info->slot   = buffer;
-
-		break;
-
-		/* MMAP transceive buffer */
-		case RIO_BUFF_FREE:
-			pr_debug(DRV_PREFIX "MMAP tx buffer\n");
-			return -EXFULL;
-		break;
-
-		/* Bad request, should not come here */
-		default:
-			pr_err(DRV_PREFIX "Invalid MMAP request\n");
-			return -EBADSLT;
-	}
-
-	/* Setup vma structure */
-	vma->vm_ops = &channel_vm_ops;
-	vma->vm_flags |= VM_IO | VM_READ | VM_WRITE;
-	vma->vm_private_data = info;
-
-	channel_vma_open(vma);
-	return 0;
-}
-#endif
-
 unsigned int channel_poll(struct file *file, poll_table *wait)
 {
 	unsigned int mask = 0;
@@ -642,7 +397,6 @@ static const struct file_operations channel_fops = {
 	.open		= channel_cdev_open,
 	.release	= channel_cdev_release,
 	.poll		= channel_poll,
-//	.mmap		= channel_mmap,
 	.unlocked_ioctl = channel_cdev_ioctl
 };
 
@@ -660,136 +414,8 @@ static int channel_cdev_init(void)
 	return major;
 }
 
-#if (0) //AB
-
-/*
- * Mport mailbox
- */
-static void channel_inb_msg_event(struct rio_mport *mport,
-	void *dev_id, int mbox, int slot)
-{
-	int ret = 0;
-	void *data = NULL;
-	struct channel_dev *dev = dev_id;
-
-	pr_debug(DRV_PREFIX "inbound message event, %s: mbox %d slot %d\n",
-			dev->mport->name, mbox, slot);
-
-	/* Get messages from hardware */
-	while(1)
-	{
-		data = rio_get_inb_message(dev->mport, CHANNEL_MAILBOX);
-		if(data == NULL)
-			goto out;
-
-		pr_err(DRV_PREFIX "msg FILLED at address 0x%p:0x%p\n", (void *)dev->rx_buffer.buffer, data);
-		ret = rio_buff_release_slot(&dev->rx_buffer, data, RIO_BUFF_FILLED);
-		if (ret < 0) {
-			pr_debug(DRV_PREFIX "Error %d in rio_buff_release_slot\n", ret);
-		}
-	}
-
-	wake_up_interruptible(&channel_cdev_wait);
-out:
-	return;
-}
-
-static void channel_outb_msg_event(struct rio_mport *mport,
-		void *dev_id, int mbox, int slot)
-{
-	int ret = 0;
-	struct channel_dev *dev = dev_id;
-
-	pr_debug(DRV_PREFIX "outbound message event, %s: mbox %d slot %d\n",
-			dev->mport->name, mbox, slot);
-
-	//pr_debug(DRV_PREFIX "outb till slot %d, tx_slot at %d, slot addr %p\n",slot, dev->tx_slot, dev->tx_ack[slot]);
-	/* TODO From HW to Subsystem slot -1 means error in TX */
-	if (slot == -1) {
-		pr_debug(DRV_PREFIX "There went something wrong with TX, we need to release all buffers now!");
-		rio_buff_release_all(&dev->tx_buffer);
-		return;
-	}
-
-	if (!dev->tx_ack[slot])
-		pr_debug(DRV_PREFIX "Error dev->tx_ack[slot] IS NULL!\n");
-	ret = rio_buff_release_slot(&dev->tx_buffer, dev->tx_ack[slot], RIO_BUFF_FREE);
-	if (ret < 0)
-		pr_debug(DRV_PREFIX "error in rio_buff_release_slot\n");
-	dev->tx_ack[slot] = NULL;
-}
-
-/**
- * channel_mbox_init() - Channels mbox initialisation
- * @dev:	Channel device
- * TODO claim all mport mailboxes (now only CHANNEL_MAILBOX)
- */
-static int channel_mbox_init(struct channel_dev *dev)
-{
-	int rc = 0;
-	void *buffer = NULL;
-	unsigned int n = 0;
-	struct rio_mport *mport = dev->mport;
-
-	pr_debug(DRV_PREFIX "Registering %s\n", mport->name);
-
-	/* Request inbound mport */
-	rc = rio_request_inb_mbox(mport, (void *)dev, CHANNEL_MAILBOX,
-			RIO_MPORT_CHANNEL_RX_RING, channel_inb_msg_event);
-	if (rc < 0) {
-		pr_debug(DRV_PREFIX "Error in inbound mailbox %d request on %s\n",
-			CHANNEL_MAILBOX, mport->name);
-		return -ENXIO;
-	}
-	pr_info(DRV_PREFIX "Claimed inbound mbox%d on %s with %u slots\n",
-		CHANNEL_MAILBOX, mport->name, RIO_MPORT_CHANNEL_RX_RING);
-
-	/* Request outbound mbox */
-	rc = rio_request_outb_mbox(mport, (void *)dev, CHANNEL_MAILBOX,
-			RIO_MPORT_CHANNEL_TX_RING, channel_outb_msg_event);
-	if (rc < 0) {
-		pr_debug(DRV_PREFIX "Error in outbound mailbox %d request on %s\n",
-			CHANNEL_MAILBOX, mport->name);
-		return -ENXIO;
-	}
-	pr_info(DRV_PREFIX "Claimed outbound mbox%d on %s\n",
-			CHANNEL_MAILBOX, mport->name);
-
-	/* Initialise rx_buffer */
-	rc = rio_buff_malloc(&dev->rx_buffer, RIO_MPORT_CHANNEL_RX_RING);
-	if (rc < 0)
-		return -ENOMEM;
-
-	/* Add packet buffers to hardware */
-	for (n = 0; n < RIO_MPORT_CHANNEL_RX_RING; n++) {
-
-		rc = rio_buff_request_slot(&dev->rx_buffer, &buffer, RIO_BUFF_FREE);
-		if (rc < 0) {
-			pr_debug(DRV_PREFIX "No free slot available\n");
-			break;
-		}
-
-		pr_debug(DRV_PREFIX "Adding free buffer at count %d (0x%p)\n", n, buffer);
-
-		rio_add_inb_buffer(dev->mport,
-			CHANNEL_MAILBOX,
-			buffer);
-	}
-
-	/* Initialise tx_buffer */
-	rc = rio_buff_malloc(&dev->tx_buffer, RIO_MPORT_CHANNEL_TX_RING);
-	if (rc < 0)
-		return -ENOMEM;
-
-	sema_init(&(dev->sem), 1);
-
-	return rc;
-}
-#endif
-
 /*
  * Character device management
- * TODO test with multiple mport probes
  */
 
 /**
@@ -831,10 +457,6 @@ static struct channel_dev *channel_cdev_add(struct rio_mport *mport)
 		return NULL;
 	}
 
-	device->tx_slot = 0;
-	spin_lock_init(&device->lock);
-	spin_lock_init(&device->tx_lock);
-
 	mutex_lock(&channel_devs_lock);
 	list_add_tail(&device->node, &channel_devs);
 	dev_count++;
@@ -856,15 +478,8 @@ static void channel_dev_remove(struct channel_dev *dev)
 		return;
 
 	pr_info(DRV_PREFIX "Removing %s cdev\n", dev->mport->name);
-
-//	rio_release_inb_mbox(dev->mport, CHANNEL_MAILBOX);
-//	rio_release_outb_mbox(dev->mport, CHANNEL_MAILBOX);
-
 	device_unregister(dev->dev);
 	cdev_del(&(dev->cdev));
-
-//	rio_buff_free(&dev->rx_buffer);
-//	rio_buff_free(&dev->tx_buffer);
 	kfree(dev);
 }
 
@@ -880,7 +495,6 @@ static void channel_dev_remove(struct channel_dev *dev)
 static int channel_add_mport(struct device *dev,
 		struct class_interface *class_intf)
 {
-//	int ret;
 	struct rio_mport *mport = NULL;
 	struct channel_dev *chdev = NULL;
 
@@ -889,12 +503,8 @@ static int channel_add_mport(struct device *dev,
 		return -ENODEV;
 
 	chdev = channel_cdev_add(mport);
-	if (!dev)
+	if (!chdev)
 		return -ENODEV;
-
-//	ret = channel_mbox_init(chdev);
-//	if (ret < 0)
-//		return ret;
 
 	return 0;
 }
@@ -935,7 +545,6 @@ static struct class_interface rio_mport_interface __refdata = {
 
 /**
  * channel_init - Driver module loading
- * TODO initialise global channel_devs list
  */
 static int __init channel_init(void)
 {

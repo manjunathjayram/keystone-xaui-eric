@@ -36,11 +36,6 @@ struct rio_mport_ch_msg {
 	uint16_t size;
 };
 
-#define RIO_MPORT_CHANNEL_RX_RING	256
-#define RIO_MPORT_CHANNEL_TX_RING	128
-#define RIO_MPORT_CHANNEL_RX_SIZE	(RIO_MPORT_CHANNEL_RX_RING * 4096)
-#define RIO_MPORT_CHANNEL_TX_SIZE	(RIO_MPORT_CHANNEL_TX_RING * 4096)
-
 #define RIO_MPORT_CHANNEL_ACCEPT_TO	180 /* Accept time-out in seconds */
 
 /* Mport channel driver IOCTLs */
@@ -55,10 +50,7 @@ struct rio_mport_ch_msg {
 #define RIO_MPORT_CHANNEL_LISTEN		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 6, uint16_t *)
 #define RIO_MPORT_CHANNEL_ACCEPT		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 7, uint16_t *)
 #define RIO_MPORT_CHANNEL_CONNECT		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 8, struct rio_mport_channel *)
-
-//#define RIO_MPORT_CHANNEL_SEND		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 9, struct rio_mport_channel_msg *)
 #define RIO_MPORT_CHANNEL_SEND			_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 9, struct rio_mport_ch_msg *)
-//#define RIO_MPORT_CHANNEL_RECEIVE		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 10, struct rio_mport_channel_msg *)
 #define RIO_MPORT_CHANNEL_RECEIVE		_IOR(RIO_MPORT_CHANNEL_IOC_MAGIC, 10, struct rio_mport_ch_msg *)
 
 #endif /* _RIO_MPORT_H_ */
