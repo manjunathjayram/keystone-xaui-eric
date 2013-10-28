@@ -2467,6 +2467,7 @@
 			dma-coherent;
 
 			keystone2-serdes;
+			baudrate	= <3>;
 
 			tx_channel = "riotx";
 			tx_queue_depth = <512>;
