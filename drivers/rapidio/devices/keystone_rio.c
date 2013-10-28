@@ -1989,6 +1989,7 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 #endif
 	struct rio_mport *mport;
 	unsigned long timeout;
+	char str[8];
 
 	size   = krio_priv->board_rio_cfg.size;
 	ports  = krio_priv->board_rio_cfg.ports;
@@ -2009,6 +2010,26 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 		dev_warn(&pdev->dev,
 			"RIO: invalid baud rate, forcing it to 5Gbps\n");
 	}
+
+	switch (baud) {
+	case KEYSTONE_RIO_BAUD_1_250:
+		snprintf(str, sizeof(str), "1.25");
+		break;
+	case KEYSTONE_RIO_BAUD_2_500:
+		snprintf(str, sizeof(str), "2.50");
+		break;
+	case KEYSTONE_RIO_BAUD_3_125:
+		snprintf(str, sizeof(str), "3.125");
+		break;
+	case KEYSTONE_RIO_BAUD_5_000:
+		snprintf(str, sizeof(str), "5.00");
+		break;
+	default:
+		res = -EINVAL;
+		goto out;
+	}
+
+	dev_info(&pdev->dev, "RIO: initializing %s Gbps interface\n", str);
 
 	/* Hardware set up of the controller */
 	res = keystone_rio_hw_init(mode, baud, krio_priv);
@@ -2044,13 +2065,16 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 
 			if (time_after(jiffies, timeout)) {
 				dev_err(&pdev->dev,
-					"failed to train the lanes\n");
+					"failed to train the lanes on %s Gbps\n", str);
 				res = -EIO;
 				goto out;
 			}
 			udelay(10);
 		}
 	}
+
+	dev_info(&pdev->dev, "RIO: Hardware interface successfully initialized "
+		"on %s Gbps\n", str);
 
 	/* Use and check ports status (but only the requested ones) */
 	krio_priv->ports_registering = 0;
