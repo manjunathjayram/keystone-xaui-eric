@@ -69,6 +69,16 @@
 /* Mask for receiving both error and good completion LSU interrupts */
 #define KEYSTONE_RIO_ICSR_LSU0(src_id)    ((0x10001) << (src_id))
 
+/* Keystone2 supported baud rates */
+#define KEYSTONE_RIO_BAUD_1_250		0
+#define KEYSTONE_RIO_BAUD_2_500		1
+#define KEYSTONE_RIO_BAUD_3_125		2
+#define KEYSTONE_RIO_BAUD_5_000		3
+
+#define KEYSTONE_RIO_FULL_RATE		0
+#define KEYSTONE_RIO_HALF_RATE		1
+#define KEYSTONE_RIO_QUARTER_RATE	2
+
 /*
  * Various RIO defines
  */
@@ -173,6 +183,7 @@ struct keystone_rio_board_controller_info {
 		     * 0 - Small size. 256 devices.
 		     * 1 - Large size, 65536 devices. */
 	u16 keystone2_serdes;
+	u16 serdes_baudrate;
 	u16 serdes_config_num;
 	struct keystone_serdes_config serdes_config[4];
 };
