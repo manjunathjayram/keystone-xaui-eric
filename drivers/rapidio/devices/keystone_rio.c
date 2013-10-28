@@ -30,6 +30,8 @@
 #include <linux/keystone-dma.h>
 #include "keystone_rio.h"
 
+#define K2_PLL_LOCK_TIMEOUT	100 /* 100ms timeout */
+
 #define DRIVER_VER	"v1.1"
 
 #define K2_SERDES(p)  ((p)->board_rio_cfg.keystone2_serdes)
@@ -428,7 +430,7 @@ static void k2_rio_serdes_config(u32 mode, struct keystone_rio_data *krio_priv)
 	/* Enable pll via the pll_ctrl 0x0014 */
 	__raw_writel(0xe0000000, regs + 0x1ff4);
 
-	/* Wait untill CMU_OK bit is set */
+	/* Wait until CMU_OK bit is set */
 	do {
 		val = __raw_readl(regs + 0xbf8);
 	} while (!(val & BIT(16)));
@@ -1945,6 +1947,7 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 	int has_port_ready = 0;
 #endif
 	struct rio_mport *mport;
+	unsigned long timeout;
 
 	size   = krio_priv->board_rio_cfg.size;
 	ports  = krio_priv->board_rio_cfg.ports;
@@ -1980,9 +1983,20 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 
 	if (K2_SERDES(krio_priv)) {
 		/* Wait for the SerDes PLL lock */
-		do {
+		timeout = jiffies + msecs_to_jiffies(K2_PLL_LOCK_TIMEOUT);
+		while (1) {
 			val = __raw_readl(regs + 0x1ff4);
-		} while ((val & 0xf0f) != 0xf0f);
+			if ((val & 0xf0f) == 0xf0f)
+				break;
+
+			if (time_after(jiffies, timeout)) {
+				dev_err(&pdev->dev,
+					"failed to train the lanes\n");
+				res = -EIO;
+				goto out;
+			}
+			udelay(10);
+		}
 	}
 
 	/* Use and check ports status (but only the requested ones) */
