@@ -1537,10 +1537,10 @@
 		};
 
 		dspmem: dspmem {
-			compatible = "linux,uio";
-			reg  = <0x0c000000 0x00600000	/* msmc ram */
-				0xa0000000 0x20000000>;	/* corepac's ddr3 */
-			reg-names = "msmcram", "ddr3";
+			compatible = "linux,rproc-user";
+			mem  = <0x0c000000 0x000600000
+					0xa0000000 0x20000000>;
+			label = "dspmem";
 		};
 
 		hwqueue0: hwqueue@2a40000 {
