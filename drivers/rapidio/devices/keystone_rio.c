@@ -234,7 +234,7 @@ out:
 	return 0;
 }
 /*------------------------- RapidIO hw controller setup ---------------------*/
-void serdes_3G(struct keystone_rio_data *krio_priv)
+void serdes_init_3g(struct keystone_rio_data *krio_priv)
 {
 	void __iomem *regs = (void __iomem *)krio_priv->serdes_regs;
 
@@ -378,8 +378,8 @@ static inline void serdes_init_5g(struct keystone_rio_data *krio_priv)
 	reg_rmw(regs+0xb20, 0x0000005d, 0x000000ff);
 }
 
-static inline void serdes_lane_enable(struct keystone_rio_data *krio_priv,
-					int lane)
+static void serdes_lane_enable(u32 lane, u32 rate,
+	struct keystone_rio_data *krio_priv)
 {
 	void __iomem *regs = (void __iomem *)krio_priv->serdes_regs;
 	u32 val;
@@ -389,43 +389,62 @@ static inline void serdes_lane_enable(struct keystone_rio_data *krio_priv,
 	val &= ~BIT(29);
 	__raw_writel(val, regs + 0x200 * (lane + 1) + 0x28);
 
-	/* Set Lane Control Rate full rate */
-	__raw_writel(0xF0C0F0F0, regs + 0x1fe0 + 4 * lane);
-
-#if 0
-	/* Set Lane Control Rate half rate */
-	__raw_writel(0xF4C0F4F0, regs + 0x1fe0 + 4 * lane);
-
-	/* Set Lane Control Rate quarte rate */
-	__raw_writel(0xF8C0F8F0, regs + 0x1fe0 + 4 * lane);
-#endif
+	/* Set Lane Control Rate */
+	switch (rate) {
+	case KEYSTONE_RIO_FULL_RATE:
+		__raw_writel(0xF0C0F0F0, regs + 0x1fe0 + 4 * lane);
+		break;
+	case KEYSTONE_RIO_HALF_RATE:
+		__raw_writel(0xF4C0F4F0, regs + 0x1fe0 + 4 * lane);
+		break;
+	case KEYSTONE_RIO_QUARTER_RATE:
+		__raw_writel(0xF8C0F8F0, regs + 0x1fe0 + 4 * lane);
+		break;
+	default:
+		return;
+	}
 }
 
-static void k2_rio_serdes_config(u32 mode, struct keystone_rio_data *krio_priv)
+static int k2_rio_serdes_config(u32 mode, u32 baud,
+		struct keystone_rio_data *krio_priv)
 {
 	void __iomem *regs = (void __iomem *)krio_priv->serdes_regs;
+	u32 rate;
 	u32 val;
+	u32 i;
 
 	if (mode != 0) {
 		dev_warn(krio_priv->dev, "unsupported mode %d\n", mode);
-		return;
+		return -EINVAL;
 	}
 
 	/* Disable pll before configuring the SerDes registers */
 	__raw_writel(0x00000000, regs + 0x1ff4);
 
-	if (mode == 0) {
-		/*srio_lane_rate_5p000Gbps*/
+	switch (baud) {
+	case KEYSTONE_RIO_BAUD_1_250:
+		rate = KEYSTONE_RIO_QUARTER_RATE;
 		serdes_init_5g(krio_priv);
-	} else {
-		/*srio_lane_rate_3p125Gbps*/
-		serdes_3G(krio_priv);
+		break;
+	case KEYSTONE_RIO_BAUD_2_500:
+		rate = KEYSTONE_RIO_HALF_RATE;
+		serdes_init_5g(krio_priv);
+		break;
+	case KEYSTONE_RIO_BAUD_5_000:
+		rate = KEYSTONE_RIO_FULL_RATE;
+		serdes_init_5g(krio_priv);
+		break;
+	case KEYSTONE_RIO_BAUD_3_125:
+		rate = KEYSTONE_RIO_HALF_RATE;
+		serdes_init_3g(krio_priv);
+		break;
+	default:
+		dev_warn(krio_priv->dev, "unsupported baud rate %d\n", baud);
+		return -EINVAL;
 	}
 
-	serdes_lane_enable(krio_priv, 0);
-	serdes_lane_enable(krio_priv, 1);
-	serdes_lane_enable(krio_priv, 2);
-	serdes_lane_enable(krio_priv, 3);
+	for (i = 0; i < 4; i++)
+		serdes_lane_enable(i, rate, krio_priv);
 
 	/* Enable pll via the pll_ctrl 0x0014 */
 	__raw_writel(0xe0000000, regs + 0x1ff4);
@@ -435,19 +454,24 @@ static void k2_rio_serdes_config(u32 mode, struct keystone_rio_data *krio_priv)
 		val = __raw_readl(regs + 0xbf8);
 	} while (!(val & BIT(16)));
 
-	/* TBD SRIO SERDES configuration for different modes */
+	return 0;
 }
 
 /**
  * keystone_rio_hw_init - Configure a RapidIO controller
  * @mode: serdes configuration
+ * @baud: serdes baudrate
  * @hostid: device id of the host
+ *
+ * Returns %0 on success or %-EINVAL or %-EIO on failure.
  */
-static void keystone_rio_hw_init(u32 mode, struct keystone_rio_data *krio_priv)
+static int keystone_rio_hw_init(u32 mode, u32 baud,
+		struct keystone_rio_data *krio_priv)
 {
 	u32 val;
 	u32 block;
 	u32 port;
+	int res = 0;
 	struct keystone_serdes_config *serdes_config
 		= &(krio_priv->board_rio_cfg.serdes_config[mode]);
 
@@ -493,8 +517,15 @@ static void keystone_rio_hw_init(u32 mode, struct keystone_rio_data *krio_priv)
 		do {
 			val = __raw_readl(krio_priv->serdes_sts_reg);
 		} while ((val & 0x1) != 0x1);
-	} else
-		k2_rio_serdes_config(mode, krio_priv);
+	} else {
+		res = k2_rio_serdes_config(mode, baud, krio_priv);
+	}
+
+	if (res < 0) {
+		dev_err(krio_priv->dev,
+			"RIO: initialization of SerDes failed\n");
+		return res;
+	}
 
 	/* Set prescalar for ip_clk */
 	__raw_writel(serdes_config->prescalar_srv_clk,
@@ -602,6 +633,8 @@ static void keystone_rio_hw_init(u32 mode, struct keystone_rio_data *krio_priv)
 
 	/* Force all writes to finish */
 	val = __raw_readl(&krio_priv->err_mgmt_regs->ctrl_capt);
+
+	return res;
 }
 
 /**
@@ -1807,6 +1840,13 @@ static void keystone_rio_get_controller_defaults(struct device_node *node,
 		c->serdes_config_num = 1;
 		c->keystone2_serdes = 1;
 		c->serdes_config[0].prescalar_srv_clk	= 0x001f;
+		if (of_property_read_u32(node, "baudrate",
+				(u32 *)&(c->serdes_baudrate))) {
+			dev_err(krio_priv->dev,
+				"Missing \"baudrate\" parameter. "
+				"Setting 5Gbps as a default\n");
+			c->serdes_baudrate = KEYSTONE_RIO_BAUD_5_000;
+		}
 	}
 
 	/* DMA tx chan config */
@@ -1941,6 +1981,7 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 	u32 ports;
 	u32 p;
 	u32 mode;
+	u32 baud;
 	u32 size = 0;
 	int res = 0;
 #ifdef CONFIG_RIONET
@@ -1952,9 +1993,10 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 	size   = krio_priv->board_rio_cfg.size;
 	ports  = krio_priv->board_rio_cfg.ports;
 	mode   = krio_priv->board_rio_cfg.mode;
+	baud   = krio_priv->board_rio_cfg.serdes_baudrate;
 
-	dev_dbg(&pdev->dev, "size = %d, ports = 0x%x, mode = %d\n",
-		size, ports, mode);
+	dev_dbg(&pdev->dev, "size = %d, ports = 0x%x, mode = %d, baud = %d\n",
+		size, ports, mode, baud);
 
 	if (mode >= krio_priv->board_rio_cfg.serdes_config_num) {
 		mode = 0;
@@ -1962,8 +2004,19 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 			"RIO: invalid port mode, forcing it to %d\n", mode);
 	}
 
+	if (baud > KEYSTONE_RIO_BAUD_5_000) {
+		baud = KEYSTONE_RIO_BAUD_5_000;
+		dev_warn(&pdev->dev,
+			"RIO: invalid baud rate, forcing it to 5Gbps\n");
+	}
+
 	/* Hardware set up of the controller */
-	keystone_rio_hw_init(mode, krio_priv);
+	res = keystone_rio_hw_init(mode, baud, krio_priv);
+	if (res < 0) {
+		dev_err(&pdev->dev,
+			"RIO: initialization of SRIO hardware failed\n");
+		return res;
+	}
 
 	/*
 	 * Configure all ports even if we do not use all of them.
