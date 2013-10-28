@@ -31,7 +31,7 @@
 #include <linux/rio_ids.h>
 #include <linux/rio_drv.h>
 #include "../rio_cm.h"
-#include "rio_mport.h"
+#include <linux/rio_mport_cdev.h>
 #include "channel_msg.h"
 
 #define DRV_NAME        "rio-mport-cdev"
