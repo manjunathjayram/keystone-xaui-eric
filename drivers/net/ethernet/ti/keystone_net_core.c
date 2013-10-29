@@ -550,6 +550,7 @@ static void netcp_rx_complete(void *data)
 	enum dma_status status;
 	unsigned int frags;
 	struct netcp_hook_list *rx_hook;
+	unsigned int len;
 
 	status = dma_async_is_tx_complete(netcp->rx_channel,
 					  p_info->cookie, NULL, NULL);
@@ -559,14 +560,19 @@ static void netcp_rx_complete(void *data)
 		netcp->rx_state != RX_STATE_TEARDOWN);
 
 	/* sg[2] describes the buffer already attached to the sk_buff. */
-	skb_put(skb, sg_dma_len(&p_info->sg[2]));
+	len = sg_dma_len(&p_info->sg[2]);
+	if (sg_is_last(&p_info->sg[2]))
+		len -= 4;
+	skb_put(skb, len);
 
 	/* Fill in the page fragment list from sg[3] and later */
 	for (frags = 0, sg = sg_next(&p_info->sg[2]);
 			frags < NETCP_SGLIST_SIZE-3 && sg;
 			++frags, sg = sg_next(sg)) {
-		skb_add_rx_frag(skb, frags, sg_page(sg), sg->offset,
-				sg_dma_len(sg), sg_dma_len(sg));
+		len = sg_dma_len(sg);
+		if (sg_is_last(sg))
+			len -= 4;
+		skb_add_rx_frag(skb, frags, sg_page(sg), sg->offset, len, len);
 	}
 
 	dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], frags+1, DMA_FROM_DEVICE);
