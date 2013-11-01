@@ -478,7 +478,7 @@ EXPORT_SYMBOL(netcp_align_psdata);
 
 #define NETCP_NAPI_WEIGHT	128
 #define NETCP_TX_TIMEOUT	40
-#define NETCP_MIN_PACKET_SIZE	64
+#define NETCP_MIN_PACKET_SIZE	ETH_ZLEN
 #define NETCP_MAX_PACKET_SIZE	(VLAN_ETH_FRAME_LEN + ETH_FCS_LEN)
 
 static int netcp_rx_packet_max = NETCP_MAX_PACKET_SIZE;
@@ -691,7 +691,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		}
 		p_info->netcp = netcp;
 
-		skb = netdev_alloc_skb(netcp->ndev, bufsize);
+		skb = netdev_alloc_skb_ip_align(netcp->ndev, bufsize);
 		if (!skb) {
 			dev_err(netcp->dev, "skb alloc failed\n");
 			kmem_cache_free(netcp_pinfo_cache, p_info);
