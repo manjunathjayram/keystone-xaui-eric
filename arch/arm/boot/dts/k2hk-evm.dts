@@ -1867,7 +1867,7 @@
 					region-id = <13>;
 				};
 				pool-xge {
-					values = <2048 128>;
+					values = <1024 128>;
 					region-id = <14>;
 				};
 				pool-crypto {
@@ -2643,7 +2643,8 @@
 			/* loop-back;  */
 			/* bigendian; */
 			enable-all;
-			debug;
+			/* debug */
+			dma-coherent;
 			/* rx-priority = <0>; */
 			/* tx-priority = <0>; */
 			logical-queue-managers	= <4>;
@@ -2657,7 +2658,7 @@
 					label		= "xgetx0";
 					pool		= "pool-xge";
 					submit-queue	= <8752>;
-					/* complete-queue = <xx>; */
+					/* complete-queue = <8714>; */
 					/* debug; */
 					/* channel = <0>; */
 					/* priority = <1>; */
@@ -2667,7 +2668,7 @@
 					label		= "xgetx1";
 					pool		= "pool-xge";
 					submit-queue	= <8753>;
-					/* complete-queue = <xx>; */
+					/* complete-queue = <8715>; */
 					/* debug; */
 					/* channel = <0>; */
 					/* priority = <1>; */
@@ -2717,6 +2718,7 @@
 			#size-cells = <1>;
 			reg = <0x2f00000 0xa0600>;
 			compatible = "ti,keystone-netcp";
+			dma-coherent;
 
 			clocks = <&clkxge>;
 			clock-names = "clk_xge";
@@ -2724,8 +2726,8 @@
 			interfaces {
 				interface-0 {
 					rx-channel = "xgerx0";
-					rx-queue-depth = <128 0 0 0>;
-					rx-buffer-size = <1500 0 0 0>;
+					rx-queue-depth = <128 128 0 0>;
+					rx-buffer-size = <1500 4096 0 0>;
 					local-mac-address = [02 18 31 7e 3e 5e]; /*+++FIXME*/
 				};
 				interface-1 {
@@ -2766,12 +2768,12 @@
 					interface-0 {
 						slave_port = <0>;
 						tx-channel = "xgetx0";
-						tx_queue_depth = <32>;
+						tx_queue_depth = <128>;
 					};
 					interface-1 {
 						slave_port = <1>;
 						tx-channel = "xgetx1";
-						tx_queue_depth = <32>;
+						tx_queue_depth = <128>;
 					};
 				};
 
