@@ -2011,6 +2011,26 @@
 					/* channel = <xx>; */
 					/* priority = <1>; */
 				};
+				qos-bypass-0 {
+					transmit;
+					label		= "qos-bypass-0";
+					pool		= "pool-net";
+					submit-queue	= <645>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <xx>; */
+					/* priority = <1>; */
+				};
+				qos-bypass-1 {
+					transmit;
+					label		= "qos-bypass-1";
+					pool		= "pool-net";
+					submit-queue	= <645>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <xx>; */
+					/* priority = <1>; */
+				};
 				parx {
 					receive;
 					label		= "parx";
@@ -2470,7 +2490,7 @@
 				label = "keystone-cpsw";
 				serdes_at_probe = <1>;
 
-				intf_tx_queues = <6>;
+				intf_tx_queues = <7>;
 
 				sgmii_module_ofs  = <0x100>;
 				switch_module_ofs = <0x800>;
@@ -2569,6 +2589,10 @@
 						tx-channel = "qos5";
 						tx_queue_depth = <64>;
 					};
+					chan-6 {
+						tx-channel = "qos-bypass-0";
+						tx_queue_depth = <64>;
+					};
 				};
 				interface-1 {
 					chan-0 {
@@ -2593,6 +2617,10 @@
 					};
 					chan-5 {
 						tx-channel = "qos11";
+						tx_queue_depth = <64>;
+					};
+					chan-6 {
+						tx-channel = "qos-bypass-1";
 						tx_queue_depth = <64>;
 					};
 				};
