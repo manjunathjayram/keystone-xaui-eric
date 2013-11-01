@@ -278,7 +278,7 @@
 		byte-units;			/* packet-units or byte-units */
 		output-rate = <31250000 25000>;
 		overhead-bytes = <24>;		/* valid only if units are bytes */
-		output-queue = <648>;		/* allowed only on root node */
+		output-queue = <645>;		/* allowed only on root node */
 
 		high-priority {
 			byte-units;		/* packet-units or byte-units */
