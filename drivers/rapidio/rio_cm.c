@@ -471,14 +471,10 @@ static int riocm_close_handler(void *data)
 	if (!ch)
 		return -ENODEV;
 
-	riocm_exch(ch, RIO_CM_DESTROYING);
+	riocm_exch(ch, RIO_CM_DISCONNECT);
 
 	if (waitqueue_active(&ch->wait_q))
 		wake_up(&ch->wait_q);
-
-	/* TODO_??? : wait until pending tasks finish their job. how ??? refcount */
-
-	riocm_ch_free(ch);
 
 	return 0;
 }
@@ -540,6 +536,15 @@ static int rio_rx_data_handler(struct cm_dev *cm, void *buf)
 #endif
 	/* Place pointer to the buffer into channel's RX queue */
 	spin_lock(&ch->lock);
+
+	if (ch->state != RIO_CM_CONNECTED) {
+		/* Channel is not ready to receive data, discard a packet */
+		pr_debug("RIO_CM: %s: ch=%d is in wrong state=%d\n",
+			__func__, ch->id, ch->state);
+		spin_unlock(&ch->lock);
+		kfree(buf);
+		return -EIO;
+	}
 
 	if (ch->rx_ring.count == RIOCM_RX_RING_SIZE) {
 		/* If RX ring is full, discard a packet */
@@ -799,12 +804,20 @@ static int riocm_wait_for_rx_data(struct rio_channel *ch)
 			schedule();
 
 		spin_lock_bh(&ch->lock);
-		err = 0;
-		if (ch->rx_ring.count)
+		if (ch->rx_ring.count) {
+			err = 0;
 			break;
-		err = -EINTR;
-		if (signal_pending(current))
+		}
+
+		if (ch->state != RIO_CM_CONNECTED) {
+			err = -ECONNRESET;
 			break;
+		}
+
+		if (signal_pending(current)) {
+			err = -EINTR;
+			break;
+		}
 	}
 
 	finish_wait(&ch->wait_q, &wait);
@@ -901,8 +914,14 @@ int riocm_ch_receive(u16 ch_id, void **buf, int *len)
 
 	spin_lock_bh(&ch->lock);
 
-	if (ch->rx_ring.count == 0)
-		riocm_wait_for_rx_data(ch); /* blocking wait, no timeout */
+	if (ch->rx_ring.count == 0) {
+		ret = riocm_wait_for_rx_data(ch); /* blocking wait, no timeout */
+		if (ret) {
+			spin_unlock_bh(&ch->lock);
+			*buf = NULL;
+			return ret;
+		}
+	}
 
 	rxmsg = ch->rx_ring.buf[ch->rx_ring.tail];
 	ch->rx_ring.buf[ch->rx_ring.tail] = NULL;
@@ -1086,13 +1105,7 @@ int riocm_ch_connect(u16 loc_ch, struct rio_mport *mport,
 
 	spin_unlock(&ch->lock);
 
-	if (ch->state == RIO_CM_CONNECTED)
-		ret = 0;
-	else {
-		ret = -1;
-		if (ch->state != RIO_CM_NACK)
-			pr_err("RIO_CM: ERROR %s ch %d state=%d\n", __func__, ch->id, ch->state);
-	}
+	ret = (ch->state == RIO_CM_CONNECTED)? 0 : -1;
 
 conn_done:
 	return ret;
@@ -1379,9 +1392,22 @@ EXPORT_SYMBOL_GPL(riocm_ch_create);
  */
 static void riocm_ch_free(struct rio_channel *ch)
 {
+	int i;
+
 	spin_lock_bh(&idr_lock);
 	idr_remove(&ch_idr, ch->id);
 	spin_unlock_bh(&idr_lock);
+
+	if (ch->rx_ring.inuse_cnt)
+		for (i = 0; i < RIOCM_RX_RING_SIZE; i++)
+			if (ch->rx_ring.inuse[i] != NULL)
+				kfree(ch->rx_ring.inuse[i]);
+
+	if (ch->rx_ring.count)
+		for (i = 0; i < RIOCM_RX_RING_SIZE; i++)
+			if (ch->rx_ring.buf[i] != NULL)
+				kfree(ch->rx_ring.buf[i]);
+
 	kfree(ch);
 }
 
@@ -1404,19 +1430,19 @@ int riocm_ch_close(u16 ch_id)
 
 	state = riocm_exch(ch, RIO_CM_DESTROYING);
 
-	if (state == RIO_CM_IDLE || state == RIO_CM_CHAN_BOUND)
+	if (state == RIO_CM_IDLE || state == RIO_CM_CHAN_BOUND ||
+	    state == RIO_CM_DISCONNECT)
 		goto out_free;
-	else if (state == RIO_CM_LISTEN) {
+
+	if (state == RIO_CM_LISTEN) {
 		/* Remove the channel from the global list of listeners */
 		spin_lock(&rio_list_lock);
 		list_del_init(&ch->listen_list);
 		spin_unlock(&rio_list_lock);
-		goto out_wq;
 	} else if (state == RIO_CM_CONNECT) {
 		spin_lock(&rio_list_lock);
 		list_del(&ch->con_list);
 		spin_unlock(&rio_list_lock);
-		goto out_wq;
 	} else if (state == RIO_CM_CONNECTED) {
 		/*
 		 * Send CLOSE notification to the remote RapidIO device
@@ -1443,33 +1469,10 @@ int riocm_ch_close(u16 ch_id)
 			pr_warn("RIO_CM: %s(%d) ERR sending CLOSE failed\n",
 				__func__, ch_id);
 		}
-
-		if (ch->rx_ring.inuse_cnt) {
-			int i;
-
-			for (i = 0; i < RIOCM_RX_RING_SIZE; i++)
-				if (ch->rx_ring.inuse[i] != NULL)
-					kfree(ch->rx_ring.inuse[i]);
-			ch->rx_ring.inuse_cnt = 0;
-		}
-
-		if (ch->rx_ring.count) {
-			int i;
-
-			for (i = 0; i < RIOCM_RX_RING_SIZE; i++)
-				if (ch->rx_ring.buf[i] != NULL)
-					kfree(ch->rx_ring.buf[i]);
-			ch->rx_ring.count = 0;
-			ch->rx_ring.head = 0;
-			ch->rx_ring.tail = 0;
-		}
 	}
 
-out_wq:
 	if (waitqueue_active(&ch->wait_q))
 		wake_up_all(&ch->wait_q);
-
-	/* TODO_??? : wait until pending tasks finish their job. how ??? refcount */
 
 out_free:
 	riocm_ch_free(ch);
