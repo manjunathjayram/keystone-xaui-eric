@@ -1,8 +1,8 @@
 /*
- * Copyright (C) 2010, 2011, 2012 Texas Instruments Incorporated
+ * Copyright (C) 2010, 2011, 2012, 2013 Texas Instruments Incorporated
  * Author: Aurelien Jacquiot <a-jacquiot@ti.com>
  *
- * Copyright (C) 2012 Texas Instruments Incorporated
+ * Copyright (C) 2012, 2013 Texas Instruments Incorporated
  * WingMan Kwok <w-kwok2@ti.com>
  * - Updated for support on TI KeyStone platform.
  *
@@ -160,7 +160,6 @@ struct keystone_serdes_config {
 						      (per-port) */
 	u32 tx_chan_config[KEYSTONE_RIO_MAX_PORT]; /* SerDes tx channel cfg
 						      (per-port) */
-	u32 path_mode[KEYSTONE_RIO_MAX_PORT];      /* path cfg for SerDes */
 };
 
 /*
@@ -183,8 +182,9 @@ struct keystone_rio_board_controller_info {
 		     * 0 - Small size. 256 devices.
 		     * 1 - Large size, 65536 devices. */
 	u16 keystone2_serdes;
-	u16 serdes_baudrate;
 	u16 serdes_config_num;
+	u32 serdes_baudrate;
+	u32 path_mode;
 	struct keystone_serdes_config serdes_config[4];
 };
 
@@ -208,6 +208,7 @@ struct keystone_rio_mbox_info {
 	u32               running;
 	u32               entries;
 	u32               slot;
+	spinlock_t        lock;
 	void             *dev_id;
 	int		  rxu_map_id[2];
 	struct keystone_rio_packet *p_info_temp;
