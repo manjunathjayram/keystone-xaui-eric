@@ -968,11 +968,11 @@ static int riocm_wait_for_connect_resp(struct rio_channel *ch, long timeo)
 	for (;;) {
 		prepare_to_wait_exclusive(&ch->wait_q, &wait,
 					  TASK_INTERRUPTIBLE);
-		spin_unlock(&ch->lock);
+		spin_unlock_bh(&ch->lock);
 		if (ch->state == RIO_CM_CONNECT)
 			timeo = schedule_timeout(timeo);
 
-		spin_lock(&ch->lock);
+		spin_lock_bh(&ch->lock);
 		err = 0;
 		if (ch->state != RIO_CM_CONNECT)
 			break;
@@ -1092,18 +1092,18 @@ int riocm_ch_connect(u16 loc_ch, struct rio_mport *mport,
 	}
 
 	/* Wait for connect response from the remote device */
-	spin_lock(&ch->lock);
+	spin_lock_bh(&ch->lock);
 
 	/* Check if we still in CONNECT state */
 	if (ch->state == RIO_CM_CONNECT) {
 		ret = riocm_wait_for_connect_resp(ch, RIOCM_CONNECT_TO * HZ);
 		if (ret) {
-			spin_unlock(&ch->lock);
+			spin_unlock_bh(&ch->lock);
 			goto conn_done;
 		}
 	}
 
-	spin_unlock(&ch->lock);
+	spin_unlock_bh(&ch->lock);
 
 	ret = (ch->state == RIO_CM_CONNECTED)? 0 : -1;
 
@@ -1135,11 +1135,11 @@ static int riocm_wait_for_connect_req(struct rio_channel *ch, long timeo)
 	for (;;) {
 		prepare_to_wait_exclusive(&ch->wait_q, &wait,
 					  TASK_INTERRUPTIBLE);
-		spin_unlock(&ch->lock);
+		spin_unlock_bh(&ch->lock);
 		if (list_empty(&ch->accept_queue) && ch->state == RIO_CM_LISTEN)
 			timeo = schedule_timeout(timeo);
 
-		spin_lock(&ch->lock);
+		spin_lock_bh(&ch->lock);
 		err = 0;
 		if (!list_empty(&ch->accept_queue))
 			break;
@@ -1183,7 +1183,7 @@ int riocm_ch_accept(u16 ch_id, u16 *new_ch_id, long timeout)
 	if (!ch)
 		return -EINVAL;
 
-	spin_lock(&ch->lock);
+	spin_lock_bh(&ch->lock);
 
 	if (ch->state != RIO_CM_LISTEN) {
 		err = -EINVAL;
@@ -1207,12 +1207,12 @@ int riocm_ch_accept(u16 ch_id, u16 *new_ch_id, long timeout)
 	new_ch = list_entry(ch->accept_queue.next, struct rio_channel,
 			    accept_queue);
 	list_del_init(&new_ch->accept_queue);
-	spin_unlock(&ch->lock);
+	spin_unlock_bh(&ch->lock);
 
 	*new_ch_id = new_ch->id;
 	return 0;
 out_err:
-	spin_unlock(&ch->lock);
+	spin_unlock_bh(&ch->lock);
 	*new_ch_id = 0;
 	return err;
 }
