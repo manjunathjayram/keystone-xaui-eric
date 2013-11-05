@@ -1,8 +1,8 @@
 /*
- * Copyright (C) 2010, 2011, 2012 Texas Instruments Incorporated
+ * Copyright (C) 2010, 2011, 2012, 2013 Texas Instruments Incorporated
  * Authors: Aurelien Jacquiot <a-jacquiot@ti.com>
  *
- * Copyright (C) 2012 Texas Instruments Incorporated
+ * Copyright (C) 2012, 2013 Texas Instruments Incorporated
  * WingMan Kwok <w-kwok2@ti.com>
  * - Updated for support on TI KeyStone platform.
  *
@@ -32,9 +32,9 @@
 
 #define K2_PLL_LOCK_TIMEOUT	100 /* 100ms timeout */
 
-#define DRIVER_VER	"v1.1"
+#define DRIVER_VER	        "v1.2"
 
-#define K2_SERDES(p)  ((p)->board_rio_cfg.keystone2_serdes)
+#define K2_SERDES(p)            ((p)->board_rio_cfg.keystone2_serdes)
 
 #define reg_rmw(addr, value, mask) \
 	__raw_writel(((__raw_readl(addr) & (~(mask))) | (value)), (addr))
@@ -233,155 +233,156 @@ out:
 	}
 	return 0;
 }
+
 /*------------------------- RapidIO hw controller setup ---------------------*/
-void serdes_init_3g(struct keystone_rio_data *krio_priv)
+static void k2_rio_serdes_init_3g(struct keystone_rio_data *krio_priv)
 {
-	void __iomem *regs = (void __iomem *)krio_priv->serdes_regs;
+	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
 
 	/* TBD: Uses Half Rate configuration */
-	reg_rmw(regs+0x000, 0x00000000, 0xff000000);
-	reg_rmw(regs+0x014, 0x00008282, 0x0000ffff);
-	reg_rmw(regs+0x060, 0x00132c48, 0x00ffffff);
-	reg_rmw(regs+0x064, 0x00c3c700, 0x00ffff00);
-	reg_rmw(regs+0x078, 0x0000c000, 0x0000ff00);
+	reg_rmw(regs + 0x000, 0x00000000, 0xff000000);
+	reg_rmw(regs + 0x014, 0x00008282, 0x0000ffff);
+	reg_rmw(regs + 0x060, 0x00132c48, 0x00ffffff);
+	reg_rmw(regs + 0x064, 0x00c3c700, 0x00ffff00);
+	reg_rmw(regs + 0x078, 0x0000c000, 0x0000ff00);
 
-	reg_rmw(regs+0x204, 0x78000080, 0xff0000ff);
-	reg_rmw(regs+0x208, 0x00000024, 0x000000ff);
-	reg_rmw(regs+0x20c, 0x02000000, 0xff000000);
-	reg_rmw(regs+0x210, 0x1b000000, 0xff000000);
-	reg_rmw(regs+0x214, 0x00006e7c, 0x0000ffff);
-	reg_rmw(regs+0x218, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs+0x22c, 0x00100800, 0x00ffff00);
-	reg_rmw(regs+0x280, 0x00700070, 0x00ff00ff);
-	reg_rmw(regs+0x284, 0x1d0f0085, 0xffff00ff);
-	reg_rmw(regs+0x28c, 0x00003b00, 0x0000ff00);
+	reg_rmw(regs + 0x204, 0x78000080, 0xff0000ff);
+	reg_rmw(regs + 0x208, 0x00000024, 0x000000ff);
+	reg_rmw(regs + 0x20c, 0x02000000, 0xff000000);
+	reg_rmw(regs + 0x210, 0x1b000000, 0xff000000);
+	reg_rmw(regs + 0x214, 0x00006e7c, 0x0000ffff);
+	reg_rmw(regs + 0x218, 0x758000e4, 0xffff00ff);
+	reg_rmw(regs + 0x22c, 0x00100800, 0x00ffff00);
+	reg_rmw(regs + 0x280, 0x00700070, 0x00ff00ff);
+	reg_rmw(regs + 0x284, 0x1d0f0085, 0xffff00ff);
+	reg_rmw(regs + 0x28c, 0x00003b00, 0x0000ff00);
 
-	reg_rmw(regs+0x404, 0x78000080, 0xff0000ff);
-	reg_rmw(regs+0x408, 0x00000024, 0x000000ff);
-	reg_rmw(regs+0x40c, 0x02000000, 0xff000000);
-	reg_rmw(regs+0x410, 0x1b000000, 0xff000000);
-	reg_rmw(regs+0x414, 0x00006e7c, 0x0000ffff);
+	reg_rmw(regs + 0x404, 0x78000080, 0xff0000ff);
+	reg_rmw(regs + 0x408, 0x00000024, 0x000000ff);
+	reg_rmw(regs + 0x40c, 0x02000000, 0xff000000);
+	reg_rmw(regs + 0x410, 0x1b000000, 0xff000000);
+	reg_rmw(regs + 0x414, 0x00006e7c, 0x0000ffff);
 
-	reg_rmw(regs+0x418, 0x758000e4, 0xffff0000);
-	reg_rmw(regs+0x42c, 0x00100800, 0x00ffff00);
-	reg_rmw(regs+0x480, 0x00700070, 0x00ff00ff);
-	reg_rmw(regs+0x484, 0x1d0f0085, 0xffff00ff);
-	reg_rmw(regs+0x48c, 0x00003b00, 0x0000ff00);
+	reg_rmw(regs + 0x418, 0x758000e4, 0xffff0000);
+	reg_rmw(regs + 0x42c, 0x00100800, 0x00ffff00);
+	reg_rmw(regs + 0x480, 0x00700070, 0x00ff00ff);
+	reg_rmw(regs + 0x484, 0x1d0f0085, 0xffff00ff);
+	reg_rmw(regs + 0x48c, 0x00003b00, 0x0000ff00);
 
-	reg_rmw(regs+0x604, 0x78000080, 0xff0000ff);
-	reg_rmw(regs+0x608, 0x00000024, 0x000000ff);
-	reg_rmw(regs+0x60c, 0x02000000, 0xff000000);
-	reg_rmw(regs+0x610, 0x1b000000, 0xff000000);
-	reg_rmw(regs+0x614, 0x00006e7c, 0x0000ffff);
-	reg_rmw(regs+0x618, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs+0x62c, 0x00100800, 0x00ffff00);
-	reg_rmw(regs+0x680, 0x00700070, 0x00ff00ff);
-	reg_rmw(regs+0x684, 0x1d0f0085, 0xffff00ff);
-	reg_rmw(regs+0x68c, 0x00003b00, 0x0000ff00);
+	reg_rmw(regs + 0x604, 0x78000080, 0xff0000ff);
+	reg_rmw(regs + 0x608, 0x00000024, 0x000000ff);
+	reg_rmw(regs + 0x60c, 0x02000000, 0xff000000);
+	reg_rmw(regs + 0x610, 0x1b000000, 0xff000000);
+	reg_rmw(regs + 0x614, 0x00006e7c, 0x0000ffff);
+	reg_rmw(regs + 0x618, 0x758000e4, 0xffff00ff);
+	reg_rmw(regs + 0x62c, 0x00100800, 0x00ffff00);
+	reg_rmw(regs + 0x680, 0x00700070, 0x00ff00ff);
+	reg_rmw(regs + 0x684, 0x1d0f0085, 0xffff00ff);
+	reg_rmw(regs + 0x68c, 0x00003b00, 0x0000ff00);
 
-	reg_rmw(regs+0x804, 0x78000080, 0xff0000ff);
-	reg_rmw(regs+0x808, 0x00000024, 0x000000ff);
-	reg_rmw(regs+0x80c, 0x02000000, 0xff000000);
-	reg_rmw(regs+0x810, 0x1b000000, 0xff000000);
-	reg_rmw(regs+0x814, 0x00006e7c, 0x0000ffff);
-	reg_rmw(regs+0x818, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs+0x82c, 0x00100800, 0x00ffff00);
+	reg_rmw(regs + 0x804, 0x78000080, 0xff0000ff);
+	reg_rmw(regs + 0x808, 0x00000024, 0x000000ff);
+	reg_rmw(regs + 0x80c, 0x02000000, 0xff000000);
+	reg_rmw(regs + 0x810, 0x1b000000, 0xff000000);
+	reg_rmw(regs + 0x814, 0x00006e7c, 0x0000ffff);
+	reg_rmw(regs + 0x818, 0x758000e4, 0xffff00ff);
+	reg_rmw(regs + 0x82c, 0x00100800, 0x00ffff00);
 
-	reg_rmw(regs+0x880, 0x00700070, 0x00ff00ff);
-	reg_rmw(regs+0x884, 0x1d0f0085, 0xffff00ff);
-	reg_rmw(regs+0x88c, 0x00003b00, 0x0000ff00);
+	reg_rmw(regs + 0x880, 0x00700070, 0x00ff00ff);
+	reg_rmw(regs + 0x884, 0x1d0f0085, 0xffff00ff);
+	reg_rmw(regs + 0x88c, 0x00003b00, 0x0000ff00);
 
-	reg_rmw(regs+0xa00, 0x00000800, 0x0000ff00);
-	reg_rmw(regs+0xa08, 0x37720000, 0xffff0000);
-	reg_rmw(regs+0xa30, 0x00777700, 0x00ffff00);
-	reg_rmw(regs+0xa84, 0x00000600, 0x0000ff00);
-	reg_rmw(regs+0xa94, 0x10000000, 0xff000000);
-	reg_rmw(regs+0xaa0, 0x81000000, 0xff000000);
-	reg_rmw(regs+0xabc, 0xff000000, 0xff000000);
-	reg_rmw(regs+0xac0, 0x0000008b, 0x000000ff);
+	reg_rmw(regs + 0xa00, 0x00000800, 0x0000ff00);
+	reg_rmw(regs + 0xa08, 0x37720000, 0xffff0000);
+	reg_rmw(regs + 0xa30, 0x00777700, 0x00ffff00);
+	reg_rmw(regs + 0xa84, 0x00000600, 0x0000ff00);
+	reg_rmw(regs + 0xa94, 0x10000000, 0xff000000);
+	reg_rmw(regs + 0xaa0, 0x81000000, 0xff000000);
+	reg_rmw(regs + 0xabc, 0xff000000, 0xff000000);
+	reg_rmw(regs + 0xac0, 0x0000008b, 0x000000ff);
 
-	reg_rmw(regs+0x000, 0x00000003, 0x000000ff);
-	reg_rmw(regs+0xa00, 0x0000005f, 0x000000ff);
+	reg_rmw(regs + 0x000, 0x00000003, 0x000000ff);
+	reg_rmw(regs + 0xa00, 0x0000005f, 0x000000ff);
 }
 
-static inline void serdes_init_5g(struct keystone_rio_data *krio_priv)
+static void k2_rio_serdes_init_5g(struct keystone_rio_data *krio_priv)
 {
-	void __iomem *regs = (void __iomem *)krio_priv->serdes_regs;
+	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
 
 	/* Uses Full Rate configuration by default */
-	reg_rmw(regs+0x000, 0x00000000, 0xff000000);
-	reg_rmw(regs+0x014, 0x00008282, 0x0000ffff);
-	reg_rmw(regs+0x060, 0x00142438, 0x00ffffff);
-	reg_rmw(regs+0x064, 0x00c3c700, 0x00ffff00);
-	reg_rmw(regs+0x078, 0x0000c000, 0x0000ff00);
-	reg_rmw(regs+0x204, 0x78000080, 0xff0000ff);
-	reg_rmw(regs+0x208, 0x00000026, 0x000000ff);
-	reg_rmw(regs+0x20c, 0x02000000, 0xff000000);
-	reg_rmw(regs+0x214, 0x00006f38, 0x0000ffff);
-	reg_rmw(regs+0x218, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs+0x22c, 0x00200800, 0x00ffff00);
-	reg_rmw(regs+0x280, 0x00860086, 0x00ff00ff);
-	reg_rmw(regs+0x284, 0x1d0f0085, 0xffff00ff);
-	reg_rmw(regs+0x28c, 0x00002c00, 0x0000ff00);
-	reg_rmw(regs+0x404, 0x78000080, 0xff0000ff);
-	reg_rmw(regs+0x408, 0x00000026, 0x000000ff);
-	reg_rmw(regs+0x40c, 0x02000000, 0xff000000);
-	reg_rmw(regs+0x414, 0x00006f38, 0x0000ffff);
-	reg_rmw(regs+0x418, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs+0x42c, 0x00200800, 0x00ffff00);
-	reg_rmw(regs+0x480, 0x00860086, 0x00ff00ff);
-	reg_rmw(regs+0x484, 0x1d0f0085, 0xffff00ff);
-	reg_rmw(regs+0x48c, 0x00002c00, 0x0000ff00);
-	reg_rmw(regs+0x604, 0x78000080, 0xff0000ff);
-	reg_rmw(regs+0x608, 0x00000026, 0x000000ff);
-	reg_rmw(regs+0x60c, 0x02000000, 0xff000000);
-	reg_rmw(regs+0x614, 0x00006f38, 0x0000ffff);
-	reg_rmw(regs+0x618, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs+0x62c, 0x00200800, 0x00ffff00);
-	reg_rmw(regs+0x680, 0x00860086, 0x00ff00ff);
-	reg_rmw(regs+0x684, 0x1d0f0085, 0xffff00ff);
-	reg_rmw(regs+0x68c, 0x00002c00, 0x0000ff00);
+	reg_rmw(regs + 0x000, 0x00000000, 0xff000000);
+	reg_rmw(regs + 0x014, 0x00008282, 0x0000ffff);
+	reg_rmw(regs + 0x060, 0x00142438, 0x00ffffff);
+	reg_rmw(regs + 0x064, 0x00c3c700, 0x00ffff00);
+	reg_rmw(regs + 0x078, 0x0000c000, 0x0000ff00);
+	reg_rmw(regs + 0x204, 0x78000080, 0xff0000ff);
+	reg_rmw(regs + 0x208, 0x00000026, 0x000000ff);
+	reg_rmw(regs + 0x20c, 0x02000000, 0xff000000);
+	reg_rmw(regs + 0x214, 0x00006f38, 0x0000ffff);
+	reg_rmw(regs + 0x218, 0x758000e4, 0xffff00ff);
+	reg_rmw(regs + 0x22c, 0x00200800, 0x00ffff00);
+	reg_rmw(regs + 0x280, 0x00860086, 0x00ff00ff);
+	reg_rmw(regs + 0x284, 0x1d0f0085, 0xffff00ff);
+	reg_rmw(regs + 0x28c, 0x00002c00, 0x0000ff00);
+	reg_rmw(regs + 0x404, 0x78000080, 0xff0000ff);
+	reg_rmw(regs + 0x408, 0x00000026, 0x000000ff);
+	reg_rmw(regs + 0x40c, 0x02000000, 0xff000000);
+	reg_rmw(regs + 0x414, 0x00006f38, 0x0000ffff);
+	reg_rmw(regs + 0x418, 0x758000e4, 0xffff00ff);
+	reg_rmw(regs + 0x42c, 0x00200800, 0x00ffff00);
+	reg_rmw(regs + 0x480, 0x00860086, 0x00ff00ff);
+	reg_rmw(regs + 0x484, 0x1d0f0085, 0xffff00ff);
+	reg_rmw(regs + 0x48c, 0x00002c00, 0x0000ff00);
+	reg_rmw(regs + 0x604, 0x78000080, 0xff0000ff);
+	reg_rmw(regs + 0x608, 0x00000026, 0x000000ff);
+	reg_rmw(regs + 0x60c, 0x02000000, 0xff000000);
+	reg_rmw(regs + 0x614, 0x00006f38, 0x0000ffff);
+	reg_rmw(regs + 0x618, 0x758000e4, 0xffff00ff);
+	reg_rmw(regs + 0x62c, 0x00200800, 0x00ffff00);
+	reg_rmw(regs + 0x680, 0x00860086, 0x00ff00ff);
+	reg_rmw(regs + 0x684, 0x1d0f0085, 0xffff00ff);
+	reg_rmw(regs + 0x68c, 0x00002c00, 0x0000ff00);
 
-	reg_rmw(regs+0x804, 0x78000080, 0xff0000ff);
-	reg_rmw(regs+0x808, 0x00000026, 0x000000ff);
-	reg_rmw(regs+0x80c, 0x02000000, 0xff000000);
-	reg_rmw(regs+0x814, 0x00006f38, 0x0000ffff);
-	reg_rmw(regs+0x818, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs+0x82c, 0x00200800, 0x00ffff00);
-	reg_rmw(regs+0x880, 0x00860086, 0x00ff00ff);
-	reg_rmw(regs+0x884, 0x1d0f0085, 0xffff00ff);
-	reg_rmw(regs+0x88c, 0x00002c00, 0x0000ff00);
+	reg_rmw(regs + 0x804, 0x78000080, 0xff0000ff);
+	reg_rmw(regs + 0x808, 0x00000026, 0x000000ff);
+	reg_rmw(regs + 0x80c, 0x02000000, 0xff000000);
+	reg_rmw(regs + 0x814, 0x00006f38, 0x0000ffff);
+	reg_rmw(regs + 0x818, 0x758000e4, 0xffff00ff);
+	reg_rmw(regs + 0x82c, 0x00200800, 0x00ffff00);
+	reg_rmw(regs + 0x880, 0x00860086, 0x00ff00ff);
+	reg_rmw(regs + 0x884, 0x1d0f0085, 0xffff00ff);
+	reg_rmw(regs + 0x88c, 0x00002c00, 0x0000ff00);
 
-	reg_rmw(regs+0xa00, 0x00008000, 0x0000ff00);
-	reg_rmw(regs+0xa08, 0x38d20000, 0xffff0000);
-	reg_rmw(regs+0xa30, 0x008d8d00, 0x00ffff00);
-	reg_rmw(regs+0xa84, 0x00000600, 0x0000ff00);
-	reg_rmw(regs+0xa94, 0x10000000, 0xff000000);
-	reg_rmw(regs+0xaa0, 0x81000000, 0xff000000);
-	reg_rmw(regs+0xabc, 0xff000000, 0xff000000);
-	reg_rmw(regs+0xac0, 0x0000008b, 0x000000ff);
-	reg_rmw(regs+0x000, 0x00000003, 0x000000ff);
-	reg_rmw(regs+0xa00, 0x0000005f, 0x000000ff);
+	reg_rmw(regs + 0xa00, 0x00008000, 0x0000ff00);
+	reg_rmw(regs + 0xa08, 0x38d20000, 0xffff0000);
+	reg_rmw(regs + 0xa30, 0x008d8d00, 0x00ffff00);
+	reg_rmw(regs + 0xa84, 0x00000600, 0x0000ff00);
+	reg_rmw(regs + 0xa94, 0x10000000, 0xff000000);
+	reg_rmw(regs + 0xaa0, 0x81000000, 0xff000000);
+	reg_rmw(regs + 0xabc, 0xff000000, 0xff000000);
+	reg_rmw(regs + 0xac0, 0x0000008b, 0x000000ff);
+	reg_rmw(regs + 0x000, 0x00000003, 0x000000ff);
+	reg_rmw(regs + 0xa00, 0x0000005f, 0x000000ff);
 
-	reg_rmw(regs+0xa48, 0x00fd8c00, 0x00ffff00);
-	reg_rmw(regs+0xa54, 0x002fec72, 0x00ffffff);
-	reg_rmw(regs+0xa58, 0x00f92100, 0xffffff00);
-	reg_rmw(regs+0xa5c, 0x00040060, 0xffffffff);
-	reg_rmw(regs+0xa60, 0x00008000, 0xffffffff);
-	reg_rmw(regs+0xa64, 0x0c581220, 0xffffffff);
-	reg_rmw(regs+0xa68, 0xe13b0602, 0xffffffff);
-	reg_rmw(regs+0xa6c, 0xb8074cc1, 0xffffffff);
-	reg_rmw(regs+0xa70, 0x3f02e989, 0xffffffff);
-	reg_rmw(regs+0xa74, 0x00000001, 0x000000ff);
-	reg_rmw(regs+0xb20, 0x00370000, 0x00ff0000);
-	reg_rmw(regs+0xb1c, 0x37000000, 0xff000000);
-	reg_rmw(regs+0xb20, 0x0000005d, 0x000000ff);
+	reg_rmw(regs + 0xa48, 0x00fd8c00, 0x00ffff00);
+	reg_rmw(regs + 0xa54, 0x002fec72, 0x00ffffff);
+	reg_rmw(regs + 0xa58, 0x00f92100, 0xffffff00);
+	reg_rmw(regs + 0xa5c, 0x00040060, 0xffffffff);
+	reg_rmw(regs + 0xa60, 0x00008000, 0xffffffff);
+	reg_rmw(regs + 0xa64, 0x0c581220, 0xffffffff);
+	reg_rmw(regs + 0xa68, 0xe13b0602, 0xffffffff);
+	reg_rmw(regs + 0xa6c, 0xb8074cc1, 0xffffffff);
+	reg_rmw(regs + 0xa70, 0x3f02e989, 0xffffffff);
+	reg_rmw(regs + 0xa74, 0x00000001, 0x000000ff);
+	reg_rmw(regs + 0xb20, 0x00370000, 0x00ff0000);
+	reg_rmw(regs + 0xb1c, 0x37000000, 0xff000000);
+	reg_rmw(regs + 0xb20, 0x0000005d, 0x000000ff);
 }
 
-static void serdes_lane_enable(u32 lane, u32 rate,
+static void k2_rio_serdes_lane_enable(u32 lane, u32 rate,
 	struct keystone_rio_data *krio_priv)
 {
-	void __iomem *regs = (void __iomem *)krio_priv->serdes_regs;
+	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
 	u32 val;
 
 	/* Bit 28 Toggled. Bring it out of Reset TX PLL for all lanes */
@@ -405,18 +406,13 @@ static void serdes_lane_enable(u32 lane, u32 rate,
 	}
 }
 
-static int k2_rio_serdes_config(u32 mode, u32 baud,
+static int k2_rio_serdes_config(u32 lanes, u32 baud,
 		struct keystone_rio_data *krio_priv)
 {
-	void __iomem *regs = (void __iomem *)krio_priv->serdes_regs;
+	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
 	u32 rate;
 	u32 val;
 	u32 i;
-
-	if (mode != 0) {
-		dev_warn(krio_priv->dev, "unsupported mode %d\n", mode);
-		return -EINVAL;
-	}
 
 	/* Disable pll before configuring the SerDes registers */
 	__raw_writel(0x00000000, regs + 0x1ff4);
@@ -424,27 +420,27 @@ static int k2_rio_serdes_config(u32 mode, u32 baud,
 	switch (baud) {
 	case KEYSTONE_RIO_BAUD_1_250:
 		rate = KEYSTONE_RIO_QUARTER_RATE;
-		serdes_init_5g(krio_priv);
+		k2_rio_serdes_init_5g(krio_priv);
 		break;
 	case KEYSTONE_RIO_BAUD_2_500:
 		rate = KEYSTONE_RIO_HALF_RATE;
-		serdes_init_5g(krio_priv);
+		k2_rio_serdes_init_5g(krio_priv);
 		break;
 	case KEYSTONE_RIO_BAUD_5_000:
 		rate = KEYSTONE_RIO_FULL_RATE;
-		serdes_init_5g(krio_priv);
+		k2_rio_serdes_init_5g(krio_priv);
 		break;
 	case KEYSTONE_RIO_BAUD_3_125:
 		rate = KEYSTONE_RIO_HALF_RATE;
-		serdes_init_3g(krio_priv);
+		k2_rio_serdes_init_3g(krio_priv);
 		break;
 	default:
 		dev_warn(krio_priv->dev, "unsupported baud rate %d\n", baud);
 		return -EINVAL;
 	}
 
-	for (i = 0; i < 4; i++)
-		serdes_lane_enable(i, rate, krio_priv);
+	for (i = 0; i < lanes; i++)
+		k2_rio_serdes_lane_enable(i, rate, krio_priv);
 
 	/* Enable pll via the pll_ctrl 0x0014 */
 	__raw_writel(0xe0000000, regs + 0x1ff4);
@@ -518,7 +514,8 @@ static int keystone_rio_hw_init(u32 mode, u32 baud,
 			val = __raw_readl(krio_priv->serdes_sts_reg);
 		} while ((val & 0x1) != 0x1);
 	} else {
-		res = k2_rio_serdes_config(mode, baud, krio_priv);
+		/* Configure the SerDes for the 4 lanes */
+		res = k2_rio_serdes_config(KEYSTONE_RIO_MAX_PORT, baud, krio_priv);
 	}
 
 	if (res < 0) {
@@ -671,10 +668,10 @@ keystone_rio_test_link(struct keystone_rio_data *krio_priv)
 
 	/* Send a maint req to test the link */
 	res = maint_request(0, 0xff, 0, 0, dma, 4,
-			krio_priv->board_rio_cfg.size,
-			KEYSTONE_RIO_PACKET_TYPE_MAINT_R,
-			krio_priv);
-
+			    krio_priv->board_rio_cfg.size,
+			    KEYSTONE_RIO_PACKET_TYPE_MAINT_R,
+			    krio_priv);
+	
 	dma_unmap_single(dev, dma, 4, DMA_FROM_DEVICE);
 
 	kfree(tbuf);
@@ -724,12 +721,9 @@ static int keystone_rio_port_status(int port,
  * @port: index of the port to configure
  * @mode: serdes configuration
  */
-static int keystone_rio_port_init(u32 port, u32 mode,
+static int keystone_rio_port_init(u32 port, u32 path_mode,
 			struct keystone_rio_data *krio_priv)
 {
-	u32 path_mode =
-		krio_priv->board_rio_cfg.serdes_config[mode].path_mode[port];
-
 	if (port >= KEYSTONE_RIO_MAX_PORT)
 		return -EINVAL;
 
@@ -752,12 +746,7 @@ static int keystone_rio_port_init(u32 port, u32 mode,
 	__raw_writel(0x600000, &(krio_priv->serial_port_regs->sp[port].ctl));
 
 	/* Program channel allocation to ports (1x, 2x or 4x) */
-	if (!K2_SERDES(krio_priv)) {
-		__raw_writel(path_mode, &(krio_priv->phy_regs->phy_sp[port].path_ctl));
-	} else {
-		/* TODO: Allow other values than 4x link for Keystone2 */
-		__raw_writel(0x00000004, &(krio_priv->phy_regs->phy_sp[port].path_ctl));
-	}
+	__raw_writel(path_mode, &(krio_priv->phy_regs->phy_sp[port].path_ctl));
 
 	return 0;
 }
@@ -1008,7 +997,7 @@ static void keystone_rio_rx_complete(void *data)
 	if (p_mbox->running) {
 		/* Client callback (slot is not used) */
 		p_mbox->port->inb_msg[p_mbox->id].mcback(p_mbox->port,
-					p_mbox->dev_id, p_mbox->id, 0);
+							 p_mbox->dev_id, p_mbox->id, 0);
 	}
 }
 
@@ -1557,6 +1546,7 @@ static int keystone_rio_open_outb_mbox(
 	tx_mbox->id      = mbox;
 	tx_mbox->slot    = 0;
 	tx_mbox->running = 1;
+	spin_lock_init(&tx_mbox->lock);
 
 	return 0;
 }
@@ -1601,7 +1591,7 @@ static void keystone_rio_tx_complete(void *data)
 		p_info->psdata[0], p_info->psdata[1]);
 
 	p_info->status = dma_async_is_tx_complete(krio_priv->tx_channel,
-				p_info->cookie, NULL, NULL);
+						  p_info->cookie, NULL, NULL);
 	WARN_ON(p_info->status != DMA_SUCCESS && p_info->status != DMA_ERROR);
 
 	dma_unmap_sg(krio_priv->dev, &p_info->sg[2], 1, DMA_TO_DEVICE);
@@ -1614,10 +1604,12 @@ static void keystone_rio_tx_complete(void *data)
 		 * But the semantic hereafter is dangerous in case of re-order:
 		 * bad buffer may be released...
 		 */
+		spin_lock(&mbox->lock);
 		port->outb_msg[mbox_id].mcback(port, dev_id,
-					mbox_id, mbox->slot++);
+					       mbox_id, mbox->slot++);
 		if (mbox->slot > mbox->entries)
 			mbox->slot = 0;
+		spin_unlock(&mbox->lock);
 	}
 
 	kfree(p_info);
@@ -1644,9 +1636,10 @@ static int keystone_rio_hw_add_outb_message(
 	struct keystone_rio_packet *p_info;
 	struct dma_device *device;
 	int ret = 0;
+
 	/* Ensure that the number of bytes being transmitted is a multiple
-	   of double-word.  This is as per the specification */
-	u32  plen  = ((len + 7) & ~0x7);
+	   of double-word. This is as per the specification */
+	u32 plen  = ((len + 7) & ~0x7);
 
 	p_info = kzalloc(sizeof(*p_info), GFP_ATOMIC);
 	if (!p_info) {
@@ -1826,27 +1819,34 @@ static void keystone_rio_get_controller_defaults(struct device_node *node,
 		c->serdes_config[0].cfg_cntl		= 0x0c053860;
 		c->serdes_config[0].serdes_cfg_pll	= 0x0229;
 		c->serdes_config[0].prescalar_srv_clk	= 0x001e;
+		c->path_mode                            = 0x0000;
 
 		for (i = 0; i < KEYSTONE_RIO_MAX_PORT; i++)
 			c->serdes_config[0].rx_chan_config[i] = 0x00440495;
 
 		for (i = 0; i < KEYSTONE_RIO_MAX_PORT; i++)
 			c->serdes_config[0].tx_chan_config[i] = 0x00180795;
-
-		for (i = 0; i < KEYSTONE_RIO_MAX_PORT; i++)
-			c->serdes_config[0].path_mode[i] = 0x00000000;
 	} else {
-		c->mode = 0;
-		c->serdes_config_num = 1;
-		c->keystone2_serdes = 1;
+		c->mode                                 = 0;
+		c->serdes_config_num                    = 1;
+		c->keystone2_serdes                     = 1;
 		c->serdes_config[0].prescalar_srv_clk	= 0x001f;
+		c->path_mode                            = 0x0004;
+		
 		if (of_property_read_u32(node, "baudrate",
-				(u32 *)&(c->serdes_baudrate))) {
+					 (u32 *)&(c->serdes_baudrate))) {
 			dev_err(krio_priv->dev,
 				"Missing \"baudrate\" parameter. "
 				"Setting 5Gbps as a default\n");
 			c->serdes_baudrate = KEYSTONE_RIO_BAUD_5_000;
 		}
+	}
+
+	/* Path mode config (mapping of SerDes lanes to port widths) */
+	if (of_property_read_u32(node, "path_mode",
+				 (u32 *)&(c->path_mode))) {
+		dev_err(krio_priv->dev,
+			"Missing \"path_mode\" parameter\n");
 	}
 
 	/* DMA tx chan config */
@@ -1982,6 +1982,7 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 	u32 p;
 	u32 mode;
 	u32 baud;
+	u32 path_mode;
 	u32 size = 0;
 	int res = 0;
 #ifdef CONFIG_RIONET
@@ -1991,18 +1992,19 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 	unsigned long timeout;
 	char str[8];
 
-	size   = krio_priv->board_rio_cfg.size;
-	ports  = krio_priv->board_rio_cfg.ports;
-	mode   = krio_priv->board_rio_cfg.mode;
-	baud   = krio_priv->board_rio_cfg.serdes_baudrate;
+	size      = krio_priv->board_rio_cfg.size;
+	ports     = krio_priv->board_rio_cfg.ports;
+	mode      = krio_priv->board_rio_cfg.mode;
+	baud      = krio_priv->board_rio_cfg.serdes_baudrate;
+	path_mode = krio_priv->board_rio_cfg.path_mode;
 
-	dev_dbg(&pdev->dev, "size = %d, ports = 0x%x, mode = %d, baud = %d\n",
-		size, ports, mode, baud);
+	dev_dbg(&pdev->dev, "size = %d, ports = 0x%x, mode = %d, baud = %d, path_mode = %d\n",
+		size, ports, mode, baud, path_mode);
 
 	if (mode >= krio_priv->board_rio_cfg.serdes_config_num) {
-		mode = 0;
 		dev_warn(&pdev->dev,
-			"RIO: invalid port mode, forcing it to %d\n", mode);
+			 "RIO: invalid port mode %d, forcing it to %d\n", mode, 0);
+		mode = 0;
 	}
 
 	if (baud > KEYSTONE_RIO_BAUD_5_000) {
@@ -2043,8 +2045,8 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 	 * Configure all ports even if we do not use all of them.
 	 * This is needed for 2x and 4x modes.
 	 */
-	for (p = 0; p < KEYSTONE_RIO_MAX_PORT; p++) {
-		res = keystone_rio_port_init(p, mode, krio_priv);
+	for (p = 0; p < KEYSTONE_RIO_MAX_PORT; p++) {			
+		res = keystone_rio_port_init(p, path_mode, krio_priv);
 		if (res < 0) {
 			dev_err(&pdev->dev,
 				"RIO: initialization of port %d failed\n", p);
@@ -2066,8 +2068,7 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 			if (time_after(jiffies, timeout)) {
 				dev_err(&pdev->dev,
 					"failed to train the lanes on %s Gbps\n", str);
-				res = -EIO;
-				goto out;
+				break;
 			}
 			udelay(10);
 		}
