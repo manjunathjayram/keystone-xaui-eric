@@ -1,0 +1,19 @@
+Keystone timer
+
+Keystone timer is a 32bit event timer based on timer64 IP.
+
+Required properties:
+
+- compatible : should be "ti,keystone-timer".
+- reg : Specifies base physical address and size of the registers.
+- interrupts : interrupt for the timer
+- clocks : input clock for the timer hw block
+
+Example:
+
+timer15: timer@22f0000 {
+	compatible = "ti,keystone-timer";
+	reg = <0x022f0000 0x80>;
+	interrupts = <0 80 0xf01>;
+	clocks = <&clktimer15>;
+};
