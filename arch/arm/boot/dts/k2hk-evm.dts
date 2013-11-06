@@ -1210,6 +1210,15 @@
 				reg = <0x02350000 4096>;
 			};
 
+			clktimer15: clktimer15 {
+				#clock-cells = <0>;
+				compatible = "davinci,psc-clk";
+				clocks = <&clkmodrst0>;
+				clock-output-names = "timer15";
+				status = "enabled";
+				reg = <0x02350000 4096>;
+			};
+
 			clkuart0: clkuart0 {
 				#clock-cells = <0>;
 				compatible = "davinci,psc-clk";
@@ -2853,6 +2862,13 @@
 			reg = <0x022f0080 0x80>;
 			clocks = <&clkwdtimer0>;
 			clock-names = "watchdog";
+		};
+
+		timer15: timer@22f0000 {
+			compatible = "ti,keystone-timer";
+			reg = <0x022f0000 0x80>;
+			interrupts = <0 80 0xf01>;
+			clocks = <&clktimer15>;
 		};
 
 		gpio_poweroff {
