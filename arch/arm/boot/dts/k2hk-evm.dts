@@ -2762,6 +2762,7 @@
 					     * 1 - Large size, 16-bit deviceID
 					     *     fields. 65536 devices.
 					     */
+			interrupts = <0 152 0xf01 0 153 0xf01>; /* RIO and LSU IRQs */
 		};
 
 		xgedma: pktdma@2fa1000 {
