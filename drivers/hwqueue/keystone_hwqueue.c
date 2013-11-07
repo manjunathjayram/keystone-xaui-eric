@@ -247,7 +247,7 @@ static dma_addr_t khwq_pop(struct hwqueue_instance *inst, unsigned *size,
 
 	qmgr = khwq_find_qmgr(inst);
 	if (unlikely(!qmgr))
-		return -ENODEV;
+		return 0;
 
 	id = hwqueue_inst_to_id(inst) - qmgr->start_queue;
 
