@@ -27,6 +27,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/delay.h>
 #include <linux/hardirq.h>
+#include <linux/kfifo.h>
 #include <linux/rio.h>
 #include <linux/rio_drv.h>
 #include <linux/keystone-dma.h>
@@ -49,6 +50,11 @@ struct keystone_rio_data {
 	struct completion	lsu_completion;
 	struct mutex		lsu_lock;
 	u32			rio_pe_feat;
+
+	struct port_write_msg	port_write_msg;
+	struct work_struct	pw_work;
+	struct kfifo		pw_fifo;
+	spinlock_t		pw_fifo_lock;
 
 	u32			ports_registering;
 	u32			port_chk_cnt;
@@ -90,6 +96,7 @@ struct keystone_rio_data {
 };
 
 static void dbell_handler(struct keystone_rio_data *krio_priv);
+static void keystone_rio_port_write_handler(struct keystone_rio_data *krio_priv);
 
 /*----------------------- Interrupt management -------------------------*/
 
@@ -131,6 +138,7 @@ static void special_interrupt_handler(int ics, struct keystone_rio_data *krio_pr
 
 	case KEYSTONE_RIO_PORT_WRITEIN_INT:
 		/* Port-write-in request received on any port */
+		keystone_rio_port_write_handler(krio_priv);
 		break;
 
 	case KEYSTONE_RIO_EVT_CAP_ERROR_INT:
@@ -1605,6 +1613,135 @@ keystone_rio_config_write(struct rio_mport *mport, int index, u16 destid,
 	return res;
 }
 
+/*------------------------------- Port-Write management --------------------------*/
+
+/**
+ * keystone_rio_pw_enable - enable/disable port-write interface init
+ * @mport: Master port implementing the port write unit
+ * @enable: 1=enable; 0=disable port-write message handling
+ */
+static int keystone_rio_pwenable(struct rio_mport *mport, int enable)
+{
+	/* Enable/Disable port-write-in interrupt */
+	return 0;
+}
+
+static void keystone_rio_pw_dpc(struct work_struct *work)
+{
+	struct keystone_rio_data *krio_priv =
+		container_of(work, struct keystone_rio_data, pw_work);
+	unsigned long flags;
+	u32 msg_buffer[RIO_PW_MSG_SIZE / sizeof(u32)];
+
+	/*
+	 * Process port-write messages
+	 */
+	spin_lock_irqsave(&krio_priv->pw_fifo_lock, flags);
+	while (kfifo_out(&krio_priv->pw_fifo, 
+			 (unsigned char *) msg_buffer,
+			 RIO_PW_MSG_SIZE)) {
+		
+		/* Process one message */
+		spin_unlock_irqrestore(&krio_priv->pw_fifo_lock, flags);
+
+#ifdef KEYSTONE_RIO_DEBUG_PW
+		{
+			u32 i;
+			printk(KERN_DEBUG "%s : Port-Write Message:", __func__);
+			for (i = 0; i < RIO_PW_MSG_SIZE / sizeof(u32); i++) {
+				if ((i % 4) == 0)
+					printk(KERN_DEBUG "\n0x%02x: 0x%08x", i * 4,
+					       msg_buffer[i]);
+				else
+					printk(KERN_DEBUG " 0x%08x", msg_buffer[i]);
+			}
+			printk(KERN_DEBUG "\n");
+		}
+#endif /* KEYSTONE_RIO_DEBUG_PW */
+
+		/* Pass the port-write message to RIO core for processing */
+		rio_inb_pwrite_handler((union rio_pw_msg *) msg_buffer);
+		spin_lock_irqsave(&krio_priv->pw_fifo_lock, flags);
+	}
+	spin_unlock_irqrestore(&krio_priv->pw_fifo_lock, flags);
+}
+
+/**
+ *  keystone_rio_port_write_handler - KeyStone port write interrupt handler
+ *
+ * Handles port write interrupts. Parses a list of registered
+ * port write event handlers and executes a matching event handler.
+ */
+static void keystone_rio_port_write_handler(struct keystone_rio_data *krio_priv)
+{
+	int pw;
+
+	/* Check that we have a port-write-in case */
+	pw = __raw_readl(&(krio_priv->port_write_regs->port_wr_rx_stat)) & 0x1;
+
+	/* Schedule deferred processing if PW was received */
+	if (pw) {
+		/*
+		 * Retrieve PW message
+		 */
+		krio_priv->port_write_msg.msg.em.comptag =
+			__raw_readl(&(krio_priv->port_write_regs->port_wr_rx_capt[0]));
+		krio_priv->port_write_msg.msg.em.errdetect =
+			__raw_readl(&(krio_priv->port_write_regs->port_wr_rx_capt[1]));
+		krio_priv->port_write_msg.msg.em.is_port =
+			__raw_readl(&(krio_priv->port_write_regs->port_wr_rx_capt[2]));
+		krio_priv->port_write_msg.msg.em.ltlerrdet =
+			__raw_readl(&(krio_priv->port_write_regs->port_wr_rx_capt[3]));
+
+		/*
+		 * Save PW message (if there is room in FIFO), otherwise discard it.
+		 */
+		if (kfifo_avail(&krio_priv->pw_fifo) >= RIO_PW_MSG_SIZE) {
+			krio_priv->port_write_msg.msg_count++;
+			kfifo_in(&krio_priv->pw_fifo,
+				 (void const *) &krio_priv->port_write_msg.msg,
+				 RIO_PW_MSG_SIZE);
+		} else {
+			krio_priv->port_write_msg.discard_count++;
+			dev_warn(krio_priv->dev, "ISR Discarded Port-Write Msg(s) (%d)\n",
+				 krio_priv->port_write_msg.discard_count);
+		}
+		schedule_work(&krio_priv->pw_work);
+	}
+
+	/* Acknowledge port-write-in */
+	return;
+}
+
+/**
+ * keystone_rio_port_write_init - KeyStone port write interface init
+ * @mport: Master port implementing the port write unit
+ *
+ * Initializes port write unit hardware and buffer
+ * ring. Called from keystone_rio_setup(). Returns %0 on success
+ * or %-ENOMEM on failure.
+ */
+static int keystone_rio_port_write_init(struct keystone_rio_data *krio_priv)
+{
+	int i;
+
+	/* Following configurations require a disabled port write controller */
+	keystone_rio_pwenable(NULL, 0);
+
+	/* Clear port-write-in capture registers */
+	for (i = 0; i < 4; i++) {
+		__raw_writel(0, &(krio_priv->port_write_regs->port_wr_rx_capt[i]));
+	}
+
+	INIT_WORK(&krio_priv->pw_work, keystone_rio_pw_dpc);
+	spin_lock_init(&krio_priv->pw_fifo_lock);
+	if (kfifo_alloc(&krio_priv->pw_fifo, RIO_PW_MSG_SIZE * 32, GFP_KERNEL)) {
+		dev_err(krio_priv->dev, "FIFO allocation failed\n");
+		return -ENOMEM;
+	}
+	return 0;
+}
+
 /*------------------------- Message passing management  ----------------------*/
 
 static void keystone_rio_rx_complete(void *data)
@@ -2691,6 +2828,11 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 			"RIO: initialization of SRIO hardware failed\n");
 		return res;
 	}
+
+	/* Initialize port write interface */
+	res = keystone_rio_port_write_init(krio_priv);
+	if (res)
+		return res;
 
 	/*
 	 * Configure all ports even if we do not use all of them.

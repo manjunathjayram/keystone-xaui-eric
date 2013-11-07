@@ -269,6 +269,13 @@ struct keystone_rio_rx_chan_info {
 	void				*buff_temp; /* tmp when add inb buf */
 };
 
+struct port_write_msg {
+	union rio_pw_msg msg;
+	u32              msg_count;
+	u32              err_count;
+	u32              discard_count;
+};
+
 /*
  * RapidIO Registers
  */
