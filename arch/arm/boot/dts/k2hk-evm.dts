@@ -1454,6 +1454,28 @@
 			};
 		};
 
+		spi1:spi@21000600 {
+			#address-cells			= <1>;
+			#size-cells			= <0>;
+			compatible			= "ti,davinci-spi-v1";
+			reg				= <0x21000600 0x200>;
+			ti,davinci-spi-num-cs		= <4>;
+			ti,davinci-spi-intr-line	= <0>;
+			interrupts			= <0 296 0xf01>;
+			clocks				= <&clkspi>;
+		};
+
+		spi2:spi@21000800 {
+			#address-cells			= <1>;
+			#size-cells			= <0>;
+			compatible			= "ti,davinci-spi-v1";
+			reg				= <0x21000800 0x200>;
+			ti,davinci-spi-num-cs		= <4>;
+			ti,davinci-spi-intr-line	= <0>;
+			interrupts			= <0 300 0xf01>;
+			clocks				= <&clkspi>;
+		};
+
 		i2c0@2530000 {
 			compatible = "ti,davinci-i2c";
 			reg = <0x02530000 0x400>;
