@@ -149,9 +149,8 @@ struct rio_channel {
 	u32			loc_destid;	/* local destID */
 	u32			rem_destid;	/* remote destID */
 	u16			rem_channel;	/* remote channel ID */
-	struct list_head	accept_queue;	// TODO_???: review lists to replace by single node acting according channel state
-	struct list_head	listen_list;	//           ^^^^^ ???
-	struct list_head	con_list;	/* connect_list: waiting for connect response ^^^^^ ??? */
+	struct list_head	accept_queue;
+	struct list_head	ch_node;
 	wait_queue_head_t	wait_q;
 	struct chan_rx_ring	rx_ring;
 };
@@ -315,7 +314,7 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 
 	/* Find if there is any listener on request's destination port */
 	spin_lock(&rio_list_lock);
-	list_for_each_entry(listen_id, &listen_any_list, listen_list)
+	list_for_each_entry(listen_id, &listen_any_list, ch_node)
 		if (listen_id->id == snum) {
 #if (0)
 			pr_debug("RIO_CM: matching listener on ch=%d\n", snum);
@@ -354,7 +353,7 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 	conn_id->state = RIO_CM_CONNECTED;
 
 	spin_lock(&listen_id->lock);
-	list_add_tail(&conn_id->accept_queue, &listen_id->accept_queue);
+	list_add_tail(&conn_id->ch_node, &listen_id->accept_queue);
 	spin_unlock(&listen_id->lock);
 
 	/*
@@ -424,7 +423,7 @@ static int riocm_resp_handler(void *resp_data)
 	snum = ntohs(hh->dst_ch);
 
 	/* Find if any requester waits on resp's destination port */
-	list_for_each_entry(conn_id, &connect_list, con_list)
+	list_for_each_entry(conn_id, &connect_list, ch_node)
 		if (conn_id->id == snum) {
 			found++;
 			break;
@@ -434,7 +433,7 @@ static int riocm_resp_handler(void *resp_data)
 		return -ECONNABORTED;
 
 	spin_lock(&rio_list_lock);
-	list_del(&conn_id->con_list);
+	list_del(&conn_id->ch_node);
 	spin_unlock(&rio_list_lock);
 
 	if (hh->ch_op == CM_CONN_ACK) {
@@ -1061,7 +1060,7 @@ int riocm_ch_connect(u16 loc_ch, struct rio_mport *mport,
 	ch->rem_channel = rem_ch;
 
 	spin_lock(&rio_list_lock);
-	list_add_tail(&ch->con_list, &connect_list);
+	list_add_tail(&ch->ch_node, &connect_list);
 	spin_unlock(&rio_list_lock);
 
 	/*
@@ -1086,7 +1085,7 @@ int riocm_ch_connect(u16 loc_ch, struct rio_mport *mport,
 	if (ret) {
 		riocm_comp_exch(ch, RIO_CM_CONNECT, RIO_CM_IDLE);
 		spin_lock(&rio_list_lock);
-		list_del(&ch->con_list);
+		list_del(&ch->ch_node);
 		spin_unlock(&rio_list_lock);
 		goto conn_done;
 	}
@@ -1204,9 +1203,8 @@ int riocm_ch_accept(u16 ch_id, u16 *new_ch_id, long timeout)
 			goto out_err;
 	}
 
-	new_ch = list_entry(ch->accept_queue.next, struct rio_channel,
-			    accept_queue);
-	list_del_init(&new_ch->accept_queue);
+	new_ch = list_entry(ch->accept_queue.next, struct rio_channel, ch_node);
+	list_del(&new_ch->ch_node);
 	spin_unlock_bh(&ch->lock);
 
 	*new_ch_id = new_ch->id;
@@ -1244,7 +1242,7 @@ int riocm_ch_listen(u16 ch_id)
 
 	/* Add the channel into the global list of listeners */
 	spin_lock(&rio_list_lock);
-	list_add_tail(&ch->listen_list, &listen_any_list);
+	list_add_tail(&ch->ch_node, &listen_any_list);
 	spin_unlock(&rio_list_lock);
 	ch->state = RIO_CM_LISTEN;
 	spin_unlock_bh(&ch->lock);
@@ -1434,14 +1432,10 @@ int riocm_ch_close(u16 ch_id)
 	    state == RIO_CM_DISCONNECT)
 		goto out_free;
 
-	if (state == RIO_CM_LISTEN) {
-		/* Remove the channel from the global list of listeners */
+	if (state == RIO_CM_LISTEN || state == RIO_CM_CONNECT) {
+		/* Remove the channel from the corresponding list */
 		spin_lock(&rio_list_lock);
-		list_del_init(&ch->listen_list);
-		spin_unlock(&rio_list_lock);
-	} else if (state == RIO_CM_CONNECT) {
-		spin_lock(&rio_list_lock);
-		list_del(&ch->con_list);
+		list_del(&ch->ch_node);
 		spin_unlock(&rio_list_lock);
 	} else if (state == RIO_CM_CONNECTED) {
 		/*
