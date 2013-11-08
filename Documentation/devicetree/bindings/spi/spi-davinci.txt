@@ -49,3 +49,19 @@ spi0:spi@20BF0000 {
 		};
 	};
 };
+
+SPI slave nodes must be children of the SPI master node and can
+contain the following properties. Not all SPI Peripherals from
+Texas Instruments support this. Please check SPI peripheral UG
+for a device before using these.
+
+- ti,davinci-spi-wdelay : delay between transmissions.
+- ti,davinci-spi-odd-parity : odd partity enabled
+   OR
+- ti,davinci-spi-even-parity : even parity enabled
+- ti,davinci-spi-io-type: io type (check platform_data/spi-davinci.h)
+- ti,davinci-spi-disable-timer: disable CS timer (SPIFMTn)
+- ti,davinci-spi-c2t-delay: c2t delay
+- ti,davinci-spi-t2c-delay: t2c delay
+- ti,davinci-spi-t2e-delay: t2e delay
+- ti,davinci-spi-c2e-delay: c2e delay
