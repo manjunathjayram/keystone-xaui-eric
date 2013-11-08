@@ -67,6 +67,7 @@
 
 /* SPIDAT1 (upper 16 bit defines) */
 #define SPIDAT1_CSHOLD_MASK	BIT(12)
+#define SPIDAT1_WDEL		BIT(10)
 
 /* SPIGCR1 */
 #define SPIGCR1_CLKMOD_MASK	BIT(1)
@@ -209,11 +210,12 @@ static inline void clear_io_bits(void __iomem *addr, u32 bits)
  */
 static void davinci_spi_chipselect(struct spi_device *spi, int value)
 {
-	struct davinci_spi *dspi;
+	struct davinci_spi_config *spicfg = spi->controller_data;
 	struct davinci_spi_platform_data *pdata;
 	u8 chip_sel = spi->chip_select;
-	u16 spidat1 = CS_DEFAULT;
 	bool gpio_chipsel = false;
+	struct davinci_spi *dspi;
+	u16 spidat1 = CS_DEFAULT;
 
 	dspi = spi_master_get_devdata(spi->master);
 	pdata = &dspi->pdata;
@@ -232,6 +234,11 @@ static void davinci_spi_chipselect(struct spi_device *spi, int value)
 		else
 			gpio_set_value(pdata->chip_sel[chip_sel], 1);
 	} else {
+
+		/* program delay tansfers if tx_delay is non zero */
+		if (spicfg->wdelay)
+			spidat1 |= SPIDAT1_WDEL;
+
 		if (value == BITBANG_CS_ACTIVE) {
 			spidat1 |= SPIDAT1_CSHOLD_MASK;
 			spidat1 &= ~(0x1 << chip_sel);
@@ -276,14 +283,13 @@ static inline int davinci_spi_get_prescale(struct davinci_spi *dspi,
 static int davinci_spi_setup_transfer(struct spi_device *spi,
 		struct spi_transfer *t)
 {
-
-	struct davinci_spi *dspi;
-	struct davinci_spi_config *spicfg;
-	u8 bits_per_word = 0;
+	struct davinci_spi_config *spicfg =
+			(struct davinci_spi_config *)spi->controller_data;
 	u32 hz = 0, spifmt = 0, prescale = 0;
+	struct davinci_spi *dspi;
+	u8 bits_per_word = 0;
 
 	dspi = spi_master_get_devdata(spi->master);
-	spicfg = (struct davinci_spi_config *)spi->controller_data;
 	if (!spicfg)
 		spicfg = &davinci_spi_default_cfg;
 
@@ -332,6 +338,17 @@ static int davinci_spi_setup_transfer(struct spi_device *spi,
 		spifmt |= SPIFMT_PHASE_MASK;
 
 	/*
+	 * Assume wdelay is used only on SPI peripherals that has this field
+	 * in SPIFMTn register. This is not true for SPI peripherals found
+	 * on older versions as that found on DM6446 for example.
+	 * Need to re-visit the handling different versions of IP. Currently
+	 * it is based on version. SPI mode may be extended to support
+	 * various flavors of the IP.
+	 */
+	spifmt |= ((spicfg->wdelay << SPIFMT_WDELAY_SHIFT)
+						& SPIFMT_WDELAY_MASK);
+
+	/*
 	 * Version 1 hardware supports two basic SPI modes:
 	 *  - Standard SPI mode uses 4 pins, with chipselect
 	 *  - 3 pin SPI is a 4 pin variant without CS (SPI_NO_CS)
@@ -347,9 +364,6 @@ static int davinci_spi_setup_transfer(struct spi_device *spi,
 	if (dspi->version == SPI_VERSION_2) {
 
 		u32 delay = 0;
-
-		spifmt |= ((spicfg->wdelay << SPIFMT_WDELAY_SHIFT)
-							& SPIFMT_WDELAY_MASK);
 
 		if (spicfg->odd_parity)
 			spifmt |= SPIFMT_ODD_PARITY_MASK;
@@ -376,10 +390,25 @@ static int davinci_spi_setup_transfer(struct spi_device *spi,
 
 		iowrite32(delay, dspi->base + SPIDELAY);
 	}
-
 	iowrite32(spifmt, dspi->base + SPIFMT0);
 
 	return 0;
+}
+
+/**
+ * davinci_spi_cleanup - cleanup function registered to SPI master framework
+ * @spi: spi device which is requesting cleanup
+ *
+ * This function is registered to the SPI framework for this SPI master
+ * controller. It will free the runtime state of chip.
+ */
+static void davinci_spi_cleanup(struct spi_device *spi)
+{
+	struct davinci_spi_config *spicfg = spi->controller_data;
+
+	spi->controller_data = NULL;
+	if (spi->dev.of_node)
+		kfree(spicfg);
 }
 
 /**
@@ -390,9 +419,12 @@ static int davinci_spi_setup_transfer(struct spi_device *spi,
  */
 static int davinci_spi_setup(struct spi_device *spi)
 {
-	int retval = 0;
-	struct davinci_spi *dspi;
+	struct davinci_spi_config *spicfg = spi->controller_data;
+	struct device_node *np = spi->dev.of_node;
 	struct davinci_spi_platform_data *pdata;
+	struct davinci_spi *dspi;
+	int retval = 0, len;
+	u32 prop;
 
 	dspi = spi_master_get_devdata(spi->master);
 	pdata = &dspi->pdata;
@@ -415,6 +447,51 @@ static int davinci_spi_setup(struct spi_device *spi)
 		set_io_bits(dspi->base + SPIGCR1, SPIGCR1_LOOPBACK_MASK);
 	else
 		clear_io_bits(dspi->base + SPIGCR1, SPIGCR1_LOOPBACK_MASK);
+
+	if (spicfg == NULL) {
+		if (np) {
+			spicfg = kzalloc(sizeof(*spicfg), GFP_KERNEL);
+			if (!spicfg) {
+				dev_err(&spi->dev,
+				"cannot allocate controller data\n");
+				return -ENOMEM;
+			}
+
+			*spicfg = davinci_spi_default_cfg;
+			/* override with dt configured values */
+			if (!of_property_read_u32(np,
+					"ti,davinci-spi-wdelay", &prop))
+				spicfg->wdelay = (u8)prop;
+			if (of_find_property(np,
+					"ti,davinci-spi-odd-parity", &len)) {
+				spicfg->parity_enable = 1;
+				spicfg->odd_parity = 1;
+			} else if (of_find_property(np,
+					"ti,davinci-spi-even-parity", &len)) {
+				spicfg->parity_enable = 1;
+				spicfg->odd_parity = 0;
+			}
+			if (!of_property_read_u32(np, "ti,davinci-spi-io-type",
+						 &prop))
+				spicfg->io_type = (u8)prop;
+			if (of_find_property(np,
+					"ti,davinci-spi-disable-timer", &len))
+				spicfg->timer_disable = 1;
+			if (!of_property_read_u32(np,
+					"ti,davinci-spi-c2t-delay", &prop))
+				spicfg->c2tdelay = (u8)prop;
+			if (!of_property_read_u32(np,
+					"ti,davinci-spi-t2c-delay", &prop))
+				spicfg->t2cdelay = (u8)prop;
+			if (!of_property_read_u32(np,
+					"ti,davinci-spi-t2e-delay", &prop))
+				spicfg->t2edelay = (u8)prop;
+			if (!of_property_read_u32(np,
+					"ti,davinci-spi-c2e-delay", &prop))
+				spicfg->c2edelay = (u8)prop;
+			spi->controller_data = spicfg;
+		}
+	}
 
 	return retval;
 }
@@ -939,6 +1016,7 @@ static int davinci_spi_probe(struct platform_device *pdev)
 	master->bus_num = pdev->id;
 	master->num_chipselect = pdata->num_chipselect;
 	master->setup = davinci_spi_setup;
+	master->cleanup = davinci_spi_cleanup;
 
 	dspi->bitbang.chipselect = davinci_spi_chipselect;
 	dspi->bitbang.setup_transfer = davinci_spi_setup_transfer;
