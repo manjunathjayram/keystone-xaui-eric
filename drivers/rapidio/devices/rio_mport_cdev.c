@@ -477,10 +477,9 @@ static void channel_dev_remove(struct channel_dev *dev)
 	if (!dev)
 		return;
 
-	pr_info(DRV_PREFIX "Removing %s cdev\n", dev->mport->name);
+	pr_debug(DRV_PREFIX "%s: Removing %s cdev\n", __func__, dev->mport->name);
 	device_unregister(dev->dev);
 	cdev_del(&(dev->cdev));
-	kfree(dev);
 }
 
 /*
@@ -522,13 +521,17 @@ static void channel_remove_mport(struct device *dev,
 	if (!mport)
 		return;
 
+	pr_debug(DRV_PREFIX "%s: Removing mport %s\n", __func__, mport->name);
+
 	mutex_lock(&channel_devs_lock);
 	list_for_each_entry(chdev, &channel_devs, node) {
-		if (chdev->mport->id == mport->id)
-			goto found;
+		if (chdev->mport->id == mport->id) {
+			channel_dev_remove(chdev);
+			list_del(&chdev->node);
+			kfree(chdev);
+			break;
+		}
 	}
-found:
-	/* TODO cleanup */
 	mutex_unlock(&channel_devs_lock);
 }
 
@@ -580,15 +583,9 @@ static int __init channel_init(void)
  */
 static void __exit channel_exit(void)
 {
-	struct channel_dev *chdev;
-
-	/* Cleanup channel devices */
-	list_for_each_entry(chdev, &channel_devs, node)
-		channel_dev_remove(chdev);
-
-	unregister_chrdev_region(dev_number, CHANNEL_MINORS);
-	class_destroy(dev_class);
 	class_interface_unregister(&rio_mport_interface);
+	class_destroy(dev_class);
+	unregister_chrdev_region(dev_number, CHANNEL_MINORS);
 }
 
 module_init(channel_init);
