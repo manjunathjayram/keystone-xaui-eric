@@ -23,6 +23,45 @@
 #ifndef _RIO_CM_H
 #define _RIO_CM_H
 
+#include <linux/bitops.h>
+#include <linux/printk.h>
+
+#define DRIVER_PREFIX "RIO_CM: "
+
+/* Debug output filtering masks */
+enum {
+	DBG_NONE	= 0,
+	DBG_INIT	= BIT(0), /* driver init */
+	DBG_EXIT	= BIT(1), /* driver exit */
+	DBG_MPORT	= BIT(2), /* mport add/remove */
+	DBG_RDEV	= BIT(3), /* RapidIO device add/remove */
+	DBG_CHOP	= BIT(4), /* channel operations */
+	DBG_WAIT	= BIT(5), /* waiting for events */
+	DBG_TX		= BIT(6), /* message TX */
+	DBG_TX_EVENT	= BIT(7), /* message TX event */
+	DBG_RX_DATA	= BIT(8), /* inbound data messages */
+	DBG_RX_CMD	= BIT(9), /* inbound REQ/ACK/NACK messages */
+	DBG_ALL		= ~0,
+};
+
+#ifdef DEBUG
+#define riocm_debug(level, fmt, arg...) \
+	do { \
+		if (level & dbg_level) \
+			printk(KERN_DEBUG pr_fmt(DRIVER_PREFIX fmt "\n"), \
+			       ##arg); \
+	} while (0)
+#else
+#define riocm_debug(level, fmt, arg...) \
+		no_printk(KERN_DEBUG pr_fmt(DRIVER_PREFIX fmt "\n"), ##arg)
+#endif
+
+#define riocm_warn(fmt, arg...) \
+	pr_warning(DRIVER_PREFIX "WARNING " fmt "\n", ##arg)
+
+#define riocm_error(fmt, arg...) \
+	pr_err(DRIVER_PREFIX "ERROR " fmt "\n", ##arg)
+
 #define RIOCM_MAX_CHNUM		0xffff /* Use full range of u16 field */
 #define RIOCM_CHNUM_AUTO	0
 

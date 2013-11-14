@@ -48,6 +48,12 @@ module_param(chstart, int, S_IRUGO);
 MODULE_PARM_DESC(chstart,
 		 "Start channel number for dynamic allocation (default 256)");
 
+#ifdef DEBUG
+static u32 dbg_level = DBG_NONE;
+module_param(dbg_level, uint, S_IWUSR | S_IRUGO);
+MODULE_PARM_DESC(dbg_level, "Debugging output level (default 0 = none)");
+#endif
+
 MODULE_AUTHOR(DRV_AUTHOR);
 MODULE_DESCRIPTION(DRV_DESC);
 MODULE_LICENSE("GPL");
@@ -238,7 +244,7 @@ static int riocm_rx_get_one(struct cm_dev *cm, void **msg)
 	i = cm->rx_slot;
 
 	if (!cm->rx_buf[i]) {
-		pr_warn("RIO_CM: ERR - rx_buf[%d] = NULL\n", i);
+		riocm_warn("rx_buf[%d] = NULL", i);
 		goto err;
 	}
 
@@ -247,7 +253,7 @@ static int riocm_rx_get_one(struct cm_dev *cm, void **msg)
 		goto err;
 
 	if (cm->rx_buf[i] != data)
-		pr_warn("RIO_CM: ATTN - rx_buf[%d] != data_ptr\n", i);
+		riocm_warn("rx_buf[%d] != data_ptr", i);
 
 	i = (i + 1) % RIOCM_RX_RING_SIZE;
 err:
@@ -284,7 +290,7 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 	int ret;
 
 	if (hh->ch_op != CM_CONN_REQ) {
-		pr_err("RIO_CM: Error - Invalid request header\n");
+		riocm_error("Invalid request header");
 		return -EINVAL;
 	}
 
@@ -294,10 +300,8 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 	spin_lock_bh(&cm->cm_lock);
 	list_for_each_entry(peer, &cm->peers, node) {
 		if (peer->rdev->destid == rem_destid) {
-#if (0)
-			pr_debug("RIO_CM: %s found matching device(%s)\n",
+			riocm_debug(DBG_RX_CMD, "%s found matching device(%s)",
 				 __func__, rio_name(peer->rdev));
-#endif
 			found++;
 			break;
 		}
@@ -316,9 +320,7 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 	spin_lock(&rio_list_lock);
 	list_for_each_entry(listen_id, &listen_any_list, ch_node)
 		if (listen_id->id == snum) {
-#if (0)
-			pr_debug("RIO_CM: matching listener on ch=%d\n", snum);
-#endif
+			riocm_debug(DBG_RX_CMD, "matching listener on ch=%d", snum);
 			found++;
 			break;
 		}
@@ -326,9 +328,7 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 	spin_unlock(&rio_list_lock);
 
 	if (!found) {
-#if (0)
-		pr_debug("RIO_CM: listener on channel %d not found\n", snum);
-#endif
+		riocm_debug(DBG_RX_CMD, "listener on channel %d not found", snum);
 		listen_id = NULL;
 		hh->msg_len = CM_NACK_NOLIS;
 		goto out_nack;
@@ -338,7 +338,7 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 	conn_id = riocm_ch_alloc(RIOCM_CHNUM_AUTO);
 
 	if (IS_ERR(conn_id)) {
-		pr_err("RIO_CM: failed to get channel for new req (%ld)\n",
+		riocm_error("failed to get channel for new req (%ld)",
 			PTR_ERR(conn_id));
 		return -ENOMEM;
 	}
@@ -416,7 +416,7 @@ static int riocm_resp_handler(void *resp_data)
 	u16 snum;
 
 	if (hh->ch_op != CM_CONN_ACK && hh->ch_op != CM_CONN_NACK) {
-		pr_err("RIO_CM: Error - Invalid request header\n");
+		riocm_error("Invalid request header");
 		return -EINVAL;
 	}
 
@@ -458,11 +458,11 @@ static int riocm_close_handler(void *data)
 	struct rio_ch_chan_hdr *hh = data;
 
 	if (hh->ch_op != CM_CONN_CLOSE) {
-		pr_err("RIO_CM: %s ERR - Invalid request header\n", __func__);
+		riocm_error("%s Invalid request header", __func__);
 		return -EINVAL;
 	}
 
-	pr_debug("RIO_CM: %s for ch=%d\n", __func__, ntohs(hh->dst_ch));
+	riocm_debug(DBG_RX_CMD, "%s for ch=%d", __func__, ntohs(hh->dst_ch));
 
 	/* Find if there is an active channel with specified ID */
 	ch = riocm_get_channel(ntohs(hh->dst_ch));
@@ -485,10 +485,10 @@ static void rio_cm_handler(struct work_struct *_work)
 	struct rio_ch_chan_hdr *hdr;
 
 	hdr = (struct rio_ch_chan_hdr *)data;
-#if (0)
-	pr_debug("RIO_CM: %s: OP=%x for ch=%d from %d\n", __func__, hdr->ch_op,
-		 ntohs(hdr->dst_ch), ntohs(hdr->src_ch));
-#endif
+
+	riocm_debug(DBG_RX_CMD, "%s: OP=%x for ch=%d from %d", __func__,
+		    hdr->ch_op, ntohs(hdr->dst_ch), ntohs(hdr->src_ch));
+
 	switch (hdr->ch_op) {
 	case CM_CONN_REQ:
 		riocm_req_handler(work->cm, data);
@@ -501,7 +501,7 @@ static void rio_cm_handler(struct work_struct *_work)
 		riocm_close_handler(data);
 		break;
 	default:
-		pr_err("RIO_CM: ERR - Invalid packet header\n");
+		riocm_error("Invalid packet header");
 		break;
 	}
 
@@ -515,9 +515,8 @@ static int rio_rx_data_handler(struct cm_dev *cm, void *buf)
 	struct rio_channel *ch;
 
 	hdr = (struct rio_ch_chan_hdr *)buf;
-#if (0)
-	pr_debug("RIO_CM: %s: for ch=%d\n", __func__, ntohs(hdr->dst_ch));
-#endif
+
+	riocm_debug(DBG_RX_DATA, "%s: for ch=%d", __func__, ntohs(hdr->dst_ch));
 
 	spin_lock(&idr_lock);
 	ch = idr_find(&ch_idr, ntohs(hdr->dst_ch));
@@ -529,8 +528,8 @@ static int rio_rx_data_handler(struct cm_dev *cm, void *buf)
 		return -ENODEV;
 	}
 #if (0)
-	pr_debug("RIO_CM: %s: found ch=%d\n", __func__, ch->id);
-	pr_debug("RIO_CM: %s: msg=%s\n", __func__,
+	riocm_debug(DBG_RX_DATA, "%s: found ch=%d", __func__, ch->id);
+	riocm_debug(DBG_RX_DATA, "%s: msg=%s", __func__,
 		 (char *)((u8 *)buf + sizeof(struct rio_ch_chan_hdr)));
 #endif
 	/* Place pointer to the buffer into channel's RX queue */
@@ -538,7 +537,7 @@ static int rio_rx_data_handler(struct cm_dev *cm, void *buf)
 
 	if (ch->state != RIO_CM_CONNECTED) {
 		/* Channel is not ready to receive data, discard a packet */
-		pr_debug("RIO_CM: %s: ch=%d is in wrong state=%d\n",
+		riocm_debug(DBG_RX_DATA, "%s: ch=%d is in wrong state=%d",
 			__func__, ch->id, ch->state);
 		spin_unlock(&ch->lock);
 		kfree(buf);
@@ -547,7 +546,7 @@ static int rio_rx_data_handler(struct cm_dev *cm, void *buf)
 
 	if (ch->rx_ring.count == RIOCM_RX_RING_SIZE) {
 		/* If RX ring is full, discard a packet */
-		pr_warn("RIO_CM: %s: ch=%d is full\n", __func__, ch->id);
+		riocm_warn("%s: ch=%d is full", __func__, ch->id);
 		spin_unlock(&ch->lock);
 		kfree(buf);
 		return -ENOMEM;
@@ -601,7 +600,7 @@ static void rio_ibmsg_handler(unsigned long context)
 			work = kmalloc(sizeof *work, GFP_ATOMIC);
 			if (!work) {
 				/* Discard a packet if we cannot process it */
-				pr_err("RIO_CM: ERR - Failed to allocate memory for work struct\n");
+				riocm_error("Failed to allocate memory for work struct");
 				kfree(data);
 				continue;
 			}
@@ -614,7 +613,7 @@ static void rio_ibmsg_handler(unsigned long context)
 			rio_rx_data_handler(cm, data);
 		} else {
 			/* Discard packets with invalid OP code */
-			pr_err("RIO_CM: ERR - unsupported CH_OP code\n");
+			riocm_error("Unsupported CH_OP code");
 			kfree(data);
 		}
 	}
@@ -650,9 +649,7 @@ static void rio_txcq_handler(unsigned long context)
 	 * transfer is implemented. At this moment only correct tracking
 	 * of tx_count is important.
 	 */
-#if (0)
-	pr_debug("RIO_CM: TXCQ_handler: for mport_id=%d\n", cm->mport->id);
-#endif
+	riocm_debug(DBG_TX_EVENT, "%s for mport_%d", __func__, cm->mport->id);
 
 	spin_lock(&cm->tx_lock);
 	ack_slot = cm->tx_ack_slot;
@@ -694,7 +691,7 @@ static int riocm_post_send(struct cm_dev *cm, struct rio_dev *rdev,
 	spin_lock_irqsave(&cm->tx_lock, flags);
 
 	if (cm->tx_cnt + 1 > RIOCM_TX_RING_SIZE) {
-		pr_warn("RIO_CM: Tx Ring is full!\n");
+		riocm_warn("Tx Ring is full");
 		rc = -EBUSY;
 		goto err_out;
 	}
@@ -702,13 +699,12 @@ static int riocm_post_send(struct cm_dev *cm, struct rio_dev *rdev,
 	cm->tx_buf[cm->tx_slot] = buffer;
 	cm->tx_ctxt[cm->tx_slot] = context;
 	rc = rio_add_outb_message(cm->mport, rdev, cmbox, buffer, len);
-#if (0)
-	pr_debug("RIO_CM: Add buf@%p destid=%x tx_slot=%d tx_cnt=%d\n",
+
+	riocm_debug(DBG_TX, "Add buf@%p destid=%x tx_slot=%d tx_cnt=%d",
 		 buffer, rdev->destid, cm->tx_slot, cm->tx_cnt);
-#endif
 
 	if (++cm->tx_cnt == RIOCM_TX_RING_SIZE)
-		pr_warn("RIO_CM: ATTN: TX QUEUE FULL\n");
+		riocm_warn("TX QUEUE IS FULL");
 
 	++cm->tx_slot;
 	cm->tx_slot &= (RIOCM_TX_RING_SIZE - 1);
@@ -770,7 +766,7 @@ int riocm_ch_send(u16 ch_id, void *buf, int len)
 
 	ret = riocm_post_send(ch->cmdev, ch->rdev, buf, len, ch);
 	if (ret) {
-		pr_err("RIO_CM: %s ch %d send_err=%d\n", __func__, ch->id, ret);
+		riocm_error("%s ch %d send_err=%d", __func__, ch->id, ret);
 	}
 
 	return ret;
@@ -791,9 +787,7 @@ static int riocm_wait_for_rx_data(struct rio_channel *ch)
 	int err;
 	DEFINE_WAIT(wait);
 
-#if (0)
-	pr_debug("RIO_CM: %s on %d\n", __func__, ch->id);
-#endif
+	riocm_debug(DBG_WAIT, "%s on %d", __func__, ch->id);
 
 	for (;;) {
 		prepare_to_wait_exclusive(&ch->wait_q, &wait,
@@ -820,9 +814,7 @@ static int riocm_wait_for_rx_data(struct rio_channel *ch)
 	}
 
 	finish_wait(&ch->wait_q, &wait);
-#if (0)
-	pr_debug("RIO_CM: %s on %d returns %d\n", __func__, ch->id, err);
-#endif
+	riocm_debug(DBG_WAIT, "%s on %d returns %d", __func__, ch->id, err);
 	return err;
 }
 
@@ -960,9 +952,7 @@ static int riocm_wait_for_connect_resp(struct rio_channel *ch, long timeo)
 	int err;
 	DEFINE_WAIT(wait);
 
-#if (0)
-	pr_debug("RIO_CM: %s on %d\n", __func__, ch->id);
-#endif
+	riocm_debug(DBG_WAIT, "%s on %d", __func__, ch->id);
 
 	for (;;) {
 		prepare_to_wait_exclusive(&ch->wait_q, &wait,
@@ -984,9 +974,7 @@ static int riocm_wait_for_connect_resp(struct rio_channel *ch, long timeo)
 	}
 
 	finish_wait(&ch->wait_q, &wait);
-#if (0)
-	pr_debug("RIO_CM: %s on %d returns %d\n", __func__, ch->id, err);
-#endif
+	riocm_debug(DBG_WAIT, "%s on %d returns %d", __func__, ch->id, err);
 	return err;
 }
 
@@ -1024,7 +1012,7 @@ int riocm_ch_connect(u16 loc_ch, struct rio_mport *mport,
 
 	if (!found) {
 		spin_unlock(&rio_list_lock);
-		pr_err("RIO_CM: ERR - cm_dev not found\n");
+		riocm_error("cm_dev not found");
 		return -ENODEV;
 	}
 
@@ -1042,7 +1030,7 @@ int riocm_ch_connect(u16 loc_ch, struct rio_mport *mport,
 	spin_unlock(&rio_list_lock);
 
 	if (!found) {
-		pr_err("RIO_CM: ERR - target RapidIO device not found\n");
+		riocm_error("Target RapidIO device not found");
 		return -ENODEV;
 	}
 
@@ -1127,9 +1115,7 @@ static int riocm_wait_for_connect_req(struct rio_channel *ch, long timeo)
 	int err;
 	DEFINE_WAIT(wait);
 
-#if (0)
-	pr_debug("RIO_CM: %s on %d\n", __func__, ch->id);
-#endif
+	riocm_debug(DBG_WAIT, "%s on %d", __func__, ch->id);
 
 	for (;;) {
 		prepare_to_wait_exclusive(&ch->wait_q, &wait,
@@ -1154,9 +1140,7 @@ static int riocm_wait_for_connect_req(struct rio_channel *ch, long timeo)
 	}
 
 	finish_wait(&ch->wait_q, &wait);
-#if (0)
-	pr_debug("RIO_CM: %s on %d returns %d\n", __func__, ch->id, err);
-#endif
+	riocm_debug(DBG_WAIT, "%s on %d returns %d", __func__, ch->id, err);
 	return err;
 }
 
@@ -1228,7 +1212,7 @@ int riocm_ch_listen(u16 ch_id)
 {
 	struct rio_channel *ch = NULL;
 
-	pr_debug("RIO_CM: %s(ch_%d)\n", __func__, ch_id);
+	riocm_debug(DBG_CHOP, "%s(ch_%d)", __func__, ch_id);
 
 	ch = riocm_get_channel(ch_id);
 	if (!ch)
@@ -1266,7 +1250,7 @@ int riocm_ch_bind(u16 ch_id, struct rio_mport *mport, void *context)
 	struct rio_channel *ch = NULL;
 	struct cm_dev *cm;
 
-	pr_debug("RIO_CM: %s ch_%d to mport_%d\n", __func__, ch_id, mport->id);
+	riocm_debug(DBG_CHOP, "%s ch_%d to mport_%d", __func__, ch_id, mport->id);
 
 	/* Find matching cm_dev object */
 	list_for_each_entry(cm, &cm_dev_list, list) {
@@ -1374,7 +1358,7 @@ int riocm_ch_create(u16 *ch_num)
 	ch = riocm_ch_alloc(*ch_num);
 
 	if (IS_ERR(ch)) {
-		pr_err("RIO: failed to allocate channel %d (err=%ld)\n",
+		riocm_error("Failed to allocate channel %d (err=%ld)",
 			 *ch_num, PTR_ERR(ch));
 		return -1;
 	}
@@ -1421,7 +1405,7 @@ int riocm_ch_close(u16 ch_id)
 	enum rio_cm_state state;
 	int ret;
 
-	pr_debug("RIO_CM: %s(%d)\n", __func__, ch_id);
+	riocm_debug(DBG_CHOP, "%s(%d)", __func__, ch_id);
 	ch = riocm_get_channel(ch_id);
 	if (!ch)
 		return -ENODEV;
@@ -1460,7 +1444,7 @@ int riocm_ch_close(u16 ch_id)
 
 		ret = riocm_post_send(cm, ch->rdev, &hdr, sizeof hdr, NULL);
 		if (ret) {
-			pr_warn("RIO_CM: %s(%d) ERR sending CLOSE failed\n",
+			riocm_error("%s(%d) sending CLOSE failed",
 				__func__, ch_id);
 		}
 	}
@@ -1551,7 +1535,7 @@ static int riocm_add_dev(struct device *dev, struct subsys_interface *sif)
 	if (!dev_cm_capable(rdev))
 		return 0;
 
-	pr_debug("RIO_CM: %s(%s)\n", __func__, rio_name(rdev));
+	riocm_debug(DBG_RDEV, "%s(%s)", __func__, rio_name(rdev));
 
 	/* Find a corresponding cm_dev object */
 	spin_lock(&rio_list_lock);
@@ -1593,7 +1577,7 @@ static int riocm_remove_dev(struct device *dev, struct subsys_interface *sif)
 	if (!dev_cm_capable(rdev))
 		return -ENODEV;
 
-	pr_debug("RIO_CM: %s(%s)\n", __func__, rio_name(rdev));
+	riocm_debug(DBG_RDEV, "%s(%s)", __func__, rio_name(rdev));
 
 	/* Find matching cm_dev object */
 	spin_lock(&rio_list_lock);
@@ -1607,7 +1591,7 @@ static int riocm_remove_dev(struct device *dev, struct subsys_interface *sif)
 found:
 	list_for_each_entry(peer, &cm->peers, node) {
 		if (peer->rdev == rdev) {
-			pr_debug("RIO_CM: %s removing peer %s\n",
+			riocm_debug(DBG_RDEV, "%s removing peer %s",
 				 __func__, rio_name(rdev));
 			list_del(&peer->node);
 			cm->npeers--;
@@ -1636,8 +1620,7 @@ static int riocm_add_mport(struct device *dev,
 	struct cm_dev *cm;
 	struct rio_mport *mport = to_rio_mport(dev);
 
-	dev_printk(KERN_DEBUG, dev, "%s: add mport %s\n",
-		   DRV_NAME, mport->name);
+	riocm_debug(DBG_MPORT, "add mport %s", mport->name);
 
 	cm = kmalloc(sizeof *cm, GFP_KERNEL);
 	if (!cm)
@@ -1648,8 +1631,8 @@ static int riocm_add_mport(struct device *dev,
 	rc = rio_request_outb_mbox(mport, (void *)mport, cmbox,
 				   RIOCM_TX_RING_SIZE, riocm_outb_msg_event);
 	if (rc) {
-		pr_err("%s: %s failed to allocate OBMBOX_%d on %s\n",
-			DRV_NAME, __func__, cmbox, mport->name);
+		riocm_error("%s failed to allocate OBMBOX_%d on %s",
+			    __func__, cmbox, mport->name);
 		kfree(cm);
 		return -ENODEV;
 	}
@@ -1657,8 +1640,8 @@ static int riocm_add_mport(struct device *dev,
 	rc = rio_request_inb_mbox(mport, (void *)mport, cmbox,
 				  RIOCM_RX_RING_SIZE, riocm_inb_msg_event);
 	if (rc) {
-		pr_err("%s: %s failed to allocate IBMBOX_%d on %s\n",
-			DRV_NAME, __func__, cmbox, mport->name);
+		riocm_error("%s failed to allocate IBMBOX_%d on %s",
+			    __func__, cmbox, mport->name);
 		rio_release_outb_mbox(mport, cmbox);
 		kfree(cm);
 		return -ENODEV;
@@ -1709,8 +1692,7 @@ static void riocm_remove_mport(struct device *dev,
 	int i;
 	struct cm_dev *cm;
 
-	dev_printk(KERN_DEBUG, dev, "%s: remove mport %s\n",
-		   DRV_NAME, mport->name);
+	riocm_debug(DBG_MPORT, "remove mport %s", mport->name);
 
 	/* Find a matching cm_dev object */
 	list_for_each_entry(cm, &cm_dev_list, list) {
@@ -1761,15 +1743,13 @@ static int __init riocm_init(void)
 
 	ret = class_interface_register(&rio_mport_interface);
 	if (ret) {
-		printk(KERN_WARNING
-			"RIO_CM: class_interface_register error: %d\n", ret);
+		riocm_error("class_interface_register error: %d", ret);
 		goto err_wq;
 	}
 
 	ret = subsys_interface_register(&riocm_interface);
 	if (ret) {
-		printk(KERN_WARNING
-			"RIO_CM: subsys_interface_register error: %d\n", ret);
+		riocm_error("subsys_interface_register error: %d", ret);
 		goto err_cl;
 	}
 
@@ -1783,7 +1763,7 @@ err_wq:
 
 static void __exit riocm_exit(void)
 {
-	printk(KERN_DEBUG "%s: %s\n", DRV_NAME, __func__);
+	riocm_debug(DBG_EXIT, "enter %s", __func__);
 	subsys_interface_unregister(&riocm_interface);
 	class_interface_unregister(&rio_mport_interface);
 	destroy_workqueue(riocm_wq);
