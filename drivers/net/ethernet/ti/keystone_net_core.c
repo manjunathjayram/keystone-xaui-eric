@@ -942,13 +942,15 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	list_for_each_entry(tx_hook, &netcp->txhook_list_head, list) {
 		ret = tx_hook->hook_rtn(tx_hook->order, tx_hook->hook_data,
 					p_info);
-		if (ret) {
-			dev_err(netcp->dev, "TX hook %d "
-				"rejected the packet: %d\n",
-				tx_hook->order, ret);
+		if (unlikely(ret != 0)) {
+			if (ret < 0) {
+				dev_err(netcp->dev, "TX hook %d "
+					"rejected the packet: %d\n",
+					tx_hook->order, ret);
+			}
 			dev_kfree_skb_any(skb);
 			kfree(p_info);
-			return ret;
+			return (ret < 0) ? ret : NETDEV_TX_OK;
 		}
 	}
 
