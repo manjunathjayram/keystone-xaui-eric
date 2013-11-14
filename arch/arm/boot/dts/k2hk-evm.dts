@@ -278,7 +278,7 @@
 		byte-units;			/* packet-units or byte-units */
 		output-rate = <31250000 25000>;
 		overhead-bytes = <24>;		/* valid only if units are bytes */
-		output-queue = <648>;		/* allowed only on root node */
+		output-queue = <645>;		/* allowed only on root node */
 
 		high-priority {
 			byte-units;		/* packet-units or byte-units */
@@ -2011,6 +2011,26 @@
 					/* channel = <xx>; */
 					/* priority = <1>; */
 				};
+				qos-bypass-0 {
+					transmit;
+					label		= "qos-bypass-0";
+					pool		= "pool-net";
+					submit-queue	= <645>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <xx>; */
+					/* priority = <1>; */
+				};
+				qos-bypass-1 {
+					transmit;
+					label		= "qos-bypass-1";
+					pool		= "pool-net";
+					submit-queue	= <645>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <xx>; */
+					/* priority = <1>; */
+				};
 				parx {
 					receive;
 					label		= "parx";
@@ -2470,7 +2490,7 @@
 				label = "keystone-cpsw";
 				serdes_at_probe = <1>;
 
-				intf_tx_queues = <6>;
+				intf_tx_queues = <7>;
 
 				sgmii_module_ofs  = <0x100>;
 				switch_module_ofs = <0x800>;
@@ -2546,52 +2566,60 @@
 
 				interface-0 {
 					chan-0 {
+						tx-channel = "qos-bypass-0";
+						tx_queue_depth = <128>;
+					};
+					chan-1 {
 						tx-channel = "qos0";
 						tx_queue_depth = <64>;
 					};
-					chan-1 {
+					chan-2 {
 						tx-channel = "qos1";
 						tx_queue_depth = <64>;
 					};
-					chan-2 {
+					chan-3 {
 						tx-channel = "qos2";
 						tx_queue_depth = <64>;
 					};
-					chan-3 {
+					chan-4 {
 						tx-channel = "qos3";
 						tx_queue_depth = <64>;
 					};
-					chan-4 {
+					chan-5 {
 						tx-channel = "qos4";
 						tx_queue_depth = <64>;
 					};
-					chan-5 {
+					chan-6 {
 						tx-channel = "qos5";
 						tx_queue_depth = <64>;
 					};
 				};
 				interface-1 {
 					chan-0 {
+						tx-channel = "qos-bypass-1";
+						tx_queue_depth = <128>;
+					};
+					chan-1 {
 						tx-channel = "qos6";
 						tx_queue_depth = <64>;
 					};
-					chan-1 {
+					chan-2 {
 						tx-channel = "qos7";
 						tx_queue_depth = <64>;
 					};
-					chan-2 {
+					chan-3 {
 						tx-channel = "qos8";
 						tx_queue_depth = <64>;
 					};
-					chan-3 {
+					chan-4 {
 						tx-channel = "qos9";
 						tx_queue_depth = <64>;
 					};
-					chan-4 {
+					chan-5 {
 						tx-channel = "qos10";
 						tx_queue_depth = <64>;
 					};
-					chan-5 {
+					chan-6 {
 						tx-channel = "qos11";
 						tx_queue_depth = <64>;
 					};
