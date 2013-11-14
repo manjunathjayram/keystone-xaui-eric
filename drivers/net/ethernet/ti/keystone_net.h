@@ -25,6 +25,9 @@
 #define NETCP_MAX_FRAME_SIZE	9504
 #define NETCP_MAX_MCAST_ADDR	16
 
+/* Success return from a tx_hook asking for the packet to be dropped */
+#define	NETCP_TX_DROP	1
+
 #define SGMII_LINK_MAC_MAC_AUTONEG	0
 #define SGMII_LINK_MAC_PHY		1
 #define SGMII_LINK_MAC_MAC_FORCED	2
