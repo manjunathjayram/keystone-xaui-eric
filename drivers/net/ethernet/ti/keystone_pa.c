@@ -282,6 +282,7 @@ struct pa_device {
 	u32				 txhook_softcsum;
 	u32				 rxhook_order;
 	u32				 multi_if;
+	u32				 mark_mcast_match[2];
 	u32				 inuse_if_count;
 	u32				 lut_inuse_count;
 	struct pa_lut_entry		 *lut;
@@ -1316,6 +1317,7 @@ static int pa_fmtcmd_next_route(struct netcp_packet *p_info, const struct pa_cmd
 	struct pasaho_next_route	*nr;
 	int	size;
 	u16	pdest;
+	u8	ps_flags;
 
 	/* Make sure the destination is valid */
 	switch (route->dest) {
@@ -1329,23 +1331,20 @@ static int pa_fmtcmd_next_route(struct netcp_packet *p_info, const struct pa_cmd
 		return -EINVAL;
 	}
 
-	size = route->pkt_type_emac_ctrl ? sizeof(*nr) : (sizeof(*nr) - sizeof(nr->word1));
+	size = sizeof(*nr);
 	nr = (struct pasaho_next_route *)netcp_push_psdata(p_info, size);
 	if (!nr)
 		return -ENOMEM;
 
-	if (route->pkt_type_emac_ctrl) {
-		u8 ps_flags;
-		PASAHO_SET_E(nr, 1);
+	PASAHO_SET_E(nr, 1);
 
-		ps_flags = (route->pkt_type_emac_ctrl & PA_EMAC_CTRL_CRC_DISABLE) ?
-				PAFRM_ETH_PS_FLAGS_DISABLE_CRC : 0;
+	ps_flags = (route->pkt_type_emac_ctrl & PA_EMAC_CTRL_CRC_DISABLE) ?
+			PAFRM_ETH_PS_FLAGS_DISABLE_CRC : 0;
 
-		ps_flags |= ((route->pkt_type_emac_ctrl & PA_EMAC_CTRL_PORT_MASK) <<
-				PAFRM_ETH_PS_FLAGS_PORT_SHIFT);
+	ps_flags |= ((route->pkt_type_emac_ctrl & PA_EMAC_CTRL_PORT_MASK) <<
+			PAFRM_ETH_PS_FLAGS_PORT_SHIFT);
 
-		PASAHO_SET_PKTTYPE(nr, ps_flags);
-	}
+	PASAHO_SET_PKTTYPE(nr, ps_flags);
 
 	PASAHO_SET_CMDID(nr, PASAHO_PAMOD_NROUTE);
 	PASAHO_SET_DEST(nr, pdest);
@@ -1443,8 +1442,19 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	/* Generate the route_cmd */
 	memset(&route_cmd, 0, sizeof(route_cmd));
 	route_cmd.dest = PA_DEST_EMAC;
-	if (pa_dev->multi_if)
-		route_cmd.pkt_type_emac_ctrl = netcp_priv->cpsw_port;
+	if (pa_dev->multi_if) {
+		if (likely(skb->mark == 0) ||
+		    likely((skb->mark & pa_dev->mark_mcast_match[1]) !=
+				pa_dev->mark_mcast_match[0])) {
+			/* normal port-specific output packet */
+			route_cmd.pkt_type_emac_ctrl = netcp_priv->cpsw_port;
+		} else {
+			/* Drop packet if port not in mask */
+			if ((skb->mark & BIT(netcp_priv->cpsw_port - 1)) == 0) {
+				return NETCP_TX_DROP;
+			}
+		}
+	}
 
 	/* Generate the next route command */
 	size = pa_fmtcmd_next_route(p_info, &route_cmd);
@@ -2351,6 +2361,26 @@ static int pa_probe(struct netcp_device *netcp_device,
 		pa_dev->rxhook_order = PA_RXHOOK_ORDER;
 	}
 	dev_dbg(dev, "rxhook-order %u\n", pa_dev->rxhook_order);
+
+	ret = of_property_read_u32_array(node, "mark_mcast_match",
+					pa_dev->mark_mcast_match, 2);
+	if (ret < 0) {
+		if (ret != -EINVAL) {
+			dev_err(dev, "Error parsing \"mark_mcast_match\" value"
+				" -- parameter ignored\n");
+		}
+		pa_dev->mark_mcast_match[0] = 0;
+		pa_dev->mark_mcast_match[1] = 0;
+	} else if (((pa_dev->mark_mcast_match[0] & 0xff) != 0) ||
+		   ((pa_dev->mark_mcast_match[1] & 0xff) != 0) ||
+		   ((pa_dev->mark_mcast_match[0] & ~pa_dev->mark_mcast_match[1]) != 0)) {
+		dev_err(dev, "Error in \"mark_mcast_match\" value"
+				" -- parameter ignored\n");
+		pa_dev->mark_mcast_match[0] = 0;
+		pa_dev->mark_mcast_match[1] = 0;
+	}
+	dev_dbg(dev, "mark_mcast_match = <%08x %08x>\n",
+		 pa_dev->mark_mcast_match[0], pa_dev->mark_mcast_match[1]);
 
 	if (!of_get_property(node, "lut-ranges", &len)) {
 		dev_err(dev, "No lut-entry array in dt bindings for PA\n");
