@@ -950,7 +950,13 @@ static void rproc_fw_config_virtio(const struct firmware *fw, void *context)
 
 	memcpy(rproc->cached_table, table, tablesz);
 	rproc->table_ptr = rproc->cached_table;
-
+	if (!fw) {
+		/* handle fw resources which are required to boot rproc */
+		ret = rproc_handle_resources(rproc, tablesz,
+			rproc_loading_handlers);
+		if (ret)
+			goto out;
+	}
 	/* count the number of notify-ids */
 	rproc->max_notifyid = -1;
 	ret = rproc_handle_resources(rproc, tablesz, rproc_count_vrings_handler);
