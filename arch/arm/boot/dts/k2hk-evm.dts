@@ -2894,38 +2894,6 @@
 			clocks = <&clktimer15>;
 		};
 
-		gpio_poweroff {
-			compatible = "gpio-poweroff";
-			/*
-			 * Change this as needed in the target board to match the
-			 * pin used for signaling Power down event from the SoC.
-			 * It is assumed that external controller reads this pin
-			 * and remove power to the SoC. On EVM, pin 4 output
-			 * can be read from BMC to test this.
-			 */
-			gpios = <&gpio0 4 0>;
-		};
-
-		gpio_keys {
-			compatible = "gpio-keys";
-			#address-cells = <1>;
-			#size-cells = <0>;
-
-			button@1 {
-				label = "Power button";
-				/* this is the key power button defined in Linux input.h */
-				linux,code = <116>;
-				/* EV_KEY */
-				linux,input-type = <1>;
-				/*
-				 * On EVM use GPIO pin 3 since it is also connected to
-				 * BMC to generate a shutdown event to ARM. Change this
-				 * as needed in the target board.
-				 */
-				gpios = <&gpio0 3 0>;
-			};
-		};
-
 		pmu {
 			compatible = "arm,cortex-a15-pmu";
 			interrupts = <0 20 0xf01 0 21 0xf01 0 22 0xf01 0 23 0xf01 >;
