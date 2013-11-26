@@ -105,15 +105,16 @@ static int cpts_fifo_read(struct cpts *cpts, int match)
 			pr_debug("cpts: list cleaned up %d\n", removed);
 		}
 		event = list_first_entry(&cpts->pool, struct cpts_event, list);
-		event->tmo = jiffies + 2;
+		event->tmo = jiffies + CPTS_TMO;
 		event->high = hi;
 		event->low = lo;
 		type = event_type(event);
 		switch (type) {
+		case CPTS_EV_COMP:
+			event->tmo += (CPTS_COMP_TMO - CPTS_TMO);
 		case CPTS_EV_PUSH:
 		case CPTS_EV_RX:
 		case CPTS_EV_TX:
-		case CPTS_EV_COMP:
 			list_del_init(&event->list);
 			list_add_tail(&event->list, &cpts->events);
 			break;
@@ -610,11 +611,6 @@ static u64 cpts_find_ts(struct cpts *cpts, struct sk_buff *skb, int ev_type)
 	cpts_fifo_read(cpts, CPTS_EV_PUSH);
 	list_for_each_safe(this, next, &cpts->events) {
 		event = list_entry(this, struct cpts_event, list);
-		if (event_expired(event)) {
-			list_del_init(&event->list);
-			list_add(&event->list, &cpts->pool);
-			continue;
-		}
 		mtype = (event->high >> MESSAGE_TYPE_SHIFT) & MESSAGE_TYPE_MASK;
 		seqid = (event->high >> SEQUENCE_ID_SHIFT) & SEQUENCE_ID_MASK;
 		if (ev_type == event_type(event) &&
