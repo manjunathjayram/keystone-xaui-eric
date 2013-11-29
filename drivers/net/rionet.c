@@ -48,12 +48,7 @@ MODULE_LICENSE("GPL");
 #define RIONET_TX_RING_SIZE	CONFIG_RIONET_TX_SIZE
 #define RIONET_RX_RING_SIZE	CONFIG_RIONET_RX_SIZE
 #define RIONET_MAX_NETS		8
-
-#if defined(CONFIG_TI_KEYSTONE_RAPIDIO)
-#define RIONET_MSG_SIZE         1552
-#else
 #define RIONET_MSG_SIZE         RIO_MAX_MSG_SIZE
-#endif
 
 struct rionet_private {
 	struct rio_mport *mport;
@@ -510,11 +505,7 @@ static int rionet_setup_netdev(struct rio_mport *mport, struct net_device *ndev)
 	ndev->dev_addr[5] = device_id & 0xff;
 
 	ndev->netdev_ops = &rionet_netdev_ops;
-#if defined(CONFIG_TI_KEYSTONE_RAPIDIO)
-	ndev->mtu = ETH_FRAME_LEN - 14;
-#else
 	ndev->mtu = RIONET_MSG_SIZE - 14;
-#endif
 	ndev->features = NETIF_F_LLTX;
 	SET_ETHTOOL_OPS(ndev, &rionet_ethtool_ops);
 
