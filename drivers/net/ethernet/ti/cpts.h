@@ -109,7 +109,9 @@ enum {
    It also take care of misalignments that might occur
    around counter half roll over.
 */
-#define CPTS_OVERFLOW_PERIOD (HZ / 5)
+#define CPTS_OVERFLOW_PERIOD	(HZ / 5)
+#define CPTS_COMP_TMO		(CPTS_OVERFLOW_PERIOD * 2)
+#define CPTS_TMO		2
 
 #define CPTS_FIFO_DEPTH 16
 #define CPTS_MAX_EVENTS 32
