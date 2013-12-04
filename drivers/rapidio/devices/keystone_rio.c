@@ -2736,7 +2736,7 @@ static void keystone_rio_port_chk_task(struct work_struct *work)
 				 "RIO: port RIO%d host_deviceid %d registered\n",
 				port, mport->host_deviceid);
 		} else {
-			krio_priv->ports_registering = (1 << port);
+			krio_priv->ports_registering |= (1 << port);
 
 			dev_dbg(krio_priv->dev, "RIO: port %d not ready: %d\n",
 				port, krio_priv->ports_registering);
@@ -2905,7 +2905,7 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 				 "RIO: port RIO%d host_deviceid %d registered\n",
 				 port, mport->host_deviceid);
 		} else {
-			krio_priv->ports_registering = (1 << port);
+			krio_priv->ports_registering |= (1 << port);
 			dev_warn(&pdev->dev, "RIO: port %d not ready: %08x\n",
 				 port, krio_priv->ports_registering);
 		}
@@ -3005,17 +3005,18 @@ static int __init keystone_rio_probe(struct platform_device *pdev)
 	
 	dev_info(&pdev->dev, "KeyStone RapidIO driver %s\n", DRIVER_VER);
 
-	/* Setup the sRIO controller */
-	res = keystone_rio_setup_controller(pdev, krio_priv);
-	if (res < 0)
-		return res;
-	
 #ifdef CONFIG_RAPIDIO_DEV
 	/* Register userspace interface */ 
 	res = rio_dev_init();
 	if (res < 0)
 		dev_err(krio_priv->dev, "rio_dev_init failed!\n");
 #endif
+
+	/* Setup the sRIO controller */
+	res = keystone_rio_setup_controller(pdev, krio_priv);
+	if (res < 0)
+		return res;
+	
 	return 0;
 }
 
