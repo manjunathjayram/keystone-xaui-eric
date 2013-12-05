@@ -49,6 +49,12 @@ MODULE_LICENSE("GPL");
 #define RIONET_RX_RING_SIZE	CONFIG_RIONET_RX_SIZE
 #define RIONET_MAX_NETS		8
 
+#if defined(CONFIG_TI_KEYSTONE_RAPIDIO)
+#define RIONET_MSG_SIZE         1552
+#else
+#define RIONET_MSG_SIZE         RIO_MAX_MSG_SIZE
+#endif
+
 struct rionet_private {
 	struct rio_mport *mport;
 	struct sk_buff *rx_skb[RIONET_RX_RING_SIZE];
@@ -105,7 +111,7 @@ static int rionet_rx_clean(struct net_device *ndev)
 			break;
 
 		rnet->rx_skb[i]->data = data;
-		skb_put(rnet->rx_skb[i], RIO_MAX_MSG_SIZE);
+		skb_put(rnet->rx_skb[i], RIONET_MSG_SIZE);
 		rnet->rx_skb[i]->protocol =
 		    eth_type_trans(rnet->rx_skb[i], ndev);
 		error = netif_rx(rnet->rx_skb[i]);
@@ -114,7 +120,7 @@ static int rionet_rx_clean(struct net_device *ndev)
 			ndev->stats.rx_dropped++;
 		} else {
 			ndev->stats.rx_packets++;
-			ndev->stats.rx_bytes += RIO_MAX_MSG_SIZE;
+			ndev->stats.rx_bytes += RIONET_MSG_SIZE;
 		}
 
 	} while ((i = (i + 1) % RIONET_RX_RING_SIZE) != rnet->rx_slot);
@@ -129,7 +135,7 @@ static void rionet_rx_fill(struct net_device *ndev, int end)
 
 	i = rnet->rx_slot;
 	do {
-		rnet->rx_skb[i] = dev_alloc_skb(RIO_MAX_MSG_SIZE);
+		rnet->rx_skb[i] = dev_alloc_skb(RIONET_MSG_SIZE);
 
 		if (!rnet->rx_skb[i])
 			break;
@@ -215,6 +221,7 @@ static int rionet_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	return NETDEV_TX_OK;
 }
 
+#if !defined(CONFIG_TI_KEYSTONE_RAPIDIO)
 static void rionet_dbell_event(struct rio_mport *mport, void *dev_id, u16 sid, u16 tid,
 			       u16 info)
 {
@@ -247,6 +254,7 @@ static void rionet_dbell_event(struct rio_mport *mport, void *dev_id, u16 sid, u
 			       DRV_NAME);
 	}
 }
+#endif
 
 static void rionet_inb_msg_event(struct rio_mport *mport, void *dev_id, int mbox, int slot)
 {
@@ -300,12 +308,14 @@ static int rionet_open(struct net_device *ndev)
 	if (netif_msg_ifup(rnet))
 		printk(KERN_INFO "%s: open\n", DRV_NAME);
 
+#if !defined(CONFIG_TI_KEYSTONE_RAPIDIO)
 	if ((rc = rio_request_inb_dbell(rnet->mport,
 					(void *)ndev,
 					RIONET_DOORBELL_JOIN,
 					RIONET_DOORBELL_LEAVE,
 					rionet_dbell_event)) < 0)
 		goto out;
+#endif
 
 	if ((rc = rio_request_inb_mbox(rnet->mport,
 				       (void *)ndev,
@@ -336,6 +346,7 @@ static int rionet_open(struct net_device *ndev)
 
 	list_for_each_entry_safe(peer, tmp,
 				 &nets[rnet->mport->id].peers, node) {
+#if !defined(CONFIG_TI_KEYSTONE_RAPIDIO)
 		if (!(peer->res = rio_request_outb_dbell(peer->rdev,
 							 RIONET_DOORBELL_JOIN,
 							 RIONET_DOORBELL_LEAVE)))
@@ -347,6 +358,23 @@ static int rionet_open(struct net_device *ndev)
 
 		/* Send a join message */
 		rio_send_doorbell(peer->rdev, RIONET_DOORBELL_JOIN);
+#else
+		/* Read configuration again (it may have changed) */
+		rio_read_config_32(peer->rdev, RIO_PEF_CAR, &peer->rdev->pef);
+		rio_read_config_32(peer->rdev, RIO_SRC_OPS_CAR,
+						&peer->rdev->src_ops);
+		rio_read_config_32(peer->rdev, RIO_DST_OPS_CAR,
+						&peer->rdev->dst_ops);
+
+		/* Hack for adding INB_MBOX and INB_DOORBELL on
+		   KeyStone devices
+		*/
+		peer->rdev->pef |= RIO_PEF_INB_DOORBELL | RIO_PEF_INB_MBOX;
+
+		if (dev_rionet_capable(peer->rdev))
+			nets[rnet->mport->id].active[peer->rdev->destid] =
+								  peer->rdev;
+#endif
 	}
 
       out:
@@ -371,14 +399,20 @@ static int rionet_close(struct net_device *ndev)
 	list_for_each_entry_safe(peer, tmp,
 				 &nets[rnet->mport->id].peers, node) {
 		if (nets[rnet->mport->id].active[peer->rdev->destid]) {
+#if !defined(CONFIG_TI_KEYSTONE_RAPIDIO)
 			rio_send_doorbell(peer->rdev, RIONET_DOORBELL_LEAVE);
+#endif
 			nets[rnet->mport->id].active[peer->rdev->destid] = NULL;
 		}
+#if !defined(CONFIG_TI_KEYSTONE_RAPIDIO)
 		rio_release_outb_dbell(peer->rdev, peer->res);
+#endif
 	}
 
+#if !defined(CONFIG_TI_KEYSTONE_RAPIDIO)
 	rio_release_inb_dbell(rnet->mport, RIONET_DOORBELL_JOIN,
 			      RIONET_DOORBELL_LEAVE);
+#endif
 	rio_release_inb_mbox(rnet->mport, RIONET_MAILBOX);
 	rio_release_outb_mbox(rnet->mport, RIONET_MAILBOX);
 
@@ -476,7 +510,11 @@ static int rionet_setup_netdev(struct rio_mport *mport, struct net_device *ndev)
 	ndev->dev_addr[5] = device_id & 0xff;
 
 	ndev->netdev_ops = &rionet_netdev_ops;
-	ndev->mtu = RIO_MAX_MSG_SIZE - 14;
+#if defined(CONFIG_TI_KEYSTONE_RAPIDIO)
+	ndev->mtu = ETH_FRAME_LEN - 14;
+#else
+	ndev->mtu = RIONET_MSG_SIZE - 14;
+#endif
 	ndev->features = NETIF_F_LLTX;
 	SET_ETHTOOL_OPS(ndev, &rionet_ethtool_ops);
 
@@ -546,6 +584,7 @@ static int rionet_probe(struct rio_dev *rdev, const struct rio_device_id *id)
 	} else if (nets[netid].ndev == NULL)
 		goto out;
 
+#if !defined(CONFIG_TI_KEYSTONE_RAPIDIO)
 	/*
 	 * If the remote device has mailbox/doorbell capabilities,
 	 * add it to the peer list.
@@ -558,6 +597,21 @@ static int rionet_probe(struct rio_dev *rdev, const struct rio_device_id *id)
 		peer->rdev = rdev;
 		list_add_tail(&peer->node, &nets[netid].peers);
 	}
+#else
+	if (!(rdev->pef & RIO_PEF_SWITCH)) {
+		peer = kmalloc(sizeof(struct rionet_peer), GFP_KERNEL);
+		if (!peer) {
+			rc = -ENOMEM;
+			goto out;
+		}
+		peer->rdev = rdev;
+
+		pr_info("Using %s (vid %4.4x did %4.4x)\n",
+		       rio_name(rdev), rdev->vid, rdev->did);
+
+		list_add_tail(&peer->node, &nets[netid].peers);
+	}
+#endif
 
 	rio_set_drvdata(rdev, nets[netid].ndev);
 
@@ -576,6 +630,19 @@ static struct rio_driver rionet_driver = {
 	.remove = rionet_remove,
 };
 
+#ifdef CONFIG_RIONET
+int rionet_init(void)
+{
+	return rio_register_driver(&rionet_driver);
+}
+EXPORT_SYMBOL_GPL(rionet_init);
+
+void rionet_exit(void)
+{
+	rio_unregister_driver(&rionet_driver);
+}
+EXPORT_SYMBOL_GPL(rionet_exit);
+#else
 static int __init rionet_init(void)
 {
 	return rio_register_driver(&rionet_driver);
@@ -588,3 +655,4 @@ static void __exit rionet_exit(void)
 
 late_initcall(rionet_init);
 module_exit(rionet_exit);
+#endif
