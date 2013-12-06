@@ -1338,6 +1338,17 @@ MODULE_PARM_DESC(scan, "Start RapidIO network enumeration/discovery "
  * provide a matching cleanup_module routine.
  */
 
+#ifdef CONFIG_TI_KEYSTONE_RAPIDIO
+int rio_basic_attach(void)
+{
+	if (rio_register_scan(RIO_MPORT_ANY, &rio_scan_ops))
+		return -EIO;
+	if (scan)
+		rio_init_mports();
+	return 0;
+}
+EXPORT_SYMBOL_GPL(rio_basic_attach);
+#else
 static int __init rio_basic_attach(void)
 {
 	if (rio_register_scan(RIO_MPORT_ANY, &rio_scan_ops))
@@ -1348,6 +1359,7 @@ static int __init rio_basic_attach(void)
 }
 
 late_initcall(rio_basic_attach);
+#endif
 
 MODULE_DESCRIPTION("Basic RapidIO enumeration/discovery");
 MODULE_LICENSE("GPL");
