@@ -2942,8 +2942,9 @@ static int __init keystone_rio_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, krio_priv);
 	krio_priv->dev = &(pdev->dev);
+#ifdef CONFIG_RIONET
 	krio_priv->rionet_started = 0;
-
+#endif
 	/* Get default config from device tree */
 	keystone_rio_get_controller_defaults(node, krio_priv);
 
