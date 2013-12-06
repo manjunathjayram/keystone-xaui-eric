@@ -82,8 +82,17 @@
 /*
  * Various RIO defines
  */
-#define KEYSTONE_RIO_TIMEOUT_CNT	1000
-#define KEYSTONE_RIO_REGISTER_DELAY	(3*HZ)
+#define KEYSTONE_RIO_DBELL_NUMBER         4
+#define KEYSTONE_RIO_DBELL_VALUE_MAX      (KEYSTONE_RIO_DBELL_NUMBER * 16)
+#define KEYSTONE_RIO_DBELL_MASK           (KEYSTONE_RIO_DBELL_VALUE_MAX - 1)
+
+#define KEYSTONE_RIO_TIMEOUT_CNT	  1000
+#define KEYSTONE_RIO_TIMEOUT_MSEC         100
+#define KEYSTONE_RIO_TIMEOUT_NSEC         1000
+#define KEYSTONE_RIO_RETRY_CNT            4
+#define KEYSTONE_RIO_REGISTER_DELAY	  (3*HZ)
+
+#define K2_PLL_LOCK_TIMEOUT	          100 /* 100ms timeout */
 
 /*
  * RIO error, reset and special event interrupt defines
@@ -137,6 +146,35 @@
 #define KEYSTONE_RIO_ID_TI		(0x00000030)
 #define KEYSTONE_RIO_EXT_FEAT_PTR	(0x00000100)
 
+
+#define KEYSTONE_RIO_RETRY_CNT          4
+#define KEYSTONE_RIO_MAX_DIO_PKT_SIZE   0x100000 /* hardware support up to 1MB */
+
+/*
+ * RIO error, reset and special event interrupt defines
+  */
+#define KEYSTONE_RIO_ERR_RST_EVNT_MASK  0x00010f07
+
+/* Refer to bits in KEYSTONE_RIO_ERR_RST_EVNT_MASK */
+#define KEYSTONE_RIO_RESET_INT          16  /* device reset interrupt on any port */
+#define KEYSTONE_RIO_PORT3_ERROR_INT    11  /* port 3 error */
+#define KEYSTONE_RIO_PORT2_ERROR_INT    10  /* port 2 error */
+#define KEYSTONE_RIO_PORT1_ERROR_INT    9   /* port 1 error */
+#define KEYSTONE_RIO_PORT0_ERROR_INT    8   /* port 0 error */
+#define KEYSTONE_RIO_EVT_CAP_ERROR_INT  2   /* logical layer error management event capture */
+#define KEYSTONE_RIO_PORT_WRITEIN_INT   1   /* port-write-in request received on any port */
+#define KEYSTONE_RIO_MCAST_EVT_INT      0   /* multi-cast event control symbol interrupt received on any port */
+
+/*
+ * Interrupt and DMA event mapping
+ * MP RXU and TXU interrupts are provided in platform_data
+ */
+#define KEYSTONE_GEN_RIO_INT            0   /* RIO interrupt used for generic RIO events */
+#define KEYSTONE_LSU_RIO_INT            1   /* RIO interrupt used for LSU */
+
+/* Mask for receiving both error and good completion LSU interrupts */
+#define KEYSTONE_RIO_ICSR_LSU0(src_id)  ((0x10001) << (src_id))
+
 /*
  * Maximum message size fo RIONET
  */
@@ -175,16 +213,20 @@ struct keystone_rio_board_controller_info {
 	u32		serdes_cfg_regs_base;
 	u32		serdes_cfg_regs_size;
 
-	u16 ports;  /* bitfield of port(s) to probe on this controller */
-	u16 mode;   /* hw mode (default serdes cfg). idx into serdes_config[] */
-	u16 id;     /* host id */
-	u16 size;   /* RapidIO common transport system size.
-		     * 0 - Small size. 256 devices.
-		     * 1 - Large size, 65536 devices. */
-	u16 keystone2_serdes;
-	u16 serdes_config_num;
-	u32 serdes_baudrate;
-	u32 path_mode;
+	u32             ports;  /* bitfield of port(s) to probe on this controller */
+	u32             mode;   /* hw mode (default serdes cfg). idx into serdes_config[] */
+	u32             id;     /* host id */
+	u32             size;   /* RapidIO common transport system size.
+		                 * 0 - Small size. 256 devices.
+		                 * 1 - Large size, 65536 devices. */
+	u16             keystone2_serdes;
+	u16             serdes_config_num;
+	u32             serdes_baudrate;
+	u32             path_mode;
+
+	int             rio_irq;
+      	int             lsu_irq;
+
 	struct keystone_serdes_config serdes_config[4];
 };
 
@@ -338,7 +380,7 @@ struct keystone_rio_regs {
 	struct {
 		u32 addr_msb;		/* 0d00 */
 		u32 addr_lsb_cfg_ofs;	/* 0d04 */
-		u32 dsp_addr;		/* 0d08 */
+		u32 phys_addr;		/* 0d08 */
 		u32 dbell_val_byte_cnt;	/* 0d0c */
 		u32 destid;		/* 0d10 */
 		u32 dbell_info_fttype;	/* 0d14 */
