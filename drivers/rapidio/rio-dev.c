@@ -44,6 +44,7 @@
 #define N_RIO_MINORS	32	/* number of minors per instance (up to 256) */
 
 static unsigned long minors[N_RIO_MINORS / BITS_PER_LONG];
+static unsigned long init_done = 0;
 
 static LIST_HEAD(device_list);
 static DEFINE_MUTEX(device_list_lock);
@@ -579,6 +580,9 @@ int rio_dev_add(struct rio_dev *rdev)
 	int status;
 	unsigned long minor;
 
+	if (!init_done)
+		return -ENODEV;
+
 	/*
 	 * If we can allocate a minor number, hook up this device.
 	 * Reusing minors is fine so long as udev or mdev is working.
@@ -649,6 +653,9 @@ int rio_dev_init(void)
 		unregister_chrdev(RIO_DEV_MAJOR, RIO_DEV_NAME);
 		return status;
 	}
+
+	init_done = 1;
+
 	return 0;
 }
 
@@ -656,6 +663,7 @@ void rio_dev_exit(void)
 {
 	class_unregister(&rio_dev_class);
 	unregister_chrdev(RIO_DEV_MAJOR, RIO_DEV_NAME);
+	init_done = 0;
 }
 
 EXPORT_SYMBOL_GPL(rio_dev_init);
