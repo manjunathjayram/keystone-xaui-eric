@@ -176,16 +176,11 @@
 #define KEYSTONE_RIO_ICSR_LSU0(src_id)  ((0x10001) << (src_id))
 
 /*
- * Maximum message size fo RIONET
- */
-#define MACH_RIO_MAX_MSG_SIZE   1552
-
-/*
  * Definition of the different RapidIO packet types according to the RapidIO
  * specification 2.0
  */
-#define RIO_PACKET_TYPE_STREAM  9  /* Data Streaming */
-#define RIO_PACKET_TYPE_MESSAGE 11 /* Message */
+#define RIO_PACKET_TYPE_STREAM          9  /* Data Streaming */
+#define RIO_PACKET_TYPE_MESSAGE         11 /* Message */
 
 /*
  * SerDes configurations
