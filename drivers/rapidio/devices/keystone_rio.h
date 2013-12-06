@@ -642,5 +642,6 @@ struct keystone_rio_fabric_regs {
 extern int  rionet_init(void);
 extern void rionet_exit(void);
 #endif
+extern int rio_basic_attach(void);
 
 #endif /* KEYSTONE_RIO_H */
