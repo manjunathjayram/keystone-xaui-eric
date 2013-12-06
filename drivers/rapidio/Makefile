@@ -6,5 +6,6 @@ obj-$(CONFIG_RAPIDIO_ENUM_BASIC) += rio-scan.o
 
 obj-$(CONFIG_RAPIDIO)		+= switches/
 obj-$(CONFIG_RAPIDIO)		+= devices/
+obj-$(CONFIG_RAPIDIO_DEV)       += rio-dev.o
 
 subdir-ccflags-$(CONFIG_RAPIDIO_DEBUG) := -DDEBUG
