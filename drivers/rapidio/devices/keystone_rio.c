@@ -1775,6 +1775,13 @@ struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 	port->phys_efptr    = 0x100;
 
 	rio_register_mport(port);
+	
+	/*
+	 * We may have a very late mport registration 
+	 * so perform explicitely the basic attachement (and
+	 * eventually scanning here).
+	 */
+	rio_basic_attach();
 
 	return port;
 }
