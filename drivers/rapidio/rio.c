@@ -522,6 +522,39 @@ rio_mport_get_physefb(struct rio_mport *port, int local,
 EXPORT_SYMBOL_GPL(rio_mport_get_physefb);
 
 /**
+ * rio_get_devt - Begin or continue searching for a RIO device by dev_t
+ * @devt: Associated dev_t to find
+ * @from: Previous RIO device found in search, or %NULL for new search
+ *
+ * Iterates through the list of known RIO devices. If a RIO device is
+ * found with a matching @devt, a pointer to its device
+ * structure is returned. Otherwise, %NULL is returned. A new search
+ * is initiated by passing %NULL to the @from argument. Otherwise, if
+ * @from is not %NULL, searches continue from next device on the global
+ * list.
+ */
+struct rio_dev *rio_get_devt(dev_t devt, struct rio_dev *from)
+{
+	struct list_head *n;
+	struct rio_dev *rdev;
+
+	spin_lock(&rio_global_list_lock);
+	n = from ? from->global_list.next : rio_devices.next;
+
+	while (n && (n != &rio_devices)) {
+		rdev = rio_dev_g(n);
+		if (rdev->dev.devt == devt)
+			goto exit;
+		n = n->next;
+	}
+	rdev = NULL;
+exit:
+	spin_unlock(&rio_global_list_lock);
+	return rdev;
+}
+EXPORT_SYMBOL_GPL(rio_get_devt);
+
+/**
  * rio_get_comptag - Begin or continue searching for a RIO device by component tag
  * @comp_tag: RIO component tag to match
  * @from: Previous RIO device found in search, or %NULL for new search

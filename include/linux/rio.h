@@ -24,6 +24,12 @@
 #include <linux/dmaengine.h>
 #endif
 
+/* Direct I/O modes */
+#define RIO_DIO_MODE_READ    0x0000
+#define RIO_DIO_MODE_WRITER  0x0001
+#define RIO_DIO_MODE_WRITE   0x0002
+#define RIO_DIO_MODE_SWRITE  0x0003
+
 #define RIO_NO_HOPCOUNT		-1
 #define RIO_INVALID_DESTID	0xffff
 
@@ -46,6 +52,11 @@
 
 #define RIO_MAX_MBOX		4
 #define RIO_MAX_MSG_SIZE	0x1000
+#define RIO_MAX_DIO_CHUNK_SIZE  0x100000 /* DirectIO maximal size of contiguous physical
+					    memory than can be transferred at once.
+					    It then up to the transport layer to split them
+					    if needed. sRIO rev2 will support DIO transfer up
+					    to 1MB. */
 
 /*
  * Error values that may be returned by RIO functions.
@@ -126,6 +137,16 @@ struct rio_switch {
 };
 
 /**
+ * struct dio_dev - DirectI/O info for a RIO device
+ * @write_mode: Indicate the type of DIO write operations for this device
+ * @base_offset: Address of the /dev file offset 0 in the device address space
+ */
+struct dio_dev {
+	u16 write_mode;
+	u32 base_offset;
+};
+
+/**
  * struct rio_dev - RIO device info
  * @global_list: Node in list of all RIO devices
  * @net_list: Node in list of RIO devices in a network
@@ -181,6 +202,7 @@ struct rio_dev {
 	u8 hopcount;
 	struct rio_dev *prev;
 	struct rio_switch rswitch[0];	/* RIO switch info */
+	struct dio_dev dio;
 };
 
 #define rio_dev_g(n) list_entry(n, struct rio_dev, global_list)
@@ -320,6 +342,7 @@ struct rio_net {
  * @get_inb_message: Callback to get a message from an inbound mailbox queue.
  * @map_inb: Callback to map RapidIO address region into local memory space.
  * @unmap_inb: Callback to unmap RapidIO address region mapped with map_inb().
+ * @transfer: Callback to perform a Direct I/O transfer.
  */
 struct rio_ops {
 	int (*lcread) (struct rio_mport *mport, int index, u32 offset, int len,
@@ -345,6 +368,8 @@ struct rio_ops {
 	int (*map_inb)(struct rio_mport *mport, dma_addr_t lstart,
 			u64 rstart, u32 size, u32 flags);
 	void (*unmap_inb)(struct rio_mport *mport, dma_addr_t lstart);
+	int (*transfer) (struct rio_mport *mport, int index, u16 dest_id,
+			 u32 src_addr,u32 tgt_addr, int size_bytes, int write);
 };
 
 #define RIO_RESOURCE_MEM	0x00000100
@@ -475,6 +500,22 @@ struct rio_scan {
 	int (*enumerate)(struct rio_mport *mport, u32 flags);
 	int (*discover)(struct rio_mport *mport, u32 flags);
 };
+
+#ifdef CONFIG_RAPIDIO_DEV
+
+/* Device Ioctl */
+#define RIO_DIO_BASE_SET     _IOR('R', 0, int) /* Set base offset */
+#define RIO_DIO_BASE_GET     _IOW('R', 1, int) /* Get base offset */
+#define RIO_DIO_MODE_SET     _IOR('R', 2, int) /* Set Direct I/O mode */
+#define RIO_DIO_MODE_GET     _IOW('R', 3, int) /* Get Direct I/O mode */
+#define RIO_DBELL_TX         _IOR('R', 4, int) /* Sent a doorbell */
+#define RIO_DBELL_RX         _IOR('R', 5, int) /* Receive a doorbell */
+
+extern int rio_dev_init(void);
+extern void rio_dev_exit(void);
+extern int rio_dev_add(struct rio_dev *rdev);
+
+#endif /* CONFIG_RAPIDIO_DEV */
 
 /* Architecture and hardware-specific functions */
 extern int rio_register_mport(struct rio_mport *);
