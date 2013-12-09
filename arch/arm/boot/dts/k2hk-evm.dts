@@ -2705,7 +2705,8 @@
 			       0x2902000 0x300>;	/* 4 - rxflow  */
 			/* clocks = <&clkpktproc>; */
 			enable-all;
-			debug;
+			/* debug; */
+			dma-coherent;
 
 			logical-queue-managers	= <4>;
 			queues-per-queue-manager = <4096>;
