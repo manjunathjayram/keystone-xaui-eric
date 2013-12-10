@@ -1794,7 +1794,6 @@ int rio_register_mport(struct rio_mport *port)
 	port->nscan = NULL;
 	mutex_lock(&rio_mport_list_lock);
 	list_add_tail(&port->node, &rio_mports);
-	rio_init_mports();
 	mutex_unlock(&rio_mport_list_lock);
 	return 0;
 }
