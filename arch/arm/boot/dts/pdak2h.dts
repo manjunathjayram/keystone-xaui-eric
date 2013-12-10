@@ -2428,6 +2428,7 @@
 			/* clocks = <&clkpktproc>; */
 			enable-all;
 			/* debug; */
+			dma-coherent;
 
 			logical-queue-managers	= <4>;
 			queues-per-queue-manager = <4096>;
