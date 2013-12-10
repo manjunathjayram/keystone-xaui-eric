@@ -1171,7 +1171,7 @@ static int keystone_rio_hw_init(u32 mode, u32 baud, struct keystone_rio_data *kr
 
 	if (res < 0) {
 		dev_err(krio_priv->dev,
-			"RIO: initialization of SerDes failed\n");
+			"initialization of SerDes failed\n");
 		return res;
 	}
 
@@ -2586,7 +2586,7 @@ static void keystone_rio_get_controller_defaults(struct device_node *node,
 	if (of_property_read_u32 (node, "ports", (u32 *)&(c->ports)))
 		dev_err(krio_priv->dev, "Could not get default ports\n");
 
-	/* Serdes config */
+	/* SerDes config */
 	if (!of_find_property(node, "keystone2-serdes", NULL)) {
 		/* total number of serdes_config[] entries */
 		c->serdes_config_num = 1;
@@ -2733,12 +2733,12 @@ static void keystone_rio_port_chk_task(struct work_struct *work)
 #endif
 
 			dev_info(krio_priv->dev,
-				 "RIO: port RIO%d host_deviceid %d registered\n",
+				 "port RIO%d host_deviceid %d registered\n",
 				port, mport->host_deviceid);
 		} else {
 			krio_priv->ports_registering |= (1 << port);
 
-			dev_dbg(krio_priv->dev, "RIO: port %d not ready: %d\n",
+			dev_dbg(krio_priv->dev, "port %d not ready: %d\n",
 				port, krio_priv->ports_registering);
 		}
 	}
@@ -2791,14 +2791,14 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 
 	if (mode >= krio_priv->board_rio_cfg.serdes_config_num) {
 		dev_warn(&pdev->dev,
-			 "RIO: invalid port mode %d, forcing it to %d\n", mode, 0);
+			 "invalid port mode %d, forcing it to %d\n", mode, 0);
 		mode = 0;
 	}
 
 	if (baud > KEYSTONE_RIO_BAUD_5_000) {
 		baud = KEYSTONE_RIO_BAUD_5_000;
 		dev_warn(&pdev->dev,
-			 "RIO: invalid baud rate, forcing it to 5Gbps\n");
+			 "invalid baud rate, forcing it to 5Gbps\n");
 	}
 
 	switch (baud) {
@@ -2819,13 +2819,14 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 		goto out;
 	}
 
-	dev_info(&pdev->dev, "RIO: initializing %s Gbps interface\n", str);
+	dev_info(&pdev->dev, "initializing %s Gbps interface with SerDes"
+		 " lane configuration %d\n", str, path_mode);
 
 	/* Hardware set up of the controller */
 	res = keystone_rio_hw_init(mode, baud, krio_priv);
 	if (res < 0) {
 		dev_err(&pdev->dev,
-			"RIO: initialization of SRIO hardware failed\n");
+			"initialization of SRIO hardware failed\n");
 		return res;
 	}
 
@@ -2842,7 +2843,7 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 		res = keystone_rio_port_init(p, path_mode, krio_priv);
 		if (res < 0) {
 			dev_err(&pdev->dev,
-				"RIO: initialization of port %d failed\n", p);
+				"initialization of port %d failed\n", p);
 			return res;
 		}
 	}
@@ -2870,7 +2871,7 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 		}
 	}
 
-	dev_info(&pdev->dev, "RIO: Hardware interface successfully initialized "
+	dev_info(&pdev->dev, "Hardware interface successfully initialized "
 		 "on %s Gbps\n", str);
 
 	/* Use and check ports status (but only the requested ones) */
@@ -2902,11 +2903,11 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 #endif
 
 			dev_info(&pdev->dev,
-				 "RIO: port RIO%d host_deviceid %d registered\n",
+				 "port RIO%d host_deviceid %d registered\n",
 				 port, mport->host_deviceid);
 		} else {
 			krio_priv->ports_registering |= (1 << port);
-			dev_warn(&pdev->dev, "RIO: port %d not ready: %08x\n",
+			dev_warn(&pdev->dev, "port %d not ready: %08x\n",
 				 port, krio_priv->ports_registering);
 		}
 	}
