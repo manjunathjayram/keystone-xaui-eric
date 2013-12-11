@@ -62,9 +62,6 @@ struct keystone_rio_data {
 	struct timer_list	timer;
 	struct tasklet_struct	task;
 	unsigned long		rxu_map_bitmap[2];
-#ifdef CONFIG_RIONET
-	u32			rionet_started;
-#endif
 
 	struct dma_chan	       *tx_channel;
 	const char	       *tx_chan_name;
@@ -2695,9 +2692,6 @@ static void keystone_rio_port_chk_task(struct work_struct *work)
 	u32 ports = krio_priv->ports_registering;
 	u32 size  = krio_priv->board_rio_cfg.size;
 	struct rio_mport *mport;
-#ifdef CONFIG_RIONET
-	int has_port_ready = 0;
-#endif
 
 	krio_priv->ports_registering = 0;
 	while (ports) {
@@ -2720,10 +2714,6 @@ static void keystone_rio_port_chk_task(struct work_struct *work)
 			__raw_writel(__raw_readl(&(krio_priv->serial_port_regs->sp[port].err_stat)),
 				     &(krio_priv->serial_port_regs->sp[port].err_stat));
 
-#ifdef CONFIG_RIONET
-			has_port_ready = 1;
-#endif
-
 			dev_info(krio_priv->dev,
 				 "RIO: port RIO%d host_deviceid %d registered\n",
 				port, mport->host_deviceid);
@@ -2742,12 +2732,6 @@ static void keystone_rio_port_chk_task(struct work_struct *work)
 		krio_priv->timer.expires = jiffies + KEYSTONE_RIO_REGISTER_DELAY;
 		add_timer(&krio_priv->timer);
 	}
-#ifdef CONFIG_RIONET
-	else if (has_port_ready) {
-		rionet_init();
-		krio_priv->rionet_started = 1;
-	}
-#endif
 }
 
 /*
@@ -2765,9 +2749,6 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 	u32 path_mode;
 	u32 size = 0;
 	int res = 0;
-#ifdef CONFIG_RIONET
-	int has_port_ready = 0;
-#endif
 	struct rio_mport *mport;
 	unsigned long timeout;
 	char str[8];
@@ -2889,10 +2870,6 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 			if (!mport)
 				goto out;
 
-#ifdef CONFIG_RIONET
-			has_port_ready = 1;
-#endif
-
 			dev_info(&pdev->dev,
 				 "RIO: port RIO%d host_deviceid %d registered\n",
 				 port, mport->host_deviceid);
@@ -2912,12 +2889,7 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 		krio_priv->timer.expires = jiffies + KEYSTONE_RIO_REGISTER_DELAY;
 		add_timer(&krio_priv->timer);
 	}
-#ifdef CONFIG_RIONET
-	else if (has_port_ready) {
-		rionet_init();
-		krio_priv->rionet_started = 1;
-	}
-#endif
+
 out:
 	return res;
 }
@@ -2942,9 +2914,7 @@ static int __init keystone_rio_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, krio_priv);
 	krio_priv->dev = &(pdev->dev);
-#ifdef CONFIG_RIONET
-	krio_priv->rionet_started = 0;
-#endif
+
 	/* Get default config from device tree */
 	keystone_rio_get_controller_defaults(node, krio_priv);
 
@@ -3014,11 +2984,6 @@ static void keystone_rio_shutdown(struct platform_device *pdev)
 {
 	struct keystone_rio_data *krio_priv = platform_get_drvdata(pdev);
 	int i;
-
-#ifdef CONFIG_RIONET
-	if (krio_priv->rionet_started)
-		rionet_exit();
-#endif
 
 	keystone_rio_interrupt_release(krio_priv);
 	keystone_rio_mp_outb_exit(krio_priv);
