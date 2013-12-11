@@ -1541,12 +1541,12 @@ keystone_rio_config_read(struct rio_mport *mport, int index, u16 destid,
 	}
 
 	kfree(tbuf);
-
+#if (0)
 	dev_dbg(dev,
 		"index %d destid %d hopcount %d offset 0x%x "
 		"len %d val 0x%x res %d\n",
 		index, destid, hopcount, offset, len, *val, res);
-
+#endif
 	return res;
 }
 
@@ -1599,12 +1599,12 @@ keystone_rio_config_write(struct rio_mport *mport, int index, u16 destid,
 			    (struct keystone_rio_data *)(mport->priv));
 
 	dma_unmap_single(dev, dma, len, DMA_TO_DEVICE);
-
+#if (0)
 	dev_dbg(dev,
 		"index %d destid %d hopcount %d offset 0x%x "
 		"len %d val 0x%x res %d\n",
 		index, destid, hopcount, offset, len, val, res);
-
+#endif
 	kfree(tbuf);
 
 	return res;
