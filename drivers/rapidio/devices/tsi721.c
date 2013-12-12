@@ -2256,6 +2256,7 @@ static int tsi721_setup_mport(struct tsi721_device *priv)
 	mport->phy_type = RIO_PHY_SERIAL;
 	mport->priv = (void *)priv;
 	mport->phys_efptr = 0x100;
+	mport->dev.parent = &pdev->dev;
 	priv->mport = mport;
 
 	INIT_LIST_HEAD(&mport->dbells);
@@ -2296,7 +2297,8 @@ static int tsi721_setup_mport(struct tsi721_device *priv)
 	iowrite32(ioread32(priv->regs + TSI721_DEVCTL) |
 		  TSI721_DEVCTL_SRBOOT_CMPL,
 		  priv->regs + TSI721_DEVCTL);
-
+	/* Set invalid DestID as an initial value for enumeration/discovery */
+	iowrite32(0x00ffffff, priv->regs + RIO_DID_CSR);
 	rio_register_mport(mport);
 
 	if (mport->host_deviceid >= 0)

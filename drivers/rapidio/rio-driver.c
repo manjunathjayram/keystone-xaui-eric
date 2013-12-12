@@ -167,7 +167,6 @@ void rio_unregister_driver(struct rio_driver *rdrv)
 void rio_attach_device(struct rio_dev *rdev)
 {
 	rdev->dev.bus = &rio_bus_type;
-	rdev->dev.parent = &rio_bus;
 }
 EXPORT_SYMBOL_GPL(rio_attach_device);
 
@@ -216,9 +215,16 @@ static int rio_uevent(struct device *dev, struct kobj_uevent_env *env)
 	return 0;
 }
 
-struct device rio_bus = {
-	.init_name = "rapidio",
+static void release_mport_dev(struct device *dev)
+{
+	dev_printk(KERN_DEBUG, dev, "%s\n", __func__);
+}
+
+struct class rio_mport_class = {
+	.name		= "rapidio_port",
+	.dev_release	= &release_mport_dev,
 };
+EXPORT_SYMBOL_GPL(rio_mport_class);
 
 struct bus_type rio_bus_type = {
 	.name = "rapidio",
@@ -238,8 +244,7 @@ struct bus_type rio_bus_type = {
  */
 static int __init rio_bus_init(void)
 {
-	if (device_register(&rio_bus) < 0)
-		printk("RIO: failed to register RIO bus device\n");
+	class_register(&rio_mport_class);
 	return bus_register(&rio_bus_type);
 }
 
