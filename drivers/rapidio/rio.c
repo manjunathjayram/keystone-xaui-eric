@@ -1801,6 +1801,24 @@ static void disc_work_handler(struct work_struct *_work)
 	}
 }
 
+static int rio_mport_enum_callback(struct device *dev, void * _data)
+{
+	struct rio_mport *port = to_rio_mport(dev);
+	int *n = _data;
+
+	dev_printk(KERN_DEBUG, dev, "%s %s\n", __func__, port->name);
+
+	if (port->host_deviceid >= 0) {
+		if (port->nscan && try_module_get(port->nscan->owner)) {
+			port->nscan->enumerate(port, 0);
+			module_put(port->nscan->owner);
+		}
+	} else
+		*n = *n + 1;
+
+	return 0;
+}
+
 int rio_init_mports(void)
 {
 	struct rio_mport *port;
@@ -1814,17 +1832,7 @@ int rio_init_mports(void)
 	 * First, run enumerations and check if we need to perform discovery
 	 * on any of the registered mports.
 	 */
-	mutex_lock(&rio_mport_list_lock);
-	list_for_each_entry(port, &rio_mports, node) {
-		if (port->host_deviceid >= 0) {
-			if (port->nscan && try_module_get(port->nscan->owner)) {
-				port->nscan->enumerate(port, 0);
-				module_put(port->nscan->owner);
-			}
-		} else
-			n++;
-	}
-	mutex_unlock(&rio_mport_list_lock);
+	class_for_each_device(&rio_mport_class, NULL, &n, rio_mport_enum_callback);
 
 	if (!n)
 		goto no_disc;
@@ -1884,6 +1892,7 @@ static int rio_get_hdid(int index)
 int rio_register_mport(struct rio_mport *port)
 {
 	struct rio_scan_node *scan = NULL;
+	int res = 0;
 
 	if (next_portid >= RIO_MAX_MPORTS) {
 		pr_err("RIO: reached specified max number of mports\n");
@@ -1893,6 +1902,14 @@ int rio_register_mport(struct rio_mport *port)
 	port->id = next_portid++;
 	port->host_deviceid = rio_get_hdid(port->id);
 	port->nscan = NULL;
+
+	dev_set_name(&port->dev, "rapidio-%d", port->id);
+	port->dev.class = &rio_mport_class;
+	res = device_register(&port->dev);
+	if (res)
+		pr_debug("RIO: mport [%d] registration failed err=%d\n", port->id, res);
+	else
+		pr_debug("RIO: mport [%s] registered\n", port->name);
 
 	mutex_lock(&rio_mport_list_lock);
 	list_add_tail(&port->node, &rio_mports);

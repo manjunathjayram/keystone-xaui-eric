@@ -1185,6 +1185,8 @@ static int keystone_rio_hw_init(u32 mode, u32 baud, struct keystone_rio_data *kr
 		     &krio_priv->car_csr_regs->assembly_id);
 	__raw_writel(KEYSTONE_RIO_EXT_FEAT_PTR,
 		     &krio_priv->car_csr_regs->assembly_info);
+	__raw_writel(0x00ffffff,
+		     &krio_priv->car_csr_regs->base_dev_id);
 
 	krio_priv->rio_pe_feat = RIO_PEF_PROCESSOR
 		| RIO_PEF_CTLS
@@ -2510,6 +2512,7 @@ struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 	port->id    = port_id;
 	port->index = port_id;
 	port->priv  = krio_priv;
+	port->dev.parent = krio_priv->dev;
 	INIT_LIST_HEAD(&port->dbells);
 
 	/* Make a dummy per port region as ports are not
