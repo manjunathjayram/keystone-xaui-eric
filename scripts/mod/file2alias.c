@@ -1075,6 +1075,31 @@ static int do_x86cpu_entry(const char *filename, struct x86_cpu_id *id,
 }
 ADD_TO_DEVTABLE("x86cpu", struct x86_cpu_id, do_x86cpu_entry);
 
+/* Looks like: rapidio:vNdNavNadN */
+static int do_rio_entry(const char *filename,
+			struct rio_device_id *id, char *alias)
+{
+//	DEF_FIELD(symval, rio_device_id, did);
+//	DEF_FIELD(symval, rio_device_id, vid);
+//	DEF_FIELD(symval, rio_device_id, asm_did);
+//	DEF_FIELD(symval, rio_device_id, asm_vid);
+
+	id->did = TO_NATIVE(id->did);
+	id->vid = TO_NATIVE(id->vid);
+	id->asm_did = TO_NATIVE(id->asm_did);
+	id->asm_vid = TO_NATIVE(id->asm_vid);
+
+	strcpy(alias, "rapidio:");
+	ADD(alias, "v", id->vid != RIO_ANY_ID, id->vid);
+	ADD(alias, "d", id->did != RIO_ANY_ID, id->did);
+	ADD(alias, "av", id->asm_vid != RIO_ANY_ID, id->asm_vid);
+	ADD(alias, "ad", id->asm_did != RIO_ANY_ID, id->asm_did);
+
+	add_wildcard(alias);
+	return 1;
+}
+ADD_TO_DEVTABLE("rapidio", struct rio_device_id, do_rio_entry);
+
 /* Does namelen bytes of name exactly match the symbol? */
 static bool sym_is(const char *name, unsigned namelen, const char *symbol)
 {
