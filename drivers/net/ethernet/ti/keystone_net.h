@@ -72,7 +72,7 @@ struct netcp_tx_pipe {
 	unsigned int			 dma_pause_threshold;
 	unsigned int			 dma_resume_threshold;
 	atomic_t			 dma_poll_count;
-	struct tasklet_struct		 dma_poll_tasklet;
+	struct napi_struct		 dma_poll_napi;
 	enum netcp_tx_state		 dma_poll_state;
 };
 
