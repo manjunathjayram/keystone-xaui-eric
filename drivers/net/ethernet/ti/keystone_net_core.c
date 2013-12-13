@@ -839,20 +839,8 @@ static void netcp_tx_complete(void *data)
 	struct netcp_priv *netcp = p_info->netcp;
 	struct netcp_tx_pipe *tx_pipe = p_info->tx_pipe;
 	struct sk_buff *skb = p_info->skb;
-	enum dma_status status;
 	unsigned int sg_ents;
 	int poll_count;
-
-	if (unlikely(p_info->cookie <= 0))
-		WARN(1, "invalid dma cookie == %d", p_info->cookie);
-	else {
-		status = dma_async_is_tx_complete(p_info->tx_pipe->dma_channel,
-						  p_info->cookie, NULL, NULL);
-		WARN((status != DMA_SUCCESS && status != DMA_ERROR),
-				"invalid dma status %d", status);
-		if (status != DMA_SUCCESS)
-			netcp->ndev->stats.tx_errors++;
-	}
 
 	sg_ents = sg_count(&p_info->sg[2], p_info->sg_ents);
 	dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], sg_ents, DMA_TO_DEVICE);
@@ -915,6 +903,7 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	struct netcp_hook_list *tx_hook;
 	struct netcp_packet *p_info;
 	int subqueue = skb_get_queue_mapping(skb);
+	dma_cookie_t cookie;
 	int real_sg_ents = 0;
 	int poll_count;
 	int ret = 0;
@@ -958,16 +947,17 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	tx_pipe = p_info->tx_pipe;
 	if (tx_pipe == NULL) {
 		dev_err(netcp->dev, "No TX hook claimed the packet!\n");
-		dev_kfree_skb_any(skb);
-		kfree(p_info);
-		return -ENXIO;
+		ret = -ENXIO;
+		goto drop;
 	}
 
 	if (unlikely(skb->len < NETCP_MIN_PACKET_SIZE)) {
 		ret = skb_padto(skb, NETCP_MIN_PACKET_SIZE);
 		if (ret < 0) {
+			/* If we get here, the skb has already been dropped */
 			dev_warn(netcp->dev, "padding failed (%d), "
 				 "packet dropped\n", ret);
+			ndev->stats.tx_dropped++;
 			kfree(p_info);
 			return ret;
 		}
@@ -982,19 +972,27 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	sg_set_buf(&p_info->sg[0], p_info->epib, sizeof(p_info->epib));
 	sg_set_buf(&p_info->sg[1], &p_info->psdata[NETCP_PSDATA_LEN - p_info->psdata_len],
 			p_info->psdata_len * sizeof(u32));
+	real_sg_ents = skb_to_sgvec(skb, &p_info->sg[2], 0, skb->len);
+
+	/* Reserve descriptors for this packet */
+	poll_count = atomic_sub_return(real_sg_ents, &tx_pipe->dma_poll_count);
+	if (poll_count < tx_pipe->dma_pause_threshold) {
+		dev_dbg(netcp->dev, "pausing subqueue %d, %s poll count %d\n",
+			subqueue, tx_pipe->dma_chan_name, poll_count);
+		netif_stop_subqueue(ndev, subqueue);
+		if (poll_count < 0) {
+			ret = -ENOBUFS;
+			goto drop;
+		}
+	}
 
 	/* Map all the packet fragments	into the scatterlist */
-	real_sg_ents = skb_to_sgvec(skb, &p_info->sg[2], 0, skb->len);
 	p_info->sg_ents = 2 + dma_map_sg(&netcp->pdev->dev, &p_info->sg[2],
 					 real_sg_ents, DMA_TO_DEVICE);
 	if (p_info->sg_ents != (real_sg_ents + 2)) {
-		ndev->stats.tx_dropped++;
-		dev_kfree_skb_any(skb);
-		kfree(p_info);
-		real_sg_ents = 0;
 		dev_warn(netcp->dev, "failed to map transmit packet\n");
 		ret = -ENXIO;
-		goto out;
+		goto drop;
 	}
 
 	desc = dmaengine_prep_slave_sg(tx_pipe->dma_channel, p_info->sg,
@@ -1003,35 +1001,31 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 					tx_pipe->dma_psflags));
 
 	if (IS_ERR_OR_NULL(desc)) {
-		ndev->stats.tx_dropped++;
 		dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], real_sg_ents,
 			     DMA_TO_DEVICE);
-		dev_kfree_skb_any(skb);
-		kfree(p_info);
-		real_sg_ents = 0;
-		dev_dbg(netcp->dev, "failed to prep slave dma\n");
+		dev_warn(netcp->dev, "failed to prep slave dma\n");
 		ret = -ENOBUFS;
-		goto out;
+		goto drop;
 	}
 
 	desc->callback_param = p_info;
 	desc->callback = netcp_tx_complete;
-	spin_lock_bh(&netcp->lock);
-	p_info->cookie = dmaengine_submit(desc);
-	spin_unlock_bh(&netcp->lock);
+	cookie = dmaengine_submit(desc);
+	if (dma_submit_error(cookie)) {
+		dev_warn(netcp->dev, "failed to submit packet for dma: %d\n",
+				cookie);
+		goto drop;
+	}
 
 	ndev->trans_start = jiffies;
+	return NETDEV_TX_OK;
 
-	ret = NETDEV_TX_OK;
-
-out:
-	poll_count = atomic_sub_return(real_sg_ents, &tx_pipe->dma_poll_count);
-	if (poll_count < tx_pipe->dma_pause_threshold) {
-		dev_dbg(netcp->dev, "pausing subqueue %d, %s poll count %d\n",
-			subqueue, tx_pipe->dma_chan_name, poll_count);
-		netif_stop_subqueue(ndev, subqueue);
-	}
-	return ret;
+drop:
+	atomic_add(real_sg_ents, &tx_pipe->dma_poll_count);
+	ndev->stats.tx_dropped++;
+	dev_kfree_skb_any(skb);
+	kfree(p_info);
+	return -ENXIO;
 }
 
 
