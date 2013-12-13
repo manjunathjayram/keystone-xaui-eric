@@ -11,3 +11,5 @@ obj-$(CONFIG_RAPIDIO)		+= devices/
 obj-$(CONFIG_RAPIDIO_DEV)       += rio-dev.o
 
 subdir-ccflags-$(CONFIG_RAPIDIO_DEBUG) := -DDEBUG
+
+obj-m += rio_cm.o
