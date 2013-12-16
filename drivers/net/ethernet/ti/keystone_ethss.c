@@ -2405,19 +2405,10 @@ static void cpsw_timer(unsigned long arg)
 		/* link ON */
 		if (!netif_carrier_ok(cpsw_intf->ndev))
 			netif_carrier_on(cpsw_intf->ndev);
-		/*
-		 * reactivate the transmit queue if
-		 * it is stopped
-		 */
-		if (netif_running(cpsw_intf->ndev) &&
-		    netif_queue_stopped(cpsw_intf->ndev))
-			netif_wake_queue(cpsw_intf->ndev);
 	} else {
 		/* link OFF */
 		if (netif_carrier_ok(cpsw_intf->ndev))
 			netif_carrier_off(cpsw_intf->ndev);
-		if (!netif_queue_stopped(cpsw_intf->ndev))
-			netif_stop_queue(cpsw_intf->ndev);
 	}
 
 	spin_lock_bh(&cpsw_dev->hw_stats_lock);
