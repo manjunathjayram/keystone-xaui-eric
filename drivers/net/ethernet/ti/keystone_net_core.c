@@ -806,6 +806,16 @@ static int netcp_poll(struct napi_struct *napi, int budget)
 	return packets;
 }
 
+static void netcp_rx_notify(struct dma_chan *chan, void *arg)
+{
+	struct netcp_priv *netcp = arg;
+
+	BUG_ON(netcp->rx_state != RX_STATE_INTERRUPT);
+	dmaengine_pause(netcp->rx_channel);
+	netcp_set_rx_state(netcp, RX_STATE_SCHEDULED);
+	napi_schedule(&netcp->napi);
+}
+
 static const char *netcp_tx_state_str(enum netcp_tx_state tx_state)
 {
 	static const char * const state_str[] = {
@@ -1283,16 +1293,6 @@ struct dma_chan *netcp_get_rx_chan(struct netcp_priv *netcp)
 }
 EXPORT_SYMBOL(netcp_get_rx_chan);
 
-static void netcp_rx_notify(struct dma_chan *chan, void *arg)
-{
-	struct netcp_priv *netcp = arg;
-
-	BUG_ON(netcp->rx_state != RX_STATE_INTERRUPT);
-	dmaengine_pause(netcp->rx_channel);
-	netcp_set_rx_state(netcp, RX_STATE_SCHEDULED);
-	napi_schedule(&netcp->napi);
-}
-
 /* Open the device */
 static int netcp_ndo_open(struct net_device *ndev)
 {
@@ -1342,12 +1342,7 @@ static int netcp_ndo_open(struct net_device *ndev)
 				err);
 		goto fail;
 	}
-
-	dma_set_notify(netcp->rx_channel, netcp_rx_notify, netcp);
-
 	dev_dbg(netcp->dev, "opened RX channel: %p\n", netcp->rx_channel);
-
-	netcp_set_rx_state(netcp, RX_STATE_INTERRUPT);
 
 	for_each_module(netcp, intf_modpriv) {
 		module = intf_modpriv->netcp_module;
@@ -1360,8 +1355,11 @@ static int netcp_ndo_open(struct net_device *ndev)
 		}
 	}
 
+	netcp_set_rx_state(netcp, RX_STATE_INTERRUPT);
 	dma_rxfree_refill(netcp->rx_channel);
 	napi_enable(&netcp->napi);
+	dma_set_notify(netcp->rx_channel, netcp_rx_notify, netcp);
+
 	netif_tx_wake_all_queues(ndev);
 
 	dev_info(netcp->dev, "netcp device %s opened\n", ndev->name);
