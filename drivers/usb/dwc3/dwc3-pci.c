@@ -216,7 +216,7 @@ static DEFINE_PCI_DEVICE_TABLE(dwc3_pci_id_table) = {
 };
 MODULE_DEVICE_TABLE(pci, dwc3_pci_id_table);
 
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_SLEEP
 static int dwc3_pci_suspend(struct device *dev)
 {
 	struct pci_dev	*pci = to_pci_dev(dev);
