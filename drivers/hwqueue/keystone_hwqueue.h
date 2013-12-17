@@ -246,6 +246,7 @@ struct khwq_instance {
 	struct khwq_acc_channel	*acc;
 	struct khwq_region	*last; /* cache last region used */
 	struct khwq_qmgr_info	*qmgr; /* cache qmgr for the instance */
+	int			 notify_needed;
 	int			 irq_num; /*irq num -ve for non-irq queues */
 	char			 irq_name[32];
 };
