@@ -859,7 +859,7 @@ static void netcp_tx_complete(void *data)
 	}
 
 	dev_kfree_skb_any(skb);
-	kfree(p_info);
+	kmem_cache_free(netcp_pinfo_cache, p_info);
 }
 
 static int netcp_tx_poll(struct napi_struct *napi, int budget)
@@ -921,7 +921,7 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	ndev->stats.tx_packets++;
 	ndev->stats.tx_bytes += skb->len;
 
-	p_info = kmalloc(sizeof(*p_info), GFP_ATOMIC);
+	p_info = kmem_cache_alloc(netcp_pinfo_cache, GFP_ATOMIC);
 	if (!p_info) {
 		ndev->stats.tx_dropped++;
 		dev_kfree_skb_any(skb);
@@ -948,7 +948,7 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 					tx_hook->order, ret);
 			}
 			dev_kfree_skb_any(skb);
-			kfree(p_info);
+			kmem_cache_free(netcp_pinfo_cache, p_info);
 			return (ret < 0) ? ret : NETDEV_TX_OK;
 		}
 	}
@@ -968,7 +968,7 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 			dev_warn(netcp->dev, "padding failed (%d), "
 				 "packet dropped\n", ret);
 			ndev->stats.tx_dropped++;
-			kfree(p_info);
+			kmem_cache_free(netcp_pinfo_cache, p_info);
 			return ret;
 		}
 		skb->len = NETCP_MIN_PACKET_SIZE;
@@ -1034,7 +1034,7 @@ drop:
 	atomic_add(real_sg_ents, &tx_pipe->dma_poll_count);
 	ndev->stats.tx_dropped++;
 	dev_kfree_skb_any(skb);
-	kfree(p_info);
+	kmem_cache_free(netcp_pinfo_cache, p_info);
 	return -ENXIO;
 }
 
