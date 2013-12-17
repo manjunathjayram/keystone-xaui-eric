@@ -40,6 +40,7 @@ static void __khwq_acc_notify(struct khwq_range_info *range,
 	struct khwq_device *kdev = range->kdev;
 	struct hwqueue_device *hdev = to_hdev(kdev);
 	struct hwqueue_instance *inst;
+	struct khwq_instance *kq;
 	int range_base, queue;
 
 	range_base = kdev->base_id + range->queue_base;
@@ -47,9 +48,13 @@ static void __khwq_acc_notify(struct khwq_range_info *range,
 	if (range->flags & RANGE_MULTI_QUEUE) {
 		for (queue = 0; queue < range->num_queues; queue++) {
 			inst = hwqueue_id_to_inst(hdev, range_base + queue);
-			dev_dbg(kdev->dev, "acc-irq: notifying %d\n",
-				range_base + queue);
-			hwqueue_notify(inst);
+			kq = hwqueue_inst_to_priv(inst);
+			if (kq->notify_needed) {
+				kq->notify_needed = 0;
+				dev_dbg(kdev->dev, "acc-irq: notifying %d\n",
+					range_base + queue);
+				hwqueue_notify(inst);
+			}
 		}
 	} else {
 		queue = acc->channel - range->acc_info.start_channel;
@@ -183,12 +188,15 @@ static irqreturn_t khwq_acc_int_handler(int irq, void *_instdata)
 
 		if (atomic_inc_return(&kq->desc_count) >= ACC_DESCS_MAX) {
 			atomic_dec(&kq->desc_count);
+			dev_err(kdev->dev, "acc-irq: queue %d full"
+				", entry dropped\n", queue + range_base);
 			/* TODO: need a statistics counter for such drops */
 			continue;
 		}
 
 		idx = atomic_inc_return(&kq->desc_tail) & ACC_DESCS_MASK;
 		kq->descs[idx] = val;
+		kq->notify_needed = 1;
 		dev_dbg(kdev->dev, "acc-irq: enqueue %08x at %d, queue %d\n",
 			val, idx, queue + range_base);
 	}
