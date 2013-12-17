@@ -204,7 +204,8 @@ static int init_service_irqs(struct pci_dev *dev, int *irqs, int mask)
 	 * INTx or other interrupts, e.g. system shared interrupt.
 	 */
 	if (((mask & PCIE_PORT_SERVICE_PME) && pcie_pme_no_msi()) ||
-	    ((mask & PCIE_PORT_SERVICE_HP) && pciehp_no_msi())) {
+	    ((mask & PCIE_PORT_SERVICE_HP) && pciehp_no_msi()) ||
+		(mask & PCIE_PORT_SERVICE_AER && pcie_aer_no_msi())) {
 		if (dev->irq)
 			irq = dev->irq;
 		goto no_msi;
