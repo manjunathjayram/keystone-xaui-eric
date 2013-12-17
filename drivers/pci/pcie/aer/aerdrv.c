@@ -293,6 +293,17 @@ static void aer_remove(struct pcie_device *dev)
 	}
 }
 
+bool pcie_aer_msi_disabled;
+
+static int __init pcie_aer_setup(char *str)
+{
+	if (!strncmp(str, "nomsi", 5))
+		pcie_aer_msi_disabled = true;
+
+	return 1;
+}
+__setup("pcie_aer=", pcie_aer_setup);
+
 /**
  * aer_probe - initialize resources
  * @dev: pointer to the pcie_dev data structure
