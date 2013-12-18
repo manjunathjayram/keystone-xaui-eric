@@ -1283,8 +1283,8 @@ kvirtio_get_regs(struct keystone_virtio *kv, int index, const char *name,
 		return NULL;
 	}
 
-	dev_vdbg(dev, "index: %d, res:%s, size:%x, phys:%x, virt:%p\n",
-		 index, name, size, res.start, regs);
+	dev_vdbg(dev, "index: %d, res:%s, size:%pa, phys:%pa, virt:%p\n",
+		 index, name, &size, &res.start, regs);
 
 	if (_size)
 		*_size = size;
