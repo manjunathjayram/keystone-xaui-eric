@@ -38,6 +38,7 @@ extern int rio_route_get_entry(struct rio_dev *rdev, u16 table,
 			u16 route_destid, u8 *route_port, int lock);
 extern int rio_route_clr_table(struct rio_dev *rdev, u16 table, int lock);
 extern int rio_set_port_lockout(struct rio_dev *rdev, u32 pnum, int lock);
+extern struct rio_dev *rio_get_devt(dev_t devt, struct rio_dev *from);
 extern struct rio_dev *rio_get_comptag(u32 comp_tag, struct rio_dev *from);
 extern int rio_add_device(struct rio_dev *rdev);
 extern int rio_enable_rx_tx_port(struct rio_mport *port, int local, u16 destid,

@@ -504,30 +504,23 @@ static long rio_dev_ioctl(struct file *filp,
 
 static int rio_dev_open(struct inode *inode, struct file *filp)
 {
-	struct list_head *n;
 	struct rio_dev *rdev;
 	int status = -ENXIO;
 
 	WARN_ON(in_interrupt());
-	spin_lock(&rio_global_list_lock);
-	n = rio_devices.next;
 
-	while (n && (n != &rio_devices)) {
-		rdev = rio_dev_g(n);
-		if (rdev->dev.devt == inode->i_rdev)
-			goto exit;
-		n = n->next;
-	}
-	rdev = NULL;
-exit:
+	rdev = rio_get_devt(inode->i_rdev, NULL);
+	if (rdev == NULL)
+		goto not_found;
+
 	rdev = rio_dev_get(rdev);
-	spin_unlock(&rio_global_list_lock);
+	if (rdev == NULL)
+		goto not_found;
 
-	if (rdev != NULL) {
-		filp->private_data = rdev;
-		status = 0;
-	}
+	filp->private_data = rdev;
+	status = 0;
 
+not_found:
 	return status;
 }
 
