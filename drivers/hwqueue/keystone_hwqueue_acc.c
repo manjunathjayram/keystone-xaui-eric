@@ -81,6 +81,7 @@ static int khwq_acc_set_notify(struct khwq_range_info *range,
 	if (!enabled || atomic_read(&kq->desc_count) <= 0)
 		return 0;
 
+	kq->notify_needed = 1;
 	atomic_inc(&kq->acc->retrigger_count);
 	mask = BIT(kq->acc->channel % 32);
 	offset = ACC_INTD_OFFSET_STATUS(kq->acc->channel);
