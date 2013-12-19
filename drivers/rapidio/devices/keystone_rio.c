@@ -2368,10 +2368,12 @@ static void keystone_rio_tx_complete(void *data)
 		 * bad buffer may be released...
 		 */
 		spin_lock(&mbox->lock);
-		port->outb_msg[mbox_id].mcback(port, dev_id,
-					       mbox_id, mbox->slot++);
-		if (mbox->slot > mbox->entries)
+		/* Move slot index to the next message to be sent */
+		mbox->slot++;
+		if (mbox->slot == mbox->entries)
 			mbox->slot = 0;
+		port->outb_msg[mbox_id].mcback(port, dev_id,
+					       mbox_id, mbox->slot);
 		spin_unlock(&mbox->lock);
 	}
 
