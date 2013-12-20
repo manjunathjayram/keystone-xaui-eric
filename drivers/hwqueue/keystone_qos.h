@@ -45,6 +45,11 @@
 #define QOS_DROP_SCHED_CFG		4
 #define QOS_DROP_SCHED_ENABLE		BIT(24)
 
+#define	QOS_SCHED_FLAG_WRR_BYTES	BIT(0)
+#define	QOS_SCHED_FLAG_CIR_BYTES	BIT(1)
+#define	QOS_SCHED_FLAG_CONG_BYTES	BIT(2)
+#define	QOS_SCHED_FLAG_THROTL_BYTES	BIT(3)
+
 #define QOS_DEFAULT_OVERHEAD_BYTES	24
 
 #define QOS_CREDITS_PACKET_SHIFT	20
@@ -53,7 +58,7 @@
 #define QOS_BYTE_NORMALIZATION_FACTOR	3000
 #define QOS_PACKET_NORMALIZATION_FACTOR	2
 
-#define	QOS_MAX_WEIGHT			SZ_1M
+#define	QOS_MAX_WEIGHT			((1 << 28) - 1)
 
 #define to_qnode(_n)	container_of(_n, struct khwq_qos_tree_node, node)
 
@@ -208,8 +213,6 @@ struct khwq_qos_tree_node {
 	int	 child_port_count;	/* children that need ports	*/
 	int	 child_count;		/* number of children		*/
 	int	 parent_input;		/* input number of parent	*/
-	u32	 child_weight_min;	/* min of child weights		*/
-	u32	 child_weight_max;	/* max of child weights		*/
 	u32	 child_weight[4];
 	u32	 child_weight_sum;	/* sum of child weights		*/
 	bool	 is_drop_input;		/* indicates that child's output
@@ -372,6 +375,7 @@ DEFINE_FIELD_U32(QOS_SCHED_PORT_CFG, sched_unit_flags,     0x00,  0,  8)
 DEFINE_FIELD_U32(QOS_SCHED_PORT_CFG, sched_group_count,    0x00,  8,  8)
 DEFINE_FIELD_U32(QOS_SCHED_PORT_CFG, sched_out_queue,      0x00, 16, 16)
 DEFINE_FIELD_U32(QOS_SCHED_PORT_CFG, sched_overhead_bytes, 0x04,  0,  8)
+DEFINE_FIELD_U32(QOS_SCHED_PORT_CFG, sched_remove_bytes,   0x04,  8,  8)
 DEFINE_FIELD_U32(QOS_SCHED_PORT_CFG, sched_out_throttle,   0x04, 16, 16)
 DEFINE_FIELD_U32(QOS_SCHED_PORT_CFG, sched_cir_credit,     0x08,  0, 32)
 DEFINE_FIELD_U32(QOS_SCHED_PORT_CFG, sched_cir_max,        0x0c,  0, 32)
