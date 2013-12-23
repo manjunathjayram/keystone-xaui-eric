@@ -1867,10 +1867,8 @@ static int netcp_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, netcp_device);
 
 	/* Map the Streaming Switch */
-	if (of_property_read_u32_array(node, "streaming-regs",
+	if (!of_property_read_u32_array(node, "streaming-regs",
 					(u32 *)&(temp[0]), 2)) {
-		dev_err(&pdev->dev, "No streaming regs defined\n");
-	} else {
 		netcp_device->streaming_switch =
 			devm_ioremap_nocache(&pdev->dev, temp[0], temp[1]);
 		if (!netcp_device->streaming_switch) {

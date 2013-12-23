@@ -2973,7 +2973,7 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	ret = of_property_read_u32(node, "cpts_rftclk_freq",
 				   &cpsw_dev->cpts.rftclk_freq);
 	if (ret < 0) {
-		dev_err(dev, "cpts rftclk freq not defined\n");
+		dev_vdbg(dev, "cpts rftclk freq not defined\n");
 		cpsw_dev->cpts.rftclk_freq = 0;
 	}
 
