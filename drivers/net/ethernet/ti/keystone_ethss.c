@@ -1547,10 +1547,67 @@ static ssize_t cpsw_port_ts_config_show(struct cpsw_priv *cpsw_dev,
 	return total_len;
 }
 
+static ssize_t cpsw_port_ts_config_store(struct cpsw_priv *cpsw_dev,
+			      struct cpsw_ts_attribute *attr,
+			      const char *buf, size_t count, void *context)
+{
+	struct cpsw_slave *slave;
+	unsigned long reg, val;
+	int len, port;
+	char tmp_str[4];
+	u8 reg_num = 0;
+	u32 __iomem *p;
+
+	port = (int)context;
+
+	slave = cpsw_port_num_get_slave(cpsw_dev, port);
+	if (!slave)
+		return 0;
+
+	len = strcspn(buf, " ");
+	if (len > 1)
+		return -ENOMEM;
+
+	strncpy(tmp_str, buf, len);
+	tmp_str[len] = '\0';
+	if (kstrtou8(tmp_str, 0, &reg_num))
+		return -EINVAL;
+
+	buf += (len + 1);
+	if (kstrtoul(buf, 0, &val))
+		return -EINVAL;
+
+	switch(reg_num) {
+		case 1:
+			p = &slave->regs->ts_ctl;
+		break;
+		case 2:
+			p = &slave->regs->ts_seq_ltype;
+		break;
+		case 3:
+			p = &slave->regs->ts_vlan;
+		break;
+		case 4:
+			p = &slave->regs->ts_ctl_ltype2;
+		break;
+		case 5:
+			p = &slave->regs->ts_ctl2;
+		break;
+		default:
+			return -EINVAL;
+	}
+
+	reg = readl(p);
+	if (reg != val)
+		writel(val, p);
+
+	return count;
+}
+
 static struct cpsw_ts_attribute cpsw_pts_config_attribute =
-	__CPSW_TS_ATTR(config, S_IRUGO,
+	__CPSW_TS_ATTR(config, S_IRUGO | S_IWUSR,
 			cpsw_port_ts_config_show,
-			NULL);
+			cpsw_port_ts_config_store);
 
 static struct attribute *cpsw_pts_n_default_attrs[] = {
 	&cpsw_pts_uni_attribute.attr,
@@ -2461,7 +2518,7 @@ static void cpsw_hwtstamp(struct cpsw_intf *cpsw_intf)
 {
 	struct cpsw_priv *priv = cpsw_intf->cpsw_priv;
 	struct cpsw_slave *slave = cpsw_intf->slaves;
-	u32 ts_en, seq_id, ctl;
+	u32 ts_en, seq_id, ctl, i;
 
 	if (!priv->cpts.tx_enable && !priv->cpts.rx_enable) {
 		__raw_writel(0, &slave->regs->ts_ctl);
@@ -2481,9 +2538,11 @@ static void cpsw_hwtstamp(struct cpsw_intf *cpsw_intf)
 	if (priv->cpts.rx_enable)
 		ts_en |= (CPSW_TS_RX_ANX_ALL_EN | CPSW_TS_RX_VLAN_LT1_EN);
 
-	writel(ts_en, &slave->regs->ts_ctl);
-	writel(seq_id, &slave->regs->ts_seq_ltype);
-	writel(ctl, &slave->regs->ts_ctl_ltype2);
+	for (i = 0; i < cpsw_intf->num_slaves; i++, slave++) {
+		writel(ts_en, &slave->regs->ts_ctl);
+		writel(seq_id, &slave->regs->ts_seq_ltype);
+		writel(ctl, &slave->regs->ts_ctl_ltype2);
+	}
 }
 
 static int cpsw_hwtstamp_ioctl(struct cpsw_intf *cpsw_intf, struct ifreq *ifr)
