@@ -418,55 +418,6 @@ int netcp_unregister_rxhook(struct netcp_priv *netcp_priv, int order,
 }
 EXPORT_SYMBOL(netcp_unregister_rxhook);
 
-u32 *netcp_push_psdata(struct netcp_packet *p_info, unsigned bytes)
-{
-	u32		*buf;
-	unsigned	 words;
-
-	if ((bytes & 0x03) != 0)
-		return NULL;
-	words = bytes >> 2;
-
-	if ((p_info->psdata_len + words) > NETCP_PSDATA_LEN)
-		return NULL;
-
-	p_info->psdata_len += words;
-	buf = &p_info->psdata[NETCP_PSDATA_LEN - p_info->psdata_len];
-
-	memset(buf, 0, bytes);
-
-	return buf;
-}
-EXPORT_SYMBOL(netcp_push_psdata);
-
-int netcp_align_psdata(struct netcp_packet *p_info, unsigned byte_align)
-{
-	int	padding;
-
-	switch (byte_align) {
-	case 0:
-		padding = -EINVAL;
-		break;
-	case 1:
-	case 2:
-	case 4:
-		padding = 0;
-		break;
-	case 8:
-		padding = (p_info->psdata_len << 2) % 8;
-		break;
-	case 16:
-		padding = (p_info->psdata_len << 2) % 16;
-		break;
-	default:
-		padding = (p_info->psdata_len << 2) % byte_align;
-		break;
-	}
-
-	return padding;
-}
-EXPORT_SYMBOL(netcp_align_psdata);
-
 #define NETCP_DEBUG (NETIF_MSG_HW	| NETIF_MSG_WOL		|	\
 		    NETIF_MSG_DRV	| NETIF_MSG_LINK	|	\
 		    NETIF_MSG_IFUP	| NETIF_MSG_INTR	|	\
