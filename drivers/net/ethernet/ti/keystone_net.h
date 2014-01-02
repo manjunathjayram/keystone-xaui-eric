@@ -142,6 +142,53 @@ struct netcp_packet {
 						struct netcp_packet *packet);
 };
 
+static inline u32 *netcp_push_psdata(struct netcp_packet *p_info, unsigned bytes)
+{
+	u32		*buf;
+	unsigned	 words;
+
+	if ((bytes & 0x03) != 0)
+		return NULL;
+	words = bytes >> 2;
+
+	if ((p_info->psdata_len + words) > NETCP_PSDATA_LEN)
+		return NULL;
+
+	p_info->psdata_len += words;
+	buf = &p_info->psdata[NETCP_PSDATA_LEN - p_info->psdata_len];
+
+	memset(buf, 0, bytes);
+
+	return buf;
+}
+
+static inline int netcp_align_psdata(struct netcp_packet *p_info, unsigned byte_align)
+{
+	int	padding;
+
+	switch (byte_align) {
+	case 0:
+		padding = -EINVAL;
+		break;
+	case 1:
+	case 2:
+	case 4:
+		padding = 0;
+		break;
+	case 8:
+		padding = (p_info->psdata_len << 2) % 8;
+		break;
+	case 16:
+		padding = (p_info->psdata_len << 2) % 16;
+		break;
+	default:
+		padding = (p_info->psdata_len << 2) % byte_align;
+		break;
+	}
+
+	return padding;
+}
+
 static inline int netcp_prepend_psdata(struct netcp_packet *p_info, u32 *data, unsigned len)
 {
 	if ((len + p_info->psdata_len) > NETCP_PSDATA_LEN)
@@ -208,9 +255,6 @@ int netcp_txpipe_close(struct netcp_tx_pipe *tx_pipe);
 
 struct dma_chan *netcp_get_rx_chan(struct netcp_priv *priv);
 struct dma_chan *netcp_get_tx_chan(struct netcp_priv *priv);
-
-u32 *netcp_push_psdata(struct netcp_packet *p_info, unsigned words);
-int netcp_align_psdata(struct netcp_packet *p_info, unsigned word_align);
 
 typedef int netcp_hook_rtn(int order, void *data, struct netcp_packet *packet);
 
