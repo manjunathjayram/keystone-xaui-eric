@@ -32,6 +32,35 @@
 #define PLL_RESET				BIT(16)
 
 static void __iomem *keystone_rstctrl;
+static struct notifier_block platform_nb;
+
+static bool is_coherent(struct device *dev)
+{
+	struct device_node *node = of_node_get(dev->of_node);
+
+	while (node) {
+		if (of_property_read_bool(node, "dma-coherent")) {
+			of_node_put(node);
+			return true;
+		}
+		node = of_get_next_parent(node);
+	}
+	return false;
+}
+
+static int keystone_platform_notifier(struct notifier_block *nb,
+				      unsigned long event, void *dev)
+{
+	if (event != BUS_NOTIFY_ADD_DEVICE)
+		return NOTIFY_DONE;
+
+	if (is_coherent(dev)) {
+		set_dma_ops(dev, &arm_coherent_dma_ops);
+		pr_info("\t\t%s: keystone device is coherent\n", dev_name(dev));
+	}
+
+	return NOTIFY_OK;
+}
 
 static void __init keystone_init(void)
 {
@@ -46,6 +75,8 @@ static void __init keystone_init(void)
 		pr_warn("ti,keystone-reset iomap error\n");
 
 	keystone_pm_runtime_init();
+	if (platform_nb.notifier_call)
+		bus_register_notifier(&platform_bus_type, &platform_nb);
 	of_platform_populate(NULL, of_default_bus_match_table, NULL, NULL);
 }
 
@@ -119,6 +150,8 @@ static void __init keystone_init_meminfo(void)
 	__arch_dma_to_pfn = keystone_dma_to_pfn;
 	__arch_dma_to_virt = keystone_dma_to_virt;
 	__arch_virt_to_dma = keystone_virt_to_dma;
+
+	platform_nb.notifier_call = keystone_platform_notifier;
 
 	pr_info("Switching to high address space at 0x%llx\n", (u64)offset);
 }
