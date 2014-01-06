@@ -2750,6 +2750,7 @@
 
 			tx_channel = "riotx";
 			tx_queue_depth = <512>;
+			tx_packet_type = <11>;
 
 			rx_channel = "riorx";
 			rx_queue_depth	= <512 0 0 0>;
