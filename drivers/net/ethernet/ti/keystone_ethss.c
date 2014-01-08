@@ -2550,7 +2550,8 @@ static inline void cpsw_register_cpts(struct cpsw_priv *cpsw_dev)
 	cpsw_dev->cpts.filter_size = ARRAY_SIZE(cpsw_ptp_filter);
 
 	/* Let cpts calculate the mult and shift */
-	if (cpts_register(cpsw_dev->dev, &cpsw_dev->cpts, 0, 0))
+	if (cpts_register(cpsw_dev->dev, &cpsw_dev->cpts,
+			  cpsw_dev->cpts.cc.mult, cpsw_dev->cpts.cc.shift))
 		dev_err(cpsw_dev->dev, "error registering cpts device\n");
 
 done:
@@ -2982,6 +2983,24 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	if (ret < 0) {
 		dev_err(dev, "missing cpts ts_comp length, err %d\n", ret);
 		cpsw_dev->cpts.ts_comp_length = 1;
+	}
+
+	if (of_property_read_u32(node, "cpts_clock_mult",
+				&cpsw_dev->cpts.cc.mult)) {
+		pr_err("Missing cpts_clock_mult property in the DT.\n");
+		cpsw_dev->cpts.cc.mult = 0;
+	}
+
+	if (of_property_read_u32(node, "cpts_clock_shift",
+				&cpsw_dev->cpts.cc.shift)) {
+		pr_err("Missing cpts_clock_shift property in the DT.\n");
+		cpsw_dev->cpts.cc.shift = 0;
+	}
+
+	if (of_property_read_u32(node, "cpts_clock_div",
+				&cpsw_dev->cpts.cc_div)) {
+		pr_err("Missing cpts_clock_div property in the DT.\n");
+		cpsw_dev->cpts.cc_div = 1;
 	}
 
 	ret = of_property_read_u32(node, "num_slaves", &cpsw_dev->num_slaves);

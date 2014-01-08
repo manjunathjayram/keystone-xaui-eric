@@ -150,6 +150,12 @@ struct cpts {
 	u32 pps_one_sec; /* counter val equivalent of 1 sec */
 	u32 ts_comp_length;
 	u64 ts_comp_last;
+	u32 cc_div;
+	u64 cc_total;
+	u64 tc_base;
+	u64 max_cycles;
+	u64 max_nsec;
+	s32 ppb;
 #endif
 };
 
