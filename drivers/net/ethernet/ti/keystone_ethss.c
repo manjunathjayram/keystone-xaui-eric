@@ -3003,6 +3003,9 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 		cpsw_dev->cpts.cc_div = 1;
 	}
 
+	cpsw_dev->cpts.ignore_adjfreq =
+		of_property_read_bool(node, "cpts-ignore-adjfreq");
+
 	ret = of_property_read_u32(node, "num_slaves", &cpsw_dev->num_slaves);
 	if (ret < 0) {
 		dev_err(dev, "missing num_slaves parameter, err %d\n", ret);
