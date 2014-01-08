@@ -156,6 +156,7 @@ struct cpts {
 	u64 max_cycles;
 	u64 max_nsec;
 	s32 ppb;
+	bool ignore_adjfreq;
 #endif
 };
 
