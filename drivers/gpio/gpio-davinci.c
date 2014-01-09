@@ -418,7 +418,7 @@ static const struct irq_domain_ops davinci_gpio_irq_ops = {
 
 static int davinci_gpio_irq_setup(struct platform_device *pdev)
 {
-	unsigned	gpio, irq, bank;
+	unsigned	gpio, bank;
 	struct clk	*clk;
 	u32		binten = 0;
 	unsigned	ngpio, bank_irq;
@@ -428,6 +428,7 @@ static int davinci_gpio_irq_setup(struct platform_device *pdev)
 	struct davinci_gpio_platform_data *pdata = dev->platform_data;
 	struct davinci_gpio_regs __iomem *g;
 	struct irq_domain	*irq_domain = NULL;
+	int		irq;
 
 	ngpio = pdata->ngpio;
 	res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
