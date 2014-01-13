@@ -1270,7 +1270,7 @@ static int chan_set_notify(struct keystone_dma_chan *chan, bool enable)
 
 retry:
 	prev = chan_get_state(chan);
-	if (!__chan_is_alive(prev)) {
+	if (unlikely(!__chan_is_alive(prev))) {
 		dev_err(chan_dev(chan), "cannot pause/resume in %s prev\n",
 			chan_state_str(prev));
 		return -ENODEV;
@@ -1278,7 +1278,7 @@ retry:
 
 	next = enable ? CHAN_STATE_OPENED  : CHAN_STATE_PAUSED;
 
-	if (prev == next) {
+	if (unlikely(prev == next)) {
 		chan_vdbg(chan, "already in state (%s) for %s\n",
 			  chan_state_str(prev),
 			  enable ? "resume" : "pause");
@@ -1286,7 +1286,7 @@ retry:
 		return 0;
 	}
 
-	if (chan_set_state(chan, prev, next))
+	if (unlikely(chan_set_state(chan, prev, next)))
 		goto retry;
 
 	if (enable)
@@ -1294,7 +1294,7 @@ retry:
 	else
 		ret = hwqueue_disable_notifier(chan->q_complete);
 
-	if (ret < 0) {
+	if (unlikely(ret < 0)) {
 		WARN_ON(chan_set_state(chan, next, prev));
 		dev_err(chan_dev(chan), "queue notifier %s failed\n",
 			enable ? "enable" : "disable");
@@ -1537,7 +1537,7 @@ chan_prep_slave_sg(struct dma_chan *achan, struct scatterlist *_sg,
 		return ERR_PTR(-EINVAL);
 	}
 
-	if (unlikely(options & DMA_HAS_EPIB)) {
+	if (likely(options & DMA_HAS_EPIB)) {
 		epiblen  = sg->length;
 		epib = sg_virt(sg);
 		num_sg--;
@@ -1551,7 +1551,7 @@ chan_prep_slave_sg(struct dma_chan *achan, struct scatterlist *_sg,
 		epiblen /= sizeof(u32);
 	}
 
-	if (unlikely(options & DMA_HAS_PSINFO)) {
+	if (likely(options & DMA_HAS_PSINFO)) {
 		pslen  = sg->length;
 		psdata = sg_virt(sg);
 		num_sg--;
