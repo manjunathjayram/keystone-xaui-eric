@@ -230,6 +230,7 @@ struct keystone_rio_board_controller_info {
 	u16             serdes_config_num;
 	u32             serdes_baudrate;
 	u32             path_mode;
+	u32             port_register_timeout;
 	u32             pkt_forwarding;
 
 	int             rio_irq;
