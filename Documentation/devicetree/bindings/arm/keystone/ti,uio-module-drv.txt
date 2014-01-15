@@ -1,0 +1,25 @@
+UIO Peripheral Modules
+
+This file provides information about, what the device tree entry for the
+uio accesible peripheral module device should contain.
+
+Required properties:
+- compatible : "ti,uio-module-drv"
+- reg : Offset and length of the register set for the device
+ or mem : Offset and lengh of the memory region.
+
+Recommended properties :
+- interrupts : standard interrupt property
+- clocks : desired clock domain property
+
+Example:
+
+		uio_hyperlink0: hyperlink0 {
+			compatible = "ti,uio-module-drv";
+			mem  = <0x21400000 0x00000100
+				0x40000000 0x10000000
+				0x0231a000 0x00002000>;
+			clocks = <&clkhyperlink0>;
+			interrupts	= <0 387 0x101>;
+			label = "hyperlink0";
+		};
