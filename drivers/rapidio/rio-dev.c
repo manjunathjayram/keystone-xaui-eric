@@ -596,7 +596,7 @@ int rio_dev_add(struct rio_dev *rdev)
 				    rdev,
 				    "%s%d.%d",
 				    RIO_DEV_NAME,
-				    port->id,
+				    port->index,
 				    rdev->destid);
 		
 		status = IS_ERR(dev) ? PTR_ERR(dev) : 0;
