@@ -1923,7 +1923,7 @@ static int __init netcp_init(void)
 	/* Create a cache for these commonly-used structures */
 	netcp_pinfo_cache = kmem_cache_create("netcp_pinfo_cache",
 			sizeof(struct netcp_packet), sizeof(void *),
-			0, NULL);
+			SLAB_HWCACHE_ALIGN, NULL);
 	if (!netcp_pinfo_cache)
 		return -ENOMEM;
 
