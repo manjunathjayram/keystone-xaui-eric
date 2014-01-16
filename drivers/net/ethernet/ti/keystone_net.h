@@ -96,18 +96,22 @@ struct netcp_addr {
 };
 
 struct netcp_priv {
-	spinlock_t			 lock;
+	/* Common stuff first */
 	struct netcp_device		*netcp_device;
 	struct net_device		*ndev;
+	int				 cpsw_port;
+	/* Tx data path stuff */
+	struct netcp_hook_list		*txhook_list_array;
+	/* Rx data path stuff */
 	struct dma_chan			*rx_channel;
-	struct list_head		 txhook_list_head;
-	struct list_head		 rxhook_list_head;
 	enum netcp_rx_state		 rx_state;
+	struct netcp_hook_list		*rxhook_list_array;
 	struct napi_struct		 napi;
+	/* Non data path stuff */
 	struct platform_device		*pdev;
 	struct device			*dev;
-	int				 cpsw_port;
 	u32				 msg_enable;
+	spinlock_t			 lock;
 	struct net_device_stats		 stats;
 	int				 rx_packet_max;
 	const char			*rx_chan_name;
@@ -127,16 +131,16 @@ struct netcp_packet {
 	struct sk_buff			*skb;
 	struct netcp_priv		*netcp;
 	struct netcp_tx_pipe		*tx_pipe;
-	int				 sg_ents;
-	struct scatterlist		 sg[NETCP_SGLIST_SIZE];
-	u32				 epib[4];
-	u32				 psdata[NETCP_PSDATA_LEN];
-	unsigned int			 psdata_len;
 	dma_cookie_t			 cookie;
 	bool				 rxtstamp_complete;
 	void				*ts_context;
 	int				(*txtstamp_complete)(void *context,
 						struct netcp_packet *packet);
+	int				 sg_ents;
+	struct scatterlist		 sg[NETCP_SGLIST_SIZE];
+	u32				 psdata[NETCP_PSDATA_LEN];
+	unsigned int			 psdata_len;
+	u32				 epib[4];
 };
 
 static inline u32 *netcp_push_psdata(struct netcp_packet *p_info, unsigned bytes)
