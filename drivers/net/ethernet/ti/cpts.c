@@ -44,55 +44,106 @@ static struct sock_filter ptp_default_filter[] = {
 #define VLAN_IPV4_HLEN(data) \
 	(((struct iphdr *)(data + OFF_IHL + VLAN_HLEN))->ihl << 2)
 
-static inline u64 cpts_cs_cyc2ns(cycle_t cycles, u32 mult, u32 shift)
+static u64 cpts_ppb_correct_ns(struct cpts *cpts, u64 ns)
 {
-	u64 ns_offset;
+	s32 ppb = cpts->ppb;
+	int neg_adj = 0;
+	u64 temp_ns;
 
-	ns_offset = (cycles * mult) + (1ULL << (shift - 1));
-	do_div(ns_offset, (1ULL << shift));
+	if (ppb == 0)
+		return ns;
 
-	return ns_offset;
+	if (ppb < 0) {
+		neg_adj = 1;
+		ppb = -ppb;
+	}
+
+	temp_ns = ns * ppb;
+	do_div(temp_ns, 1000000000);
+	return ns + (neg_adj ? -temp_ns : temp_ns);
 }
 
-static inline u64 cpts_cc_cyc2ns(const struct cyclecounter *cc, cycle_t cycles)
+/* Assumes ppb < 1000000000 */
+static u64 cpts_ppb_correct_cyc(struct cpts *cpts, u64 cyc)
 {
-	return cpts_cs_cyc2ns(cycles, cc->mult, cc->shift);
+	u64 temp_cyc;
+
+	if (cpts->ppb == 0)
+		return cyc;
+
+	temp_cyc = cyc * 1000000000;
+	do_div(temp_cyc, 1000000000 + cpts->ppb);
+	return temp_cyc;
 }
 
-static u64 cpts_tc_read_delta(struct timecounter *tc)
+static inline u64 cpts_cyc2ns(cycle_t cycles, u32 mult, u32 shift, u32 div)
 {
-	cycle_t cycle_now, cycle_delta;
-	u64 ns_offset;
+	u64 ns;
 
-	/* read cycle counter: */
-	cycle_now = tc->cc->read(tc->cc);
-
-	/* calculate the delta since the last timecounter_read_delta(): */
-	cycle_delta = (cycle_now - tc->cycle_last) & tc->cc->mask;
-
-	/* convert to nanoseconds: */
-	ns_offset = cpts_cc_cyc2ns(tc->cc, cycle_delta);
-
-	/* update time stamp of timecounter_read_delta() call: */
-	tc->cycle_last = cycle_now;
-
-	return ns_offset;
+	ns = ((cycles * mult) >> shift);
+	do_div(ns, div);
+	return ns;
 }
 
-static u64 cpts_tc_read(struct timecounter *tc)
+static u64 cpts_cc_cyc2ns(struct cpts *cpts, cycle_t cycles)
 {
-	u64 nsec;
+	const struct cyclecounter *cc = &cpts->cc;
+	u64 nsec = 0;
+	u64 corrected_ns;
 
-	/* increment time by nanoseconds since last call */
-	nsec = cpts_tc_read_delta(tc);
-	nsec += tc->nsec;
-	tc->nsec = nsec;
+	/* to prevent overflow in cpts_cyc2ns */
+	while (cycles >= cpts->max_cycles) {
+		nsec += cpts->max_nsec;
+		cycles -= cpts->max_cycles;
+	}
+
+	nsec += cpts_cyc2ns(cycles, cc->mult, cc->shift, cpts->cc_div);
+
+	corrected_ns = cpts_ppb_correct_ns(cpts, nsec);
 
 	return nsec;
 }
 
-u64 cpts_tc_cyc2time(struct timecounter *tc, cycle_t cycle_tstamp)
+static cycle_t cpts_cc_read_delta(struct cpts *cpts)
 {
+	struct timecounter *tc = &cpts->tc;
+	cycle_t cycle_now, cycle_delta;
+
+	/* read cycle counter: */
+	cycle_now = tc->cc->read(tc->cc);
+
+	/* calculate the cc delta since the last cc_read_delta(): */
+	cycle_delta = (cycle_now - tc->cycle_last) & tc->cc->mask;
+
+	/* update cc last read */
+	tc->cycle_last = cycle_now;
+
+	return cycle_delta;
+}
+
+/* With cc's mult, calculate the max cycles that can be taken in
+ * cyc2ns without overflow. Also calculates the corresponding ns
+ */
+void cpts_cyc2ns_set_max_cap(struct cpts *cpts)
+{
+	cpts->max_cycles = 0xffffffffffffffff;
+	do_div(cpts->max_cycles, cpts->cc.mult);
+	cpts->max_nsec = cpts_cyc2ns(cpts->max_cycles, cpts->cc.mult,
+					cpts->cc.shift, cpts->cc_div);
+	cpts->max_nsec = cpts_ppb_correct_ns(cpts, cpts->max_nsec);
+}
+
+static u64 cpts_tc_read(struct cpts *cpts)
+{
+	cpts->cc_total += cpts_cc_read_delta(cpts);
+	cpts->tc.nsec = cpts_cc_cyc2ns(cpts, cpts->cc_total);
+
+	return cpts->tc_base + cpts->tc.nsec;
+}
+
+u64 cpts_tstamp_cyc2time(struct cpts *cpts, cycle_t cycle_tstamp)
+{
+	struct timecounter *tc = &cpts->tc;
 	u64 cycle_delta = (cycle_tstamp - tc->cycle_last) & tc->cc->mask;
 	u64 nsec;
 
@@ -102,12 +153,19 @@ u64 cpts_tc_cyc2time(struct timecounter *tc, cycle_t cycle_tstamp)
 	 */
 	if (cycle_delta > tc->cc->mask / 2) {
 		cycle_delta = (tc->cycle_last - cycle_tstamp) & tc->cc->mask;
-		nsec = tc->nsec - cpts_cc_cyc2ns(tc->cc, cycle_delta);
+		nsec = tc->nsec - cpts_cc_cyc2ns(cpts, cycle_delta);
 	} else {
-		nsec = cpts_cc_cyc2ns(tc->cc, cycle_delta) + tc->nsec;
+		nsec = cpts_cc_cyc2ns(cpts, cycle_delta) + tc->nsec;
 	}
 
-	return nsec;
+	return cpts->tc_base + nsec;
+}
+
+void cpts_tc_init(struct cpts *cpts, u64 start_tstamp)
+{
+	timecounter_init(&cpts->tc, &cpts->cc, 0);
+	cpts->cc_total = 0;
+	cpts->tc_base = start_tstamp;
 }
 
 static int event_expired(struct cpts_event *event)
@@ -226,9 +284,10 @@ static u64 cpts_cc_ns2cyc(struct cpts *cpts, u64 nsec)
 {
 	u64 max_ns, max_cyc, cyc = 0;
 	u64 dividend;
+	u64 corrected_cyc;
 
 	max_cyc = (1ULL << CPTS_COUNTER_BITS) - 1;
-	max_ns = cpts_cc_cyc2ns(&cpts->cc, max_cyc);
+	max_ns = cpts_cc_cyc2ns(cpts, max_cyc);
 
 	while (nsec >= max_ns) {
 		nsec -= max_ns;
@@ -236,11 +295,12 @@ static u64 cpts_cc_ns2cyc(struct cpts *cpts, u64 nsec)
 	}
 
 	if (nsec) {
-		dividend = (nsec << cpts->cc.shift) + (cpts->cc.mult - 1);
+		dividend = (nsec * cpts->cc_div) << cpts->cc.shift;
 		cyc += div_u64(dividend, cpts->cc.mult);
 	}
 
-	return cyc;
+	corrected_cyc = cpts_ppb_correct_cyc(cpts, cyc);
+	return corrected_cyc;
 }
 
 static inline void cpts_ts_comp_add_ns(struct cpts *cpts, s64 add_ns)
@@ -275,67 +335,6 @@ static inline void cpts_enable_ts_comp(struct cpts *cpts)
 	cpts_write32(cpts, cpts->ts_comp_length, ts_comp_length);
 }
 
-static void cpts_pps_adjfreq(struct cpts *cpts,
-		u32 old_mult, u64 old_cycle_last)
-{
-	u64 old_ts_comp_last = cpts->ts_comp_last;
-	struct timecounter *tc = &cpts->tc;
-	cycle_t cycle_future, cycle_delta;
-	u64 ns_to_pulse;
-
-	cycle_future = old_ts_comp_last & tc->cc->mask;
-	cycle_delta = (cycle_future - tc->cycle_last) & tc->cc->mask;
-
-	ns_to_pulse = cpts_cs_cyc2ns(cycle_delta,
-					old_mult, cpts->cc.shift);
-
-	cpts->ts_comp_last = tc->cycle_last;
-	/* add the ns to ts_comp to align on the sec boundary in new freq */
-	cpts_ts_comp_add_ns(cpts, ns_to_pulse);
-	/* enable ts_comp pulse with new val */
-	cpts_enable_ts_comp(cpts);
-	/* update one sec equivalent after freq adjust */
-	cpts->pps_one_sec = cpts_cc_ns2cyc(cpts, NSEC_PER_SEC);
-}
-
-/* If delta < 0, eg. -3.25sec, ns_before_sec after adj is 0.25 sec
- * If delta > 0, eg. +3.25sec, ns_before_sec after adj is 0.75 sec
- * Assumes the ts_comp is stopped when this function is called
- */
-static int cpts_pps_adjtime(struct cpts *cpts, s64 delta)
-{
-	s64 sec;
-	int neg_adj = 0;
-	s32 ns_before_sec;
-
-	if (delta < 0) {
-		neg_adj = 1;
-		delta = -delta;
-	}
-
-	sec = div_s64_rem(delta, NSEC_PER_SEC, &ns_before_sec);
-
-	if (ns_before_sec && !neg_adj)
-		ns_before_sec = NSEC_PER_SEC - ns_before_sec;
-
-	/* add the ns to ts_comp to align on the sec boundary */
-	cpts_ts_comp_add_ns(cpts, ns_before_sec);
-	/* enable ts_comp pulse with new val */
-	cpts_enable_ts_comp(cpts);
-	return 0;
-}
-
-/* Assumes the ts_comp is stopped when this function is called */
-static inline void cpts_pps_settime(struct cpts *cpts,
-				const struct timespec *ts)
-{
-	cpts->ts_comp_last = cpts->tc.cycle_last;
-	/* align to next sec boundary and add one sec */
-	cpts_ts_comp_add_ns(cpts, NSEC_PER_SEC - ts->tv_nsec);
-
-	cpts_enable_ts_comp(cpts);
-}
-
 static int cpts_ts_comp_add_reload(struct cpts *cpts, s64 add_ns, int enable)
 {
 	struct list_head *this, *next;
@@ -358,7 +357,7 @@ static int cpts_ts_comp_add_reload(struct cpts *cpts, s64 add_ns, int enable)
 					event->low);
 
 			/* report the event */
-			ns = cpts_tc_cyc2time(&cpts->tc, event->low);
+			ns = cpts_tstamp_cyc2time(cpts, event->low);
 			pevent.type = PTP_CLOCK_PPSUSR;
 			pevent.pps_times.ts_real = ns_to_timespec(ns);
 			ptp_clock_event(cpts->clock, &pevent);
@@ -380,41 +379,87 @@ static int cpts_ts_comp_add_reload(struct cpts *cpts, s64 add_ns, int enable)
 
 /* PTP clock operations */
 
-static int cpts_ptp_adjfreq(struct ptp_clock_info *ptp, s32 ppb)
+static void cpts_tc_settime(struct cpts *cpts, u64 now)
 {
-	u64 adj, old_cycle_last;
-	u32 diff, mult, old_mult;
-	int neg_adj = 0;
-	unsigned long flags;
-	struct cpts *cpts = container_of(ptp, struct cpts, info);
-
-	if (ppb < 0) {
-		neg_adj = 1;
-		ppb = -ppb;
-	}
-	mult = cpts->cc_mult;
-	adj = mult;
-	adj *= ppb;
-	diff = div_u64(adj, 1000000000ULL);
-	old_mult = cpts->cc.mult;
-	old_cycle_last = cpts->tc.cycle_last;
-
-	spin_lock_irqsave(&cpts->lock, flags);
-
-	cpts_tc_read(&cpts->tc);
+	cycle_t cycles_to_pulse;
+	u64 ns_to_pulse, pulse_time;
+	u32 remainder;
 
 	if (cpts->pps_enable) {
 		cpts_disable_ts_comp(cpts);
-		/* if any, report existing pulse before adj */
 		cpts_fifo_read(cpts, CPTS_EV_COMP);
+		/* before adj, report existing pulse, if any,
+		 * and add 1 sec to local ts_comp counter,
+		 * but don't start the pps yet
+		 */
 		cpts_ts_comp_add_reload(cpts, NSEC_PER_SEC, 0);
 	}
 
-	cpts->cc.mult = neg_adj ? mult - diff : mult + diff;
+	/* set the ptp clock time */
+	cpts->tc.nsec = 0;
+	cpts->cc_total = 0;
+	cpts->tc_base = now;
 
-	if (cpts->pps_enable)
-		cpts_pps_adjfreq(cpts, old_mult, old_cycle_last);
+	if (cpts->pps_enable) {
+		/* adjust ts_comp and start it */
+		cycles_to_pulse =
+			(TS_COMP_LAST_REG(cpts) - cpts->tc.cycle_last) &
+			cpts->cc.mask;
+		ns_to_pulse = cpts_cc_cyc2ns(cpts, cycles_to_pulse);
+		pulse_time = cpts->tc_base + ns_to_pulse;
+		/* align pulse time to next sec boundary */
+		div_u64_rem(pulse_time, 1000000000, &remainder);
+		cpts_ts_comp_add_ns(cpts, NSEC_PER_SEC - remainder);
+		/* enable ts_comp pulse */
+		cpts_enable_ts_comp(cpts);
+	}
+}
 
+static int cpts_ptp_adjfreq(struct ptp_clock_info *ptp, s32 ppb)
+{
+	struct cpts *cpts = container_of(ptp, struct cpts, info);
+	u64 ns_to_pulse = 0, pulse_time, now;
+	cycle_t cycles_to_pulse;
+	unsigned long flags;
+	u32 remainder;
+
+	spin_lock_irqsave(&cpts->lock, flags);
+	now = cpts_tc_read(cpts);
+
+	if (cpts->pps_enable) {
+		cpts_disable_ts_comp(cpts);
+		cpts_fifo_read(cpts, CPTS_EV_COMP);
+		/* before adj, if any, report existing pulse
+		 * and add 1 sec to local ts_comp counter,
+		 * but don't start the pps yet
+		 */
+		cpts_ts_comp_add_reload(cpts, NSEC_PER_SEC, 0);
+		cycles_to_pulse =
+			(TS_COMP_LAST_REG(cpts) - cpts->tc.cycle_last) &
+			cpts->cc.mask;
+		ns_to_pulse = cpts_cc_cyc2ns(cpts, cycles_to_pulse);
+	}
+
+	/* set the ptp clock time & new freq */
+	cpts->tc.nsec = 0;
+	cpts->cc_total = 0;
+	cpts->tc_base = now;
+	cpts->ppb = ppb;
+	cpts_cyc2ns_set_max_cap(cpts);
+	cpts->pps_one_sec = cpts_cc_ns2cyc(cpts, NSEC_PER_SEC);
+
+	if (cpts->pps_enable) {
+		/* adjust ts_comp based on new freq and start it */
+		cycles_to_pulse = cpts_cc_ns2cyc(cpts, ns_to_pulse);
+		cpts->ts_comp_last = (cycles_to_pulse + cpts->tc.cycle_last) &
+					cpts->cc.mask;
+		pulse_time = cpts->tc_base + ns_to_pulse;
+		/* align pulse time to next sec boundary */
+		div_u64_rem(pulse_time, 1000000000, &remainder);
+		cpts_ts_comp_add_ns(cpts, NSEC_PER_SEC - remainder);
+		/* enable ts_comp pulse */
+		cpts_enable_ts_comp(cpts);
+	}
 	spin_unlock_irqrestore(&cpts->lock, flags);
 
 	return 0;
@@ -427,19 +472,9 @@ static int cpts_ptp_adjtime(struct ptp_clock_info *ptp, s64 delta)
 	struct cpts *cpts = container_of(ptp, struct cpts, info);
 
 	spin_lock_irqsave(&cpts->lock, flags);
-	now = cpts_tc_read(&cpts->tc);
-	if (cpts->pps_enable) {
-		cpts_disable_ts_comp(cpts);
-		/* if any, report existing pulse before adj */
-		cpts_fifo_read(cpts, CPTS_EV_COMP);
-		cpts_ts_comp_add_reload(cpts, NSEC_PER_SEC, 0);
-	}
-	now += delta;
-	timecounter_init(&cpts->tc, &cpts->cc, now);
-	if (cpts->pps_enable)
-		cpts_pps_adjtime(cpts, delta);
+	now = cpts_tc_read(cpts) + delta;
+	cpts_tc_settime(cpts, now);
 	spin_unlock_irqrestore(&cpts->lock, flags);
-
 	return 0;
 }
 
@@ -451,7 +486,7 @@ static int cpts_ptp_gettime(struct ptp_clock_info *ptp, struct timespec *ts)
 	struct cpts *cpts = container_of(ptp, struct cpts, info);
 
 	spin_lock_irqsave(&cpts->lock, flags);
-	ns = cpts_tc_read(&cpts->tc);
+	ns = cpts_tc_read(cpts);
 	spin_unlock_irqrestore(&cpts->lock, flags);
 
 	ts->tv_sec = div_u64_rem(ns, 1000000000, &remainder);
@@ -471,17 +506,9 @@ static int cpts_ptp_settime(struct ptp_clock_info *ptp,
 	ns += ts->tv_nsec;
 
 	spin_lock_irqsave(&cpts->lock, flags);
-	if (cpts->pps_enable) {
-		cpts_disable_ts_comp(cpts);
-		/* if any, report existing pulse before adj */
-		cpts_fifo_read(cpts, CPTS_EV_COMP);
-		cpts_ts_comp_add_reload(cpts, NSEC_PER_SEC, 0);
-	}
-	timecounter_init(&cpts->tc, &cpts->cc, ns);
-	if (cpts->pps_enable)
-		cpts_pps_settime(cpts, ts);
+	cpts_tc_read(cpts);
+	cpts_tc_settime(cpts, ns);
 	spin_unlock_irqrestore(&cpts->lock, flags);
-
 	return 0;
 }
 
@@ -597,10 +624,11 @@ static void cpts_clk_init(struct cpts *cpts)
 
 		clocks_calc_mult_shift(&cpts->cc.mult, &cpts->cc.shift, rate,
 					NSEC_PER_SEC, max_sec);
-
-		pr_info("cpts rftclk rate(%lu HZ),mult(%u),shift(%u)\n",
-				rate, cpts->cc.mult, cpts->cc.shift);
 	}
+
+	pr_info("cpts rftclk rate(%u HZ),mult(%u),shift(%u),div(%u)\n",
+			cpts->rftclk_freq, cpts->cc.mult,
+			cpts->cc.shift, cpts->cc_div);
 
 	if (cpts->refclk)
 		clk_prepare_enable(cpts->refclk);
@@ -685,7 +713,7 @@ static u64 cpts_find_ts(struct cpts *cpts, struct sk_buff *skb, int ev_type)
 		seqid = (event->high >> SEQUENCE_ID_SHIFT) & SEQUENCE_ID_MASK;
 		if (ev_type == event_type(event) &&
 		    cpts_match(skb, class, seqid, mtype)) {
-			ns = cpts_tc_cyc2time(&cpts->tc, event->low);
+			ns = cpts_tstamp_cyc2time(cpts, event->low);
 			list_del_init(&event->list);
 			list_add(&event->list, &cpts->pool);
 			break;
@@ -777,12 +805,16 @@ int cpts_register(struct device *dev, struct cpts *cpts,
 	cpts_write32(cpts, CPTS_EN, control);
 	cpts_write32(cpts, TS_PEND_EN, int_enable);
 
+	cpts_cyc2ns_set_max_cap(cpts);
+
 	if (cpts->info.pps)
 		cpts_pps_init(cpts);
 
 	spin_lock_irqsave(&cpts->lock, flags);
-	timecounter_init(&cpts->tc, &cpts->cc, ktime_to_ns(ktime_get_real()));
+	cpts_tc_init(cpts, ktime_to_ns(ktime_get_real()));
 	spin_unlock_irqrestore(&cpts->lock, flags);
+
+	cpts->cc_total = cpts->tc.cycle_last;
 
 	INIT_DELAYED_WORK(&cpts->overflow_work, cpts_overflow_check);
 	schedule_delayed_work(&cpts->overflow_work, CPTS_OVERFLOW_PERIOD);
