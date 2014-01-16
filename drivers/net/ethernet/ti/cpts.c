@@ -423,6 +423,11 @@ static int cpts_ptp_adjfreq(struct ptp_clock_info *ptp, s32 ppb)
 	unsigned long flags;
 	u32 remainder;
 
+	if (cpts->ignore_adjfreq) {
+		pr_debug("%s: ignored ppb = %d\n", __func__, ppb);
+		return 0;
+	}
+
 	spin_lock_irqsave(&cpts->lock, flags);
 	now = cpts_tc_read(cpts);
 
