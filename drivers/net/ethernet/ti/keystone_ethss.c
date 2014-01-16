@@ -2520,7 +2520,7 @@ static int cpsw_rxtstamp_complete(struct cpsw_intf *cpsw_intf,
 {
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 
-	if (p_info->rxtstamp_complete == true)
+	if (p_info->rxtstamp_complete)
 		return 0;
 
 	if (phy_ptp_tstamp(p_info, false)) {
@@ -2891,6 +2891,16 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	int slave_num = 0;
 	int i, ret = 0;
 
+	if (!node) {
+		dev_err(dev, "device tree info unavailable\n");
+		return -ENODEV;
+	}
+
+	if (ptp_filter_init(phy_ptp_filter, ARRAY_SIZE(phy_ptp_filter))) {
+		dev_err(dev, "bad ptp filter\n");
+		return -EINVAL;
+	}
+
 	cpsw_dev = devm_kzalloc(dev, sizeof(struct cpsw_priv), GFP_KERNEL);
 	if (!cpsw_dev) {
 		dev_err(dev, "cpsw_dev memory allocation failed\n");
@@ -2898,12 +2908,6 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	}
 	*inst_priv = cpsw_dev;
 	dev_dbg(dev, "%s(): cpsw_priv = %p\n", __func__, cpsw_dev);
-
-	if (!node) {
-		dev_err(dev, "device tree info unavailable\n");
-		ret = -ENODEV;
-		goto exit;
-	}
 
 	cpsw_dev->dev = dev;
 	cpsw_dev->netcp_device = netcp_device;
