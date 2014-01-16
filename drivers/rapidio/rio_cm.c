@@ -116,7 +116,7 @@ struct cm_dev {
 	struct list_head	list;
 	struct rio_mport	*mport;
 	void			*rx_buf[RIOCM_RX_RING_SIZE];
-	int			rx_slot;
+	int			rx_slots;
 
 	void			*tx_buf[RIOCM_TX_RING_SIZE];
 	void			*tx_ctxt[RIOCM_TX_RING_SIZE];
@@ -236,46 +236,56 @@ static struct rio_channel *riocm_get_channel(u16 nr)
 	return ch;
 }
 
-static int riocm_rx_get_one(struct cm_dev *cm, void **msg)
+static void *riocm_rx_get_msg(struct cm_dev *cm)
 {
+	void *msg;
 	int i;
-	void *data = NULL;
 
-	i = cm->rx_slot;
+	msg = rio_get_inb_message(cm->mport, cmbox);
+	if (msg) {
+		for (i = 0; i < RIOCM_RX_RING_SIZE; i++) {
+			if (cm->rx_buf[i] == msg) {
+				cm->rx_buf[i] = NULL;
+				cm->rx_slots++;
+				break;
+			}
+		}
 
-	if (!cm->rx_buf[i]) {
-		riocm_warn("rx_buf[%d] = NULL", i);
-		goto err;
+		if (i == RIOCM_RX_RING_SIZE)
+			riocm_warn("no record for buffer 0x%p", msg);
 	}
 
-	data = rio_get_inb_message(cm->mport, cmbox);
-	if (!data)
-		goto err;
-
-	if (cm->rx_buf[i] != data)
-		riocm_warn("rx_buf[%d] != data_ptr", i);
-
-	i = (i + 1) % RIOCM_RX_RING_SIZE;
-err:
-	*msg = data;
-	return i;
+	return msg;
 }
 
-static void riocm_rx_fill(struct cm_dev *cm, int end)
+/*
+ * riocm_rx_fill - sends a data packet to a remote device
+ * @cm: cm_dev object
+ * @nent: max number of entries to fill
+ *
+ * Returns: 0 if success, or
+ *          -EINVAL if one or more input parameters is/are not valid,
+ *          -ENODEV if cannot find a channel with specified ID,
+ *          -EAGAIN if a channel is not in connected state,
+ *	    error codes returned by HW send routine.
+ */
+static void riocm_rx_fill(struct cm_dev *cm, int nent)
 {
 	int i;
 
-	i = cm->rx_slot;
-	do {
-		cm->rx_buf[i] = kmalloc(RIO_MAX_MSG_SIZE, GFP_ATOMIC);
+	if (cm->rx_slots == 0)
+		return;
 
-		if (!cm->rx_buf[i])
-			break;
-
-		rio_add_inb_buffer(cm->mport, cmbox, cm->rx_buf[i]);
-	} while ((i = (i + 1) % RIOCM_RX_RING_SIZE) != end);
-
-	cm->rx_slot = i;
+	for (i = 0; i < RIOCM_RX_RING_SIZE && cm->rx_slots && nent; i++) {
+		if (cm->rx_buf[i] == NULL) {
+			cm->rx_buf[i] = kmalloc(RIO_MAX_MSG_SIZE, GFP_ATOMIC);
+			if (cm->rx_buf[i] == NULL)
+				break;
+			rio_add_inb_buffer(cm->mport, cmbox, cm->rx_buf[i]);
+			cm->rx_slots--;
+			nent--;
+		}
+	}
 }
 
 static int riocm_req_handler(struct cm_dev *cm, void *req_data)
@@ -570,13 +580,13 @@ static void rio_ibmsg_handler(unsigned long context)
 	struct cm_dev *cm = (struct cm_dev *)context;
 	void *data;
 	struct rio_ch_chan_hdr *hdr;
-	int i, n;
+	int i;
 
 	for (i = 0; i < 8; i++) {
 		spin_lock(&cm->cm_lock);
-		n = riocm_rx_get_one(cm, &data);
-		if (n != cm->rx_slot)
-			riocm_rx_fill(cm, n);
+		data = riocm_rx_get_msg(cm);
+		if (data)
+			riocm_rx_fill(cm, 1);
 		spin_unlock(&cm->cm_lock);
 
 		if (data == NULL)
@@ -586,6 +596,7 @@ static void rio_ibmsg_handler(unsigned long context)
 
 		if (hdr->bhdr.type != RIO_CM_CHAN) {
 			/* For now simply discard packets other than channel */
+			riocm_error("Unsupported TYPE code (0x%x). Message dropped", hdr->bhdr.type);
 			kfree(data);
 			continue;
 		}
@@ -613,7 +624,7 @@ static void rio_ibmsg_handler(unsigned long context)
 			rio_rx_data_handler(cm, data);
 		} else {
 			/* Discard packets with invalid OP code */
-			riocm_error("Unsupported CH_OP code");
+			riocm_error("Unsupported CH_OP code (0x%x). Message dropped", hdr->ch_op);
 			kfree(data);
 		}
 	}
@@ -1654,8 +1665,8 @@ static int riocm_add_mport(struct device *dev,
 	for (i = 0; i < RIOCM_RX_RING_SIZE; i++)
 		cm->rx_buf[i] = NULL;
 
-	cm->rx_slot = 0;
-	riocm_rx_fill(cm, 0);
+	cm->rx_slots = RIOCM_RX_RING_SIZE;
+	riocm_rx_fill(cm, RIOCM_RX_RING_SIZE);
 
 	cm->tx_slot = 0;
 	cm->tx_int_slot = 0;
