@@ -344,6 +344,7 @@ struct cpsw_priv {
 	spinlock_t			hw_stats_lock;
 	struct cpts			cpts;
 	int				cpts_registered;
+	int				force_no_hwtstamp;
 };
 
 struct cpsw_intf {
@@ -2375,6 +2376,9 @@ int cpsw_ioctl(void *intf_priv, struct ifreq *req, int cmd)
 	struct phy_device *phy = slave->phy;
 	int ret = -EOPNOTSUPP;
 
+	if (cpsw_intf->cpsw_priv->force_no_hwtstamp)
+		return -EOPNOTSUPP;
+
 	if (phy)
 		ret = phy_mii_ioctl(phy, req, cmd);
 
@@ -2614,6 +2618,7 @@ static int cpsw_rx_hook(int order, void *data, struct netcp_packet *p_info)
 }
 
 #define	CPSW_TXHOOK_ORDER	0
+#define	CPSW_RXHOOK_ORDER	0
 
 static int cpsw_open(void *intf_priv, struct net_device *ndev)
 {
@@ -2706,8 +2711,9 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 	netcp_register_txhook(netcp, CPSW_TXHOOK_ORDER,
 			      cpsw_tx_hook, cpsw_intf);
 
-	netcp_register_rxhook(netcp, CPSW_TXHOOK_ORDER,
-			      cpsw_rx_hook, cpsw_intf);
+	if(!cpsw_dev->force_no_hwtstamp)
+		netcp_register_rxhook(netcp, CPSW_RXHOOK_ORDER,
+				      cpsw_rx_hook, cpsw_intf);
 
 	/* Configure the streaming switch */
 #define	PSTREAM_ROUTE_DMA	6
@@ -2740,6 +2746,10 @@ static int cpsw_close(void *intf_priv, struct net_device *ndev)
 		cpsw_ale_stop(cpsw_dev->ale);
 	
 	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_dev);
+
+	if(!cpsw_dev->force_no_hwtstamp)
+		netcp_unregister_rxhook(netcp, CPSW_RXHOOK_ORDER,
+				      cpsw_rx_hook, cpsw_intf);
 
 	netcp_unregister_txhook(netcp, CPSW_TXHOOK_ORDER, cpsw_tx_hook,
 				cpsw_intf);
@@ -3038,6 +3048,11 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	if (ret < 0) {
 		dev_err(dev, "missing intf_tx_queues parameter, err %d\n", ret);
 		cpsw_dev->intf_tx_queues = 1;
+	}
+
+	if (of_find_property(node, "force_no_hwtstamp", NULL)) {
+		cpsw_dev->force_no_hwtstamp = 1;
+		dev_warn(dev, "***** No CPSW or PHY timestamping *****\n");
 	}
 
 	if (of_find_property(node, "multi-interface", NULL))

@@ -1730,8 +1730,10 @@ static int pa_close(void *intf_priv, struct net_device *ndev)
 	if (pa_dev->csum_offload == CSUM_OFFLOAD_SOFT)
 		netcp_unregister_txhook(netcp_priv, pa_dev->txhook_softcsum,
 					pa_txhook_softcsum, intf_priv);
-	netcp_unregister_rxhook(netcp_priv, pa_dev->rxhook_order,
-				pa_rx_timestamp, intf_priv);
+
+	if (!pa_dev->force_no_hwtstamp)
+		netcp_unregister_rxhook(netcp_priv, pa_dev->rxhook_order,
+					pa_rx_timestamp, intf_priv);
 
 	netcp_txpipe_close(&pa_intf->tx_pipe);
 
@@ -1977,8 +1979,10 @@ static int pa_open(void *intf_priv, struct net_device *ndev)
 	if (pa_dev->csum_offload == CSUM_OFFLOAD_SOFT)
 		netcp_register_txhook(netcp_priv, pa_dev->txhook_softcsum,
 				      pa_txhook_softcsum, intf_priv);
-	netcp_register_rxhook(netcp_priv, pa_dev->rxhook_order,
-			      pa_rx_timestamp, intf_priv);
+
+	if (!pa_dev->force_no_hwtstamp)
+		netcp_register_rxhook(netcp_priv, pa_dev->rxhook_order,
+				      pa_rx_timestamp, intf_priv);
 
 	return 0;
 
@@ -2099,6 +2103,9 @@ static int pa_hwtstamp_ioctl(struct pa_intf *pa_intf,
 			     struct ifreq *ifr, int cmd)
 {
 	struct hwtstamp_config cfg;
+
+	if (pa_intf->pa_device->force_no_hwtstamp)
+		return -EOPNOTSUPP;
 
 	if (copy_from_user(&cfg, ifr->ifr_data, sizeof(cfg)))
 		return -EFAULT;
