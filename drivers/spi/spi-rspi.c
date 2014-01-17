@@ -771,8 +771,6 @@ static int rspi_setup(struct spi_device *spi)
 {
 	struct rspi_data *rspi = spi_master_get_devdata(spi->master);
 
-	if (!spi->bits_per_word)
-		spi->bits_per_word = 8;
 	rspi->max_speed_hz = spi->max_speed_hz;
 
 	set_config_register(rspi, 8);
