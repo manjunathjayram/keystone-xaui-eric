@@ -38,10 +38,17 @@ typedef void (*dma_notify_fn)(struct dma_chan *chan, void *arg);
 #define DMA_KEYSTONE_CONFIG	1004
 #define DMA_RXFREE_REFILL	1005
 #define DMA_GET_TX_QUEUE	1006
+#define DMA_GET_ONE             1007
+#define DMA_RXFREE_REFILL_ONE   1008
 
 struct dma_notify_info {
 	dma_notify_fn		 fn;
 	void			*fn_arg;
+};
+
+struct dma_refill_info {
+	struct dma_async_tx_descriptor *desc;
+	int    pool;
 };
 
 static inline int dma_get_rx_flow(struct dma_chan *chan)
@@ -72,6 +79,11 @@ static inline int dma_set_notify(struct dma_chan *chan, dma_notify_fn fn,
 static inline int dma_get_tx_queue(struct dma_chan *chan)
 {
 	return dmaengine_device_control(chan, DMA_GET_TX_QUEUE, 0);
+}
+
+static inline void *dma_get_one(struct dma_chan *chan)
+{
+	return (void *) dmaengine_device_control(chan, DMA_GET_ONE, 0);
 }
 
 /* Number of RX queues supported per channel */
@@ -116,5 +128,15 @@ static inline int dma_rxfree_refill(struct dma_chan *chan)
 	return dmaengine_device_control(chan, DMA_RXFREE_REFILL, 0);
 }
 
+static inline int dma_rxfree_refill_one(struct dma_chan *chan, int pool,
+					struct dma_async_tx_descriptor *desc)
+{
+	struct dma_refill_info info;
+	info.desc = desc;
+	info.pool = pool;
+
+	return dmaengine_device_control(chan, DMA_RXFREE_REFILL_ONE,
+					(unsigned long) &info);
+}
 #endif /* __MACH_KEYSTONE_DMA_H__ */
 
