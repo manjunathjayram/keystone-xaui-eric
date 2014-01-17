@@ -532,7 +532,7 @@ static void netcp_rx_complete(void *data)
 		dev_dbg(netcp->dev,
 			"receive: reclaimed packet %p, status %d, state %s\n",
 			p_info, status, netcp_rx_state_str(netcp));
-		dev_kfree_skb_any(skb);
+		dev_kfree_skb(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
 		netcp->ndev->stats.rx_dropped++;
 		return;
@@ -542,7 +542,7 @@ static void netcp_rx_complete(void *data)
 		dev_warn(netcp->dev,
 			 "receive: reclaimed packet %p, status %d, state %s\n",
 			 p_info, status, netcp_rx_state_str(netcp));
-		dev_kfree_skb_any(skb);
+		dev_kfree_skb(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
 		netcp->ndev->stats.rx_errors++;
 		return;
@@ -550,7 +550,7 @@ static void netcp_rx_complete(void *data)
 
 	if (unlikely(!skb->len)) {
 		dev_warn(netcp->dev, "receive: zero length packet\n");
-		dev_kfree_skb_any(skb);
+		dev_kfree_skb(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
 		netcp->ndev->stats.rx_errors++;
 		return;
@@ -572,7 +572,7 @@ static void netcp_rx_complete(void *data)
 		ret = rx_hook->hook_rtn(rx_hook->order, rx_hook->hook_data, p_info);
 		if (ret) {
 			dev_err(netcp->dev, "RX hook %d failed: %d\n", rx_hook->order, ret);
-			dev_kfree_skb_any(skb);
+			dev_kfree_skb(skb);
 			kmem_cache_free(netcp_pinfo_cache, p_info);
 			return;
 		}
@@ -600,7 +600,7 @@ static void netcp_rxpool_free(void *arg, unsigned q_num, unsigned bufsize,
 		struct sk_buff *skb = p_info->skb;
 
 		dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
-		dev_kfree_skb_any(skb);
+		dev_kfree_skb(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
 	} else {
 		void *bufptr = desc->callback_param;
@@ -660,7 +660,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 						 1, DMA_FROM_DEVICE);
 		if (p_info->sg_ents != 3) {
 			dev_err(netcp->dev, "dma map failed\n");
-			dev_kfree_skb_any(skb);
+			dev_kfree_skb(skb);
 			kmem_cache_free(netcp_pinfo_cache, p_info);
 			return NULL;
 		}
@@ -670,7 +670,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 					       DMA_HAS_EPIB | DMA_HAS_PSINFO);
 		if (IS_ERR_OR_NULL(desc)) {
 			dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
-			dev_kfree_skb_any(skb);
+			dev_kfree_skb(skb);
 			kmem_cache_free(netcp_pinfo_cache, p_info);
 			err = PTR_ERR(desc);
 			if (err != -ENOMEM) {
@@ -806,7 +806,9 @@ static void netcp_tx_complete(void *data)
 	sg_ents = sg_count(&p_info->sg[2], p_info->sg_ents);
 	dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], sg_ents, DMA_TO_DEVICE);
 
+#ifdef DEBUG
 	netcp_dump_packet(p_info, "txc");
+#endif
 
 	if (p_info->txtstamp_complete)
 		p_info->txtstamp_complete(p_info->ts_context, p_info);
@@ -819,7 +821,7 @@ static void netcp_tx_complete(void *data)
 		netif_wake_subqueue(netcp->ndev, subqueue);
 	}
 
-	dev_kfree_skb_any(skb);
+	dev_kfree_skb(skb);
 	kmem_cache_free(netcp_pinfo_cache, p_info);
 }
 
@@ -885,7 +887,7 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	p_info = kmem_cache_alloc(netcp_pinfo_cache, GFP_ATOMIC);
 	if (!p_info) {
 		ndev->stats.tx_dropped++;
-		dev_kfree_skb_any(skb);
+		dev_kfree_skb(skb);
 		dev_warn(netcp->dev, "failed to alloc packet info\n");
 		return -ENOMEM;
 	}
@@ -908,7 +910,7 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 					"rejected the packet: %d\n",
 					tx_hook->order, ret);
 			}
-			dev_kfree_skb_any(skb);
+			dev_kfree_skb(skb);
 			kmem_cache_free(netcp_pinfo_cache, p_info);
 			return (ret < 0) ? ret : NETDEV_TX_OK;
 		}
@@ -994,9 +996,9 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 drop:
 	atomic_add(real_sg_ents, &tx_pipe->dma_poll_count);
 	ndev->stats.tx_dropped++;
-	dev_kfree_skb_any(skb);
+	dev_kfree_skb(skb);
 	kmem_cache_free(netcp_pinfo_cache, p_info);
-	return -ENXIO;
+	return ret;
 }
 
 
