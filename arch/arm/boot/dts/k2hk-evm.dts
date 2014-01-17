@@ -1763,6 +1763,12 @@
 			label = "mpax";
 		};
 
+		uio_edma3: edma3 {
+			compatible = "ti,uio-module-drv";
+			mem = <0x02700000 0x000C0000>;
+			label = "edma3";
+		};
+
 		hwqueue0: hwqueue@2a40000 {
 			compatible = "ti,keystone-hwqueue";
 			dma-coherent;
