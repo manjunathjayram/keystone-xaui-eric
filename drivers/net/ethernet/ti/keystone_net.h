@@ -157,8 +157,6 @@ static inline u32 *netcp_push_psdata(struct netcp_packet *p_info, unsigned bytes
 	p_info->psdata_len += words;
 	buf = &p_info->psdata[NETCP_PSDATA_LEN - p_info->psdata_len];
 
-	memset(buf, 0, bytes);
-
 	return buf;
 }
 
