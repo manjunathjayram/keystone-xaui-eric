@@ -5,8 +5,12 @@ uio accesible peripheral module device should contain.
 
 Required properties:
 - compatible : "ti,uio-module-drv"
-- reg : Offset and length of the register set for the device
- or mem : Offset and lengh of the memory region.
+- reg : Register start address and the size that will be
+		used by the driver
+ or
+  mem : Register/Memory start address and size of the Register/memory region.
+- label  : label used for misc device registration
+
 
 Recommended properties :
 - interrupts : standard interrupt property
