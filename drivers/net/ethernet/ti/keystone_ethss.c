@@ -344,6 +344,7 @@ struct cpsw_priv {
 	spinlock_t			hw_stats_lock;
 	struct cpts			cpts;
 	int				cpts_registered;
+	int				force_no_hwtstamp;
 };
 
 struct cpsw_intf {
@@ -2375,6 +2376,9 @@ int cpsw_ioctl(void *intf_priv, struct ifreq *req, int cmd)
 	struct phy_device *phy = slave->phy;
 	int ret = -EOPNOTSUPP;
 
+	if (cpsw_intf->cpsw_priv->force_no_hwtstamp)
+		return -EOPNOTSUPP;
+
 	if (phy)
 		ret = phy_mii_ioctl(phy, req, cmd);
 
@@ -2520,7 +2524,7 @@ static int cpsw_rxtstamp_complete(struct cpsw_intf *cpsw_intf,
 {
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 
-	if (p_info->rxtstamp_complete == true)
+	if (p_info->rxtstamp_complete)
 		return 0;
 
 	if (phy_ptp_tstamp(p_info, false)) {
@@ -2614,6 +2618,7 @@ static int cpsw_rx_hook(int order, void *data, struct netcp_packet *p_info)
 }
 
 #define	CPSW_TXHOOK_ORDER	0
+#define	CPSW_RXHOOK_ORDER	0
 
 static int cpsw_open(void *intf_priv, struct net_device *ndev)
 {
@@ -2706,8 +2711,9 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 	netcp_register_txhook(netcp, CPSW_TXHOOK_ORDER,
 			      cpsw_tx_hook, cpsw_intf);
 
-	netcp_register_rxhook(netcp, CPSW_TXHOOK_ORDER,
-			      cpsw_rx_hook, cpsw_intf);
+	if(!cpsw_dev->force_no_hwtstamp)
+		netcp_register_rxhook(netcp, CPSW_RXHOOK_ORDER,
+				      cpsw_rx_hook, cpsw_intf);
 
 	/* Configure the streaming switch */
 #define	PSTREAM_ROUTE_DMA	6
@@ -2740,6 +2746,10 @@ static int cpsw_close(void *intf_priv, struct net_device *ndev)
 		cpsw_ale_stop(cpsw_dev->ale);
 	
 	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_dev);
+
+	if(!cpsw_dev->force_no_hwtstamp)
+		netcp_unregister_rxhook(netcp, CPSW_RXHOOK_ORDER,
+				      cpsw_rx_hook, cpsw_intf);
 
 	netcp_unregister_txhook(netcp, CPSW_TXHOOK_ORDER, cpsw_tx_hook,
 				cpsw_intf);
@@ -2891,6 +2901,16 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	int slave_num = 0;
 	int i, ret = 0;
 
+	if (!node) {
+		dev_err(dev, "device tree info unavailable\n");
+		return -ENODEV;
+	}
+
+	if (ptp_filter_init(phy_ptp_filter, ARRAY_SIZE(phy_ptp_filter))) {
+		dev_err(dev, "bad ptp filter\n");
+		return -EINVAL;
+	}
+
 	cpsw_dev = devm_kzalloc(dev, sizeof(struct cpsw_priv), GFP_KERNEL);
 	if (!cpsw_dev) {
 		dev_err(dev, "cpsw_dev memory allocation failed\n");
@@ -2898,12 +2918,6 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	}
 	*inst_priv = cpsw_dev;
 	dev_dbg(dev, "%s(): cpsw_priv = %p\n", __func__, cpsw_dev);
-
-	if (!node) {
-		dev_err(dev, "device tree info unavailable\n");
-		ret = -ENODEV;
-		goto exit;
-	}
 
 	cpsw_dev->dev = dev;
 	cpsw_dev->netcp_device = netcp_device;
@@ -3034,6 +3048,11 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	if (ret < 0) {
 		dev_err(dev, "missing intf_tx_queues parameter, err %d\n", ret);
 		cpsw_dev->intf_tx_queues = 1;
+	}
+
+	if (of_find_property(node, "force_no_hwtstamp", NULL)) {
+		cpsw_dev->force_no_hwtstamp = 1;
+		dev_warn(dev, "***** No CPSW or PHY timestamping *****\n");
 	}
 
 	if (of_find_property(node, "multi-interface", NULL))

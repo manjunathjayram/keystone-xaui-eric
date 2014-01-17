@@ -325,32 +325,63 @@ EXPORT_SYMBOL(netcp_unregister_module);
  *  Module TX and RX Hook management
  */
 struct netcp_hook_list {
-	struct list_head	 list;
 	netcp_hook_rtn		*hook_rtn;
 	void			*hook_data;
 	int			 order;
 };
 
-
 int netcp_register_txhook(struct netcp_priv *netcp_priv, int order,
 		netcp_hook_rtn *hook_rtn, void *hook_data)
 {
-	struct netcp_hook_list	*entry;
-	struct netcp_hook_list	*next;
+	struct netcp_hook_list *old_array;
+	struct netcp_hook_list *new_array;
+	struct netcp_hook_list *old_entry;
+	struct netcp_hook_list *new_entry;
+	int before = 0;
+	int after = 0;
 
-	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
-	if (!entry)
-		return -ENOMEM;
+	spin_lock(&netcp_priv->lock);
 
-	entry->hook_rtn  = hook_rtn;
-	entry->hook_data = hook_data;
-	entry->order     = order;
+	old_array = netcp_priv->txhook_list_array;
+	if (old_array != NULL) {
+		for (old_entry = old_array; old_entry->hook_rtn; ++old_entry) {
+			if (old_entry->order > order)
+				break;
+			++before;
+		}
 
-	list_for_each_entry(next, &netcp_priv->txhook_list_head, list) {
-		if (next->order > order)
-			break;
+		for (; old_entry->hook_rtn; ++old_entry)
+			++after;
 	}
-	__list_add(&entry->list, next->list.prev, &next->list);
+
+	new_array = kmalloc((sizeof(*new_entry) * (before + after + 1)) +
+			    sizeof(void *), GFP_ATOMIC);
+	if (new_array == NULL) {
+		spin_unlock(&netcp_priv->lock);
+		return -ENOMEM;
+	}
+
+	old_entry = old_array;
+	new_entry = new_array;
+	while (before--)
+		*new_entry++ = *old_entry++;
+
+	new_entry->hook_rtn  = hook_rtn;
+	new_entry->hook_data = hook_data;
+	new_entry->order     = order;
+	new_entry++;
+
+	while (after--)
+		*new_entry++ = *old_entry++;
+
+	new_entry->hook_rtn = NULL;
+
+	rcu_assign_pointer(netcp_priv->txhook_list_array, new_array);
+	spin_unlock(&netcp_priv->lock);
+	synchronize_rcu();
+
+	if (old_array != NULL)
+		kfree(old_array);
 
 	return 0;
 }
@@ -359,41 +390,122 @@ EXPORT_SYMBOL(netcp_register_txhook);
 int netcp_unregister_txhook(struct netcp_priv *netcp_priv, int order,
 		netcp_hook_rtn *hook_rtn, void *hook_data)
 {
-	struct netcp_hook_list	*next;
+	struct netcp_hook_list *old_array;
+	struct netcp_hook_list *new_array;
+	struct netcp_hook_list *old_entry;
+	struct netcp_hook_list *new_entry;
+	int before = 0;
+	int after = 0;
 
-	list_for_each_entry(next, &netcp_priv->txhook_list_head, list) {
-		if ((next->order     == order) &&
-		    (next->hook_rtn  == hook_rtn) &&
-		    (next->hook_data == hook_data)) {
-			list_del(&next->list);
-			kfree(next);
-			return 0;
+	spin_lock(&netcp_priv->lock);
+
+	old_array = netcp_priv->txhook_list_array;
+	if (old_array == NULL) {
+		spin_unlock(&netcp_priv->lock);
+		return -ENOENT;
+	}
+		
+	for (old_entry = old_array; old_entry->hook_rtn; ++old_entry) {
+		if ((old_entry->order     == order) &&
+		    (old_entry->hook_rtn  == hook_rtn) &&
+		    (old_entry->hook_data == hook_data))
+			break;
+		++before;
+	}
+	
+	if (old_entry->hook_rtn == NULL) {
+		spin_unlock(&netcp_priv->lock);
+		return -ENOENT;
+	}
+	old_entry++;
+
+	for (; old_entry->hook_rtn; ++old_entry)
+		++after;
+
+	if ((before + after) == 0) {
+		new_array = NULL;
+	} else {
+		new_array = kmalloc((sizeof(*new_entry) * (before + after)) +
+				    sizeof(void *), GFP_ATOMIC);
+		if (new_array == NULL) {
+			spin_unlock(&netcp_priv->lock);
+			return -ENOMEM;
 		}
+
+		old_entry = old_array;
+		new_entry = new_array;
+		while (before--)
+			*new_entry++ = *old_entry++;
+
+		old_entry++;
+
+		while (after--)
+			*new_entry++ = *old_entry++;
+
+		new_entry->hook_rtn = NULL;
 	}
 
-	return -ENOENT;
+	rcu_assign_pointer(netcp_priv->txhook_list_array, new_array);
+	spin_unlock(&netcp_priv->lock);
+	synchronize_rcu();
+
+	kfree(old_array);
+	return 0;
 }
 EXPORT_SYMBOL(netcp_unregister_txhook);
 
 int netcp_register_rxhook(struct netcp_priv *netcp_priv, int order,
 		netcp_hook_rtn *hook_rtn, void *hook_data)
 {
-	struct netcp_hook_list	*entry;
-	struct netcp_hook_list	*next;
+	struct netcp_hook_list *old_array;
+	struct netcp_hook_list *new_array;
+	struct netcp_hook_list *old_entry;
+	struct netcp_hook_list *new_entry;
+	int before = 0;
+	int after = 0;
 
-	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
-	if (!entry)
-		return -ENOMEM;
+	spin_lock(&netcp_priv->lock);
 
-	entry->hook_rtn  = hook_rtn;
-	entry->hook_data = hook_data;
-	entry->order     = order;
+	old_array = netcp_priv->rxhook_list_array;
+	if (old_array != NULL) {
+		for (old_entry = old_array; old_entry->hook_rtn; ++old_entry) {
+			if (old_entry->order > order)
+				break;
+			++before;
+		}
 
-	list_for_each_entry(next, &netcp_priv->rxhook_list_head, list) {
-		if (next->order > order)
-			break;
+		for (; old_entry->hook_rtn; ++old_entry)
+			++after;
 	}
-	__list_add(&entry->list, next->list.prev, &next->list);
+
+	new_array = kmalloc((sizeof(*new_entry) * (before + after + 1)) +
+			    sizeof(void *), GFP_ATOMIC);
+	if (new_array == NULL) {
+		spin_unlock(&netcp_priv->lock);
+		return -ENOMEM;
+	}
+
+	old_entry = old_array;
+	new_entry = new_array;
+	while (before--)
+		*new_entry++ = *old_entry++;
+
+	new_entry->hook_rtn  = hook_rtn;
+	new_entry->hook_data = hook_data;
+	new_entry->order     = order;
+	new_entry++;
+
+	while (after--)
+		*new_entry++ = *old_entry++;
+
+	new_entry->hook_rtn = NULL;
+
+	rcu_assign_pointer(netcp_priv->rxhook_list_array, new_array);
+	spin_unlock(&netcp_priv->lock);
+	synchronize_rcu();
+
+	if (old_array != NULL)
+		kfree(old_array);
 
 	return 0;
 }
@@ -402,70 +514,70 @@ EXPORT_SYMBOL(netcp_register_rxhook);
 int netcp_unregister_rxhook(struct netcp_priv *netcp_priv, int order,
 		netcp_hook_rtn *hook_rtn, void *hook_data)
 {
-	struct netcp_hook_list	*next;
+	struct netcp_hook_list *old_array;
+	struct netcp_hook_list *new_array;
+	struct netcp_hook_list *old_entry;
+	struct netcp_hook_list *new_entry;
+	int before = 0;
+	int after = 0;
 
-	list_for_each_entry(next, &netcp_priv->rxhook_list_head, list) {
-		if ((next->order     == order) &&
-		    (next->hook_rtn  == hook_rtn) &&
-		    (next->hook_data == hook_data)) {
-			list_del(&next->list);
-			kfree(next);
-			return 0;
+	spin_lock(&netcp_priv->lock);
+
+	old_array = netcp_priv->rxhook_list_array;
+	if (old_array == NULL) {
+		spin_unlock(&netcp_priv->lock);
+		return -ENOENT;
+	}
+		
+	for (old_entry = old_array; old_entry->hook_rtn; ++old_entry) {
+		if ((old_entry->order     == order) &&
+		    (old_entry->hook_rtn  == hook_rtn) &&
+		    (old_entry->hook_data == hook_data))
+			break;
+		++before;
+	}
+	
+	if (old_entry->hook_rtn == NULL) {
+		spin_unlock(&netcp_priv->lock);
+		return -ENOENT;
+	}
+	old_entry++;
+
+	for (; old_entry->hook_rtn; ++old_entry)
+		++after;
+
+	if ((before + after) == 0) {
+		new_array = NULL;
+	} else {
+		new_array = kmalloc((sizeof(*new_entry) * (before + after)) +
+				    sizeof(void *), GFP_ATOMIC);
+		if (new_array == NULL) {
+			spin_unlock(&netcp_priv->lock);
+			return -ENOMEM;
 		}
+
+		old_entry = old_array;
+		new_entry = new_array;
+		while (before--)
+			*new_entry++ = *old_entry++;
+
+		old_entry++;
+
+		while (after--)
+			*new_entry++ = *old_entry++;
+
+		new_entry->hook_rtn = NULL;
 	}
 
-	return -ENOENT;
+	rcu_assign_pointer(netcp_priv->rxhook_list_array, new_array);
+	spin_unlock(&netcp_priv->lock);
+	synchronize_rcu();
+
+	kfree(old_array);
+	return 0;
 }
 EXPORT_SYMBOL(netcp_unregister_rxhook);
 
-u32 *netcp_push_psdata(struct netcp_packet *p_info, unsigned bytes)
-{
-	u32		*buf;
-	unsigned	 words;
-
-	if ((bytes & 0x03) != 0)
-		return NULL;
-	words = bytes >> 2;
-
-	if ((p_info->psdata_len + words) > NETCP_PSDATA_LEN)
-		return NULL;
-
-	p_info->psdata_len += words;
-	buf = &p_info->psdata[NETCP_PSDATA_LEN - p_info->psdata_len];
-
-	memset(buf, 0, bytes);
-
-	return buf;
-}
-EXPORT_SYMBOL(netcp_push_psdata);
-
-int netcp_align_psdata(struct netcp_packet *p_info, unsigned byte_align)
-{
-	int	padding;
-
-	switch (byte_align) {
-	case 0:
-		padding = -EINVAL;
-		break;
-	case 1:
-	case 2:
-	case 4:
-		padding = 0;
-		break;
-	case 8:
-		padding = (p_info->psdata_len << 2) % 8;
-		break;
-	case 16:
-		padding = (p_info->psdata_len << 2) % 16;
-		break;
-	default:
-		padding = (p_info->psdata_len << 2) % byte_align;
-		break;
-	}
-
-	return padding;
-}
-EXPORT_SYMBOL(netcp_align_psdata);
 
 #define NETCP_DEBUG (NETIF_MSG_HW	| NETIF_MSG_WOL		|	\
 		    NETIF_MSG_DRV	| NETIF_MSG_LINK	|	\
@@ -581,7 +693,7 @@ static void netcp_rx_complete(void *data)
 		dev_dbg(netcp->dev,
 			"receive: reclaimed packet %p, status %d, state %s\n",
 			p_info, status, netcp_rx_state_str(netcp));
-		dev_kfree_skb_any(skb);
+		dev_kfree_skb(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
 		netcp->ndev->stats.rx_dropped++;
 		return;
@@ -591,7 +703,7 @@ static void netcp_rx_complete(void *data)
 		dev_warn(netcp->dev,
 			 "receive: reclaimed packet %p, status %d, state %s\n",
 			 p_info, status, netcp_rx_state_str(netcp));
-		dev_kfree_skb_any(skb);
+		dev_kfree_skb(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
 		netcp->ndev->stats.rx_errors++;
 		return;
@@ -599,7 +711,7 @@ static void netcp_rx_complete(void *data)
 
 	if (unlikely(!skb->len)) {
 		dev_warn(netcp->dev, "receive: zero length packet\n");
-		dev_kfree_skb_any(skb);
+		dev_kfree_skb(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
 		netcp->ndev->stats.rx_errors++;
 		return;
@@ -616,16 +728,25 @@ static void netcp_rx_complete(void *data)
 
 	/* Call each of the RX hooks */
 	p_info->rxtstamp_complete = false;
-	list_for_each_entry(rx_hook, &netcp->rxhook_list_head, list) {
-		int ret;
-		ret = rx_hook->hook_rtn(rx_hook->order, rx_hook->hook_data, p_info);
-		if (ret) {
-			dev_err(netcp->dev, "RX hook %d failed: %d\n", rx_hook->order, ret);
-			dev_kfree_skb_any(skb);
-			kmem_cache_free(netcp_pinfo_cache, p_info);
-			return;
+	rcu_read_lock();
+	rx_hook = rcu_dereference(netcp->rxhook_list_array);
+	if (rx_hook) {
+		for (; rx_hook->hook_rtn; ++rx_hook) {
+			int ret;
+			ret = rx_hook->hook_rtn(rx_hook->order,
+						rx_hook->hook_data,
+						p_info);
+			if (ret) {
+				rcu_read_unlock();
+				dev_err(netcp->dev, "RX hook %d failed: %d\n",
+					rx_hook->order, ret);
+				dev_kfree_skb(skb);
+				kmem_cache_free(netcp_pinfo_cache, p_info);
+				return;
+			}
 		}
 	}
+	rcu_read_unlock();
 
 	netcp->ndev->stats.rx_packets++;
 	netcp->ndev->stats.rx_bytes += skb->len;
@@ -649,7 +770,7 @@ static void netcp_rxpool_free(void *arg, unsigned q_num, unsigned bufsize,
 		struct sk_buff *skb = p_info->skb;
 
 		dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
-		dev_kfree_skb_any(skb);
+		dev_kfree_skb(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
 	} else {
 		void *bufptr = desc->callback_param;
@@ -709,7 +830,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 						 1, DMA_FROM_DEVICE);
 		if (p_info->sg_ents != 3) {
 			dev_err(netcp->dev, "dma map failed\n");
-			dev_kfree_skb_any(skb);
+			dev_kfree_skb(skb);
 			kmem_cache_free(netcp_pinfo_cache, p_info);
 			return NULL;
 		}
@@ -719,7 +840,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 					       DMA_HAS_EPIB | DMA_HAS_PSINFO);
 		if (IS_ERR_OR_NULL(desc)) {
 			dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
-			dev_kfree_skb_any(skb);
+			dev_kfree_skb(skb);
 			kmem_cache_free(netcp_pinfo_cache, p_info);
 			err = PTR_ERR(desc);
 			if (err != -ENOMEM) {
@@ -781,15 +902,10 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 static int netcp_poll(struct napi_struct *napi, int budget)
 {
 	struct netcp_priv *netcp = container_of(napi, struct netcp_priv, napi);
-	unsigned long flags;
 	unsigned packets;
-
-	spin_lock_irqsave(&netcp->lock, flags);
 
 	BUG_ON(netcp->rx_state != RX_STATE_SCHEDULED);
 	netcp_set_rx_state(netcp, RX_STATE_POLL);
-
-	spin_unlock_irqrestore(&netcp->lock, flags);
 
 	packets = dma_poll(netcp->rx_channel, budget);
 
@@ -855,7 +971,9 @@ static void netcp_tx_complete(void *data)
 	sg_ents = sg_count(&p_info->sg[2], p_info->sg_ents);
 	dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], sg_ents, DMA_TO_DEVICE);
 
+#ifdef DEBUG
 	netcp_dump_packet(p_info, "txc");
+#endif
 
 	if (p_info->txtstamp_complete)
 		p_info->txtstamp_complete(p_info->ts_context, p_info);
@@ -868,7 +986,7 @@ static void netcp_tx_complete(void *data)
 		netif_wake_subqueue(netcp->ndev, subqueue);
 	}
 
-	dev_kfree_skb_any(skb);
+	dev_kfree_skb(skb);
 	kmem_cache_free(netcp_pinfo_cache, p_info);
 }
 
@@ -934,7 +1052,7 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	p_info = kmem_cache_alloc(netcp_pinfo_cache, GFP_ATOMIC);
 	if (!p_info) {
 		ndev->stats.tx_dropped++;
-		dev_kfree_skb_any(skb);
+		dev_kfree_skb(skb);
 		dev_warn(netcp->dev, "failed to alloc packet info\n");
 		return -ENOMEM;
 	}
@@ -948,20 +1066,27 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	memset(p_info->epib, 0, sizeof(p_info->epib));
 
 	/* Find out where to inject the packet for transmission */
-	list_for_each_entry(tx_hook, &netcp->txhook_list_head, list) {
-		ret = tx_hook->hook_rtn(tx_hook->order, tx_hook->hook_data,
-					p_info);
-		if (unlikely(ret != 0)) {
-			if (ret < 0) {
-				dev_err(netcp->dev, "TX hook %d "
-					"rejected the packet: %d\n",
-					tx_hook->order, ret);
+	rcu_read_lock();
+	tx_hook = rcu_dereference(netcp->txhook_list_array);
+	if (tx_hook) {
+		for (; tx_hook->hook_rtn; ++tx_hook) {
+			ret = tx_hook->hook_rtn(tx_hook->order,
+						tx_hook->hook_data,
+						p_info);
+			if (unlikely(ret != 0)) {
+				if (ret < 0) {
+					dev_err(netcp->dev, "TX hook %d "
+						"rejected the packet: %d\n",
+						tx_hook->order, ret);
+				}
+				rcu_read_unlock();
+				dev_kfree_skb(skb);
+				kmem_cache_free(netcp_pinfo_cache, p_info);
+				return (ret < 0) ? ret : NETDEV_TX_OK;
 			}
-			dev_kfree_skb_any(skb);
-			kmem_cache_free(netcp_pinfo_cache, p_info);
-			return (ret < 0) ? ret : NETDEV_TX_OK;
 		}
 	}
+	rcu_read_unlock();
 
 	/* Make sure some TX hook claimed the packet */
 	tx_pipe = p_info->tx_pipe;
@@ -1043,9 +1168,9 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 drop:
 	atomic_add(real_sg_ents, &tx_pipe->dma_poll_count);
 	ndev->stats.tx_dropped++;
-	dev_kfree_skb_any(skb);
+	dev_kfree_skb(skb);
 	kmem_cache_free(netcp_pinfo_cache, p_info);
-	return -ENXIO;
+	return ret;
 }
 
 
@@ -1649,8 +1774,6 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 	netcp = netdev_priv(ndev);
 	spin_lock_init(&netcp->lock);
 	INIT_LIST_HEAD(&netcp->module_head);
-	INIT_LIST_HEAD(&netcp->txhook_list_head);
-	INIT_LIST_HEAD(&netcp->rxhook_list_head);
 	INIT_LIST_HEAD(&netcp->addr_list);
 	netcp->netcp_device = netcp_device;
 	netcp->pdev = netcp_device->platform_device;
@@ -1970,7 +2093,7 @@ static int __init netcp_init(void)
 	/* Create a cache for these commonly-used structures */
 	netcp_pinfo_cache = kmem_cache_create("netcp_pinfo_cache",
 			sizeof(struct netcp_packet), sizeof(void *),
-			0, NULL);
+			SLAB_HWCACHE_ALIGN, NULL);
 	if (!netcp_pinfo_cache)
 		return -ENOMEM;
 
