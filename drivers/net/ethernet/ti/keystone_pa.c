@@ -43,6 +43,8 @@
 #include "keystone_pa.h"
 #include "keystone_pasahost.h"
 
+#define BITS(x) (BIT(x) - 1)
+
 #define DEVICE_PA_PDSP02_FIRMWARE "keystone/pa_pdsp02_classify1.fw"
 #define DEVICE_PA_PDSP3_FIRMWARE "keystone/pa_pdsp3_classify2.fw"
 #define DEVICE_PA_PDSP45_FIRMWARE "keystone/pa_pdsp45_pam.fw"
@@ -1267,7 +1269,7 @@ static int pa_config_crc_engine(struct pa_device *priv)
 }
 
 
-static int pa_fmtcmd_tx_csum(struct netcp_packet *p_info)
+static inline int pa_fmtcmd_tx_csum(struct netcp_packet *p_info)
 {
 	struct sk_buff *skb = p_info->skb;
 	struct pasaho_com_chk_crc *ptx;
@@ -1280,6 +1282,9 @@ static int pa_fmtcmd_tx_csum(struct netcp_packet *p_info)
 	start = skb_checksum_start_offset(skb);
 	len = skb->len - start;
 
+	ptx->word0 = 0;
+	ptx->word1 = 0;
+	ptx->word2 = 0;
 	PASAHO_SET_CMDID(ptx, PASAHO_PAMOD_CMPT_CHKSUM);
 	PASAHO_CHKCRC_SET_START(ptx, start);
 	PASAHO_CHKCRC_SET_LEN(ptx, len);
@@ -1290,7 +1295,7 @@ static int pa_fmtcmd_tx_csum(struct netcp_packet *p_info)
 	return size;
 }
 
-static int pa_fmtcmd_tx_crc32c(struct netcp_packet *p_info)
+static inline int pa_fmtcmd_tx_crc32c(struct netcp_packet *p_info)
 {
 	struct sk_buff *skb = p_info->skb;
 	struct pasaho_com_chk_crc *ptx;
@@ -1303,6 +1308,9 @@ static int pa_fmtcmd_tx_crc32c(struct netcp_packet *p_info)
 	start = skb_checksum_start_offset(skb);
 	len = skb->len - start;
 
+	ptx->word0 = 0;
+	ptx->word1 = 0;
+	ptx->word2 = 0;
 	PASAHO_SET_CMDID             (ptx, PASAHO_PAMOD_CMPT_CRC);
 	PASAHO_CHKCRC_SET_START      (ptx, start);
 	PASAHO_CHKCRC_SET_LEN        (ptx, len);
@@ -1312,55 +1320,34 @@ static int pa_fmtcmd_tx_crc32c(struct netcp_packet *p_info)
 	return size;
 }
 
-static int pa_fmtcmd_next_route(struct netcp_packet *p_info, const struct pa_cmd_next_route *route)
+static inline int pa_fmtcmd_next_route(struct netcp_packet *p_info, u8 ps_flags)
 {
-	struct pasaho_next_route	*nr;
-	int	size;
-	u16	pdest;
-	u8	ps_flags;
+	struct pasaho_next_route *nr;
 
-	/* Make sure the destination is valid */
-	switch (route->dest) {
-	case PA_DEST_HOST:
-		pdest = PAFRM_DEST_PKTDMA;
-		break;
-	case PA_DEST_EMAC:
-		pdest = PAFRM_DEST_ETH;
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	size = sizeof(*nr);
-	nr = (struct pasaho_next_route *)netcp_push_psdata(p_info, size);
+	nr = (struct pasaho_next_route *)netcp_push_psdata(p_info, sizeof(*nr));
 	if (!nr)
 		return -ENOMEM;
 
-	PASAHO_SET_E(nr, 1);
-
-	ps_flags = (route->pkt_type_emac_ctrl & PA_EMAC_CTRL_CRC_DISABLE) ?
-			PAFRM_ETH_PS_FLAGS_DISABLE_CRC : 0;
-
-	ps_flags |= ((route->pkt_type_emac_ctrl & PA_EMAC_CTRL_PORT_MASK) <<
-			PAFRM_ETH_PS_FLAGS_PORT_SHIFT);
-
-	PASAHO_SET_PKTTYPE(nr, ps_flags);
-
+	/* Construct word0 */
+	nr->word0 = 0;
 	PASAHO_SET_CMDID(nr, PASAHO_PAMOD_NROUTE);
-	PASAHO_SET_DEST(nr, pdest);
-	PASAHO_SET_FLOW(nr, route->flow_id);
-	PASAHO_SET_QUEUE (nr, route->queue);
+	PASAHO_SET_E(nr, 1);
+	PASAHO_SET_DEST(nr, PAFRM_DEST_ETH);
+	PASAHO_SET_FLOW(nr, 0);
+	PASAHO_SET_QUEUE (nr, 0);
 
-	if (route->ctrl_bit_field & PA_NEXT_ROUTE_PROC_NEXT_CMD)
-		PASAHO_SET_N  (nr, 1);
+	/* Construct sw_info0 and sw_info1 */
+	nr->sw_info0 = 0;
+	nr->sw_info1 = 0;
 
-	nr->sw_info0 = route->sw_info_0;
-	nr->sw_info1 = route->sw_info_1;
-
-	return size;
+	/* Construct word1 */
+	nr->word1 = 0;
+	PASAHO_SET_PKTTYPE(nr, ps_flags);
+	
+	return sizeof(*nr);
 }
 
-static int pa_fmtcmd_tx_timestamp(struct netcp_packet *p_info, const struct pa_cmd_tx_timestamp *tx_ts)
+static inline int pa_fmtcmd_tx_timestamp(struct netcp_packet *p_info, const struct pa_cmd_tx_timestamp *tx_ts)
 {
 	struct pasaho_report_timestamp	*rt_info;
 	int				 size;
@@ -1370,6 +1357,7 @@ static int pa_fmtcmd_tx_timestamp(struct netcp_packet *p_info, const struct pa_c
 	if (!rt_info)
 		return -ENOMEM;
 
+	rt_info->word0 = 0;
 	PASAHO_SET_CMDID(rt_info, PASAHO_PAMOD_REPORT_TIMESTAMP);
 	PASAHO_SET_REPORT_FLOW(rt_info, (u8)tx_ts->flow_id);
 	PASAHO_SET_REPORT_QUEUE(rt_info, tx_ts->dest_queue);
@@ -1378,7 +1366,7 @@ static int pa_fmtcmd_tx_timestamp(struct netcp_packet *p_info, const struct pa_c
 	return size;
 }
 
-static int pa_fmtcmd_align(struct netcp_packet *p_info, const unsigned bytes)
+static inline int pa_fmtcmd_align(struct netcp_packet *p_info, const unsigned bytes)
 {
 	struct pasaho_cmd_info	*paCmdInfo;
 	int i;
@@ -1389,6 +1377,7 @@ static int pa_fmtcmd_align(struct netcp_packet *p_info, const unsigned bytes)
 	paCmdInfo = (struct pasaho_cmd_info *)netcp_push_psdata(p_info, bytes);
 
 	for (i = bytes/sizeof(u32); i > 0; --i ) {
+		paCmdInfo->word0 = 0;
 		PASAHO_SET_CMDID(paCmdInfo, PASAHO_PAMOD_DUMMY);
 		++paCmdInfo;
 	}
@@ -1436,18 +1425,17 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	struct sock *sk = skb->sk;
 	struct pa_cmd_tx_timestamp tx_ts;
 	int size, total = 0;
-	struct pa_cmd_next_route route_cmd;
+	u8 ps_flags;
 	struct tstamp_pending *pend;
 
-	/* Generate the route_cmd */
-	memset(&route_cmd, 0, sizeof(route_cmd));
-	route_cmd.dest = PA_DEST_EMAC;
+	ps_flags = 0;
 	if (pa_dev->multi_if) {
 		if (likely(skb->mark == 0) ||
 		    likely((skb->mark & pa_dev->mark_mcast_match[1]) !=
 				pa_dev->mark_mcast_match[0])) {
 			/* normal port-specific output packet */
-			route_cmd.pkt_type_emac_ctrl = netcp_priv->cpsw_port;
+			ps_flags |= (netcp_priv->cpsw_port & BITS(3)) <<
+					PAFRM_ETH_PS_FLAGS_PORT_SHIFT;
 		} else {
 			/* Drop packet if port not in mask */
 			if ((skb->mark & BIT(netcp_priv->cpsw_port - 1)) == 0) {
@@ -1457,16 +1445,17 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	}
 
 	/* Generate the next route command */
-	size = pa_fmtcmd_next_route(p_info, &route_cmd);
+	size = pa_fmtcmd_next_route(p_info, ps_flags);
 	if (unlikely(size < 0))
 		return size;
 	total += size;
 
 	/* If TX Timestamp required, request it */
-	if (unlikely((skb_shinfo(p_info->skb)->tx_flags & SKBTX_HW_TSTAMP) &&
-		   !pa_dev->force_no_hwtstamp &&
-		   p_info->skb->sk && pa_intf->tx_timestamp_enable &&
-		   !(skb_shinfo(p_info->skb)->tx_flags & SKBTX_IN_PROGRESS))) {
+	if (unlikely(pa_intf->tx_timestamp_enable &&
+		     !pa_dev->force_no_hwtstamp &&
+		     sk && 
+		     (skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP) &&
+		     !(skb_shinfo(skb)->tx_flags & SKBTX_IN_PROGRESS))) {
 		pend = kzalloc(sizeof(*pend), GFP_ATOMIC);
 		if (pend) {
 			if (!atomic_inc_not_zero(&sk->sk_refcnt))
@@ -1477,7 +1466,7 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 				kfree(pend);
 				return -ENOMEM;
 			} else {
-				pend->sock = p_info->skb->sk;
+				pend->sock = sk;
 				pend->pa_dev = pa_dev;
 				pend->context =  PA_CONTEXT_TSTAMP |
 					(~PA_CONTEXT_MASK &
