@@ -2344,7 +2344,9 @@ static int cpswx_probe(struct netcp_device *netcp_device,
 		if (ret)
 			goto exit;
 
-		xge_serdes_init_156p25Mhz();
+		ret = xge_serdes_init_156p25Mhz();
+		if (ret)
+			goto exit;
 	}
 
 	/* Create the interface */
