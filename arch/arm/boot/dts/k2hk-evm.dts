@@ -2698,11 +2698,11 @@
 
 		riodma: pktdma@2901000 {
 			compatible = "ti,keystone-pktdma";
-			reg = <0x2901000 0x100		/* 0 - global  */
+			reg = <0x2901000 0x020		/* 0 - global  */
 			       0x2901400 0x200		/* 1 - txchan  */
 			       0x2901800 0x200		/* 2 - rxchan  */
 			       0x2901c00 0x200		/* 3 - txsched */
-			       0x2902000 0x300>;	/* 4 - rxflow  */
+			       0x2902000 0x280>;	/* 4 - rxflow  */
 			/* clocks = <&clkpktproc>; */
 			enable-all;
 			/* debug; */
@@ -2727,7 +2727,7 @@
 					label		= "riorx";
 					pool		= "pool-rio";
 					debug;
-					/* complete-queue	= <653>; */
+					complete-queue	= <8714>;
 					flow		= <19>;
 				};
 			};
@@ -2738,7 +2738,7 @@
 			#size-cells = <1>;
 			reg = <0x2900000 0x40000	/* rio regs */
 			       0x2620000 0x1000		/* boot config regs */
-                               0x232c000 0x1000>;	/* serdes config regs */
+			       0x232c000 0x2000>;	/* serdes config regs */
 			clocks = <&clksrio>;
 			clock-names = "clk_srio";
 			compatible = "ti,keystone-rapidio";
@@ -2747,6 +2747,7 @@
 			keystone2-serdes;
 			baudrate  = <1>; /* 2.5Gbps */
 			path_mode = <4>; /* 1 port in 4x */
+			port-register-timeout = <30>; /* 30 seconds */
 
 			tx_channel = "riotx";
 			tx_queue_depth = <512>;
