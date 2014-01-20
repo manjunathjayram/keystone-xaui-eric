@@ -22,16 +22,20 @@
 #define XGE_SERDES_BASE		0x0231E000
 #define XGE_SERDES_SIZE		0x2000
 
-#define XGE_SGMII_1_STATUS	0x02f00114
-#define XGE_SGMII_2_STATUS	0x02f00214
 #define XGE_SW_BASE		0x02f00000
 #define XGE_SW_SIZE		0x00001000
+
+#define XGE_CTRL_OFFSET		0x0c
+#define XGE_SGMII_1_OFFSET	0x0114
+#define XGE_SGMII_2_OFFSET	0x0214
 
 #define PCSR_OFFSET(x)	((x == 0) ? (0x600) : (0x680))
 
 /*
  * PCS-R registers
  */
+#define PCSR_CPU_CTRL_OFFSET	0x1fd0
+
 #define PCSR_TX_CTL(x)		(PCSR_OFFSET(x) + 0x00)
 #define PCSR_TX_STATUS(x)	(PCSR_OFFSET(x) + 0x04)
 #define PCSR_RX_CTL(x)		(PCSR_OFFSET(x) + 0x08)
@@ -48,6 +52,8 @@
 #define PCSR_RX_ERR_FIFO(x)	(PCSR_OFFSET(x) + 0x2C)
 
 #define PCSR_SIGNAL_OK_EN	BIT(1)
+#define POR_EN			BIT(29)
+#define POR_EN_MASK		BIT(29)
 
 #define reg_rmw(addr, value, mask) \
 	__raw_writel(((__raw_readl(addr) & (~(mask))) | \
@@ -204,36 +210,47 @@ static inline void keystone_xge_serdes_lane_enable(
 	/* Set NES bit if Loopback Enabled */
 }
 
-static inline void keystone_xge_serdes_pll_enable(void __iomem *serdes_regs,
-							int enable)
+static inline void keystone_xge_serdes_pll_disable(void __iomem *serdes_regs)
 {
-	/* Set PLL Enable Val */
-	if (enable)
-		__raw_writel(0xee000000, serdes_regs + 0x1ff4);
-	else
-		__raw_writel(0x08000000, serdes_regs + 0x1ff4);
+	__raw_writel(0x88000000, serdes_regs + 0x1ff4);
 }
 
-static inline void keystone_xge_wait_pll_locked(
-			void __iomem *sw_regs)
+static inline void keystone_xge_serdes_pll_enable(void __iomem *serdes_regs)
 {
-	u32 val;
+	__raw_writel(0xee000000, serdes_regs + 0x1ff4);
+}
 
-	do {
-		/* sgmii 1 status */
-		val = __raw_readl(sw_regs + 0x0114);
-	} while ((val & 0x10) != 0x10);
+static int keystone_xge_wait_pll_locked(void __iomem *sw_regs)
+{
+	unsigned long timeout;
+	int ret = 0;
+	u32 val_1, val_0;
 
+	timeout = jiffies + msecs_to_jiffies(500);
 	do {
-		/* sgmii 2 status */
-		val = __raw_readl(sw_regs + 0x0214);
-	} while ((val & 0x10) != 0x10);
+		val_0 = (__raw_readl(sw_regs + XGE_SGMII_1_OFFSET) & BIT(4));
+		val_1 = (__raw_readl(sw_regs + XGE_SGMII_2_OFFSET) & BIT(4));
+
+		if (val_1 && val_0)
+			return 0;
+
+		if (time_after(jiffies, timeout)) {
+			ret = -ETIMEDOUT;
+			break;
+		}
+
+		cpu_relax();
+	} while (true);
+
+	pr_info("XGE serdes not locked: time out.\n");
+	return ret;
+
 }
 
 static inline void keystone_xge_serdes_enable_xgmii_port(
 			void __iomem *sw_regs)
 {
-	__raw_writel(0x03, sw_regs + 0x0c);
+	__raw_writel(0x03, sw_regs + XGE_CTRL_OFFSET);
 }
 
 static inline void keystone_xge_serdes_fixup(void __iomem *serdes_regs)
@@ -255,15 +272,24 @@ static inline void keystone_xge_serdes_fixup(void __iomem *serdes_regs)
 	udelay(20);
 }
 
-static void keystone_xge_serdes_start(void)
+static void keystone_xge_reset_serdes(void __iomem *serdes_regs)
 {
-	void __iomem *serdes_regs, *xge_sw_regs;
-	u32 i;
+	/* Toggle the POR_EN bit in CONFIG.CPU_CTRL */
+	/* enable POR_EN bit */
+	reg_rmw(serdes_regs + PCSR_CPU_CTRL_OFFSET, POR_EN, POR_EN_MASK);
+	udelay(10);
 
-	serdes_regs = ioremap(XGE_SERDES_BASE, XGE_SERDES_SIZE);
-	xge_sw_regs = ioremap(XGE_SW_BASE, XGE_SW_SIZE);
+	/* disable POR_EN bit */
+	reg_rmw(serdes_regs + PCSR_CPU_CTRL_OFFSET, 0, POR_EN_MASK);
+	udelay(10);
+}
 
-	keystone_xge_serdes_pll_enable(serdes_regs, 0);
+static int keystone_xge_serdes_config(void __iomem *serdes_regs,
+				      void __iomem *sw_regs)
+{
+	u32 ret, i;
+
+	keystone_xge_serdes_pll_disable(serdes_regs);
 
 	keystone_xge_serdes_init(serdes_regs);
 
@@ -275,29 +301,58 @@ static void keystone_xge_serdes_start(void)
 	for (i = 0; i < 2; i++)
 		keystone_xge_serdes_lane_enable(serdes_regs, i);
 
-	keystone_xge_serdes_pll_enable(serdes_regs, 1);
+	keystone_xge_serdes_pll_enable(serdes_regs);
 
 	/* SB PLL Status Poll */
-	keystone_xge_wait_pll_locked(xge_sw_regs);
+	ret = keystone_xge_wait_pll_locked(sw_regs);
+	if (ret)
+		return ret;
 
-	keystone_xge_serdes_enable_xgmii_port(xge_sw_regs);
+	keystone_xge_serdes_enable_xgmii_port(sw_regs);
 
 	keystone_xge_serdes_fixup(serdes_regs);
 
+	return ret;
+}
+
+static int keystone_xge_serdes_start(void)
+{
+	void __iomem *serdes_regs, *xge_sw_regs;
+	u32 val;
+	int ret;
+
+	serdes_regs = ioremap(XGE_SERDES_BASE, XGE_SERDES_SIZE);
+	xge_sw_regs = ioremap(XGE_SW_BASE, XGE_SW_SIZE);
+
+	/* read COMLANE bits 4:0 */
+	val = __raw_readl(serdes_regs + 0xa00);
+	if (val & 0x1f) {
+		pr_info("XGE: serdes in operation - reset before config\n");
+		keystone_xge_reset_serdes(serdes_regs);
+	}
+
+	ret = keystone_xge_serdes_config(serdes_regs, xge_sw_regs);
+
 	iounmap(serdes_regs);
 	iounmap(xge_sw_regs);
+	return ret;
 }
 
 static int keystone_xge_serdes_configured;  /* FIXME */
 
-void xge_serdes_init_156p25Mhz(void)
+int xge_serdes_init_156p25Mhz(void)
 {
+	int ret;
+
 	/* Serdes should only be configured once */
 	if (keystone_xge_serdes_configured)
-		return;
+		return 0;
 
-	keystone_xge_serdes_start();
-	keystone_xge_serdes_configured = 1;
+	ret = keystone_xge_serdes_start();
+	if (!ret)
+		keystone_xge_serdes_configured = 1;
+
+	return ret;
 }
 
 int keystone_pcsr_config(void __iomem *pcsr_ofs, int port, u32 interface)
