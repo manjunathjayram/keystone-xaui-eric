@@ -1750,7 +1750,7 @@
 		uio_hyperlink1: hyperlink1 {
 			compatible = "ti,uio-module-drv";
 			mem  = <0x21400100 0x00000100
-				0x40000000 0x10000000
+				0x28000000 0x08000000
 				0x0231c000 0x00002000>;
 			clocks = <&clkhyperlink1>;
 			interrupts	= <0 388 0x101>;
