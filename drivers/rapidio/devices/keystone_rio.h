@@ -278,20 +278,17 @@ struct keystone_rio_mbox_info {
 	spinlock_t        lock;
 	void             *dev_id;
 	int		  rxu_map_id[2];
-	struct keystone_rio_packet *p_info_temp;
 };
 
 struct keystone_rio_rx_chan_info {
-	struct keystone_rio_data	*priv;
-	struct dma_chan			*dma_channel;
-	const char			*name;
-	u32				queue_depths[KEYSTONE_QUEUES_PER_CHAN];
-	u32				buffer_sizes[KEYSTONE_QUEUES_PER_CHAN];
-	int				chan_num;    /* idx in rx_channels[] */
-	int				queue_num;   /* rx complete queue */
-	int				flow_num;
-
-	void				*buff_temp; /* tmp when add inb buf */
+	struct keystone_rio_data *priv;
+	struct dma_chan		 *dma_channel;
+	const char		 *name;
+	u32			  queue_depths[KEYSTONE_QUEUES_PER_CHAN];
+	u32			  buffer_sizes[KEYSTONE_QUEUES_PER_CHAN];
+	int			  chan_num;    /* idx in rx_channels[] */
+	int			  queue_num;   /* rx complete queue */
+	int			  flow_num;
 };
 
 struct port_write_msg {
