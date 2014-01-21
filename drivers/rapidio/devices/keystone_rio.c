@@ -1997,38 +1997,21 @@ static int keystone_rio_port_write_init(struct keystone_rio_data *krio_priv)
  */
 #define mbox_to_strmid(mbox) ((mbox) & 0xffff)
 
-static void keystone_rio_rx_complete(void *data)
+#define mbox_to_pool(mbox)   (mbox)
+
+/* Release a free receive buffer */
+static void keystone_rio_rxpool_free(void *arg, unsigned q_num, unsigned bufsize,
+                                    struct dma_async_tx_descriptor *desc)
 {
-	struct keystone_rio_packet *p_info = data;
-	struct keystone_rio_data *krio_priv = p_info->priv;
-	struct keystone_rio_rx_chan_info *krx_chan;
-	struct keystone_rio_mbox_info *p_mbox;
-	int mbox;
-	u32 src_id, dest_id;
+       struct keystone_rio_rx_chan_info *krx_chan = arg;
+       struct keystone_rio_data *krio_priv = krx_chan->priv;
+       struct keystone_rio_packet *p_info = desc->callback_param;
 
-	src_id = ((p_info->psdata[0] & 0xffff0000) >> 16);
-	dest_id = (p_info->psdata[0] & 0x0000ffff);
-	mbox = (p_info->psdata[1] & 0x3f);
-	p_info->mbox = mbox;
+       dma_unmap_sg(krio_priv->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
+       p_info->buff = NULL;
+       kfree(p_info);
 
-	krx_chan = &(krio_priv->rx_channels[mbox]);
-
-	p_info->status = dma_async_is_tx_complete(krx_chan->dma_channel,
-						  p_info->cookie, NULL, NULL);
-	WARN_ON(p_info->status != DMA_SUCCESS && p_info->status != DMA_ERROR);
-
-	p_mbox = &(krio_priv->rx_mbox[mbox]);
-	p_mbox->p_info_temp = p_info;
-
-	dev_dbg(krio_priv->dev,
-		"Received message for mbox = %d, src=%d, dest=%d\n",
-		mbox, src_id, dest_id);
-
-	if (p_mbox->running) {
-		/* Client callback (slot is not used) */
-		p_mbox->port->inb_msg[p_mbox->id].mcback(p_mbox->port,
-							 p_mbox->dev_id, p_mbox->id, 0);
-	}
+       return;
 }
 
 static void keystone_rio_chan_work_handler(unsigned long data)
@@ -2040,8 +2023,15 @@ static void keystone_rio_chan_work_handler(unsigned long data)
 	for (i = 0; i < KEYSTONE_RIO_MAX_MBOX; i++) {
 		krx_chan = &(krio_priv->rx_channels[i]);
 		if (krx_chan->dma_channel) {
-			dma_poll(krx_chan->dma_channel, -1);
-			dmaengine_resume(krx_chan->dma_channel);
+			struct keystone_rio_mbox_info *p_mbox;
+			p_mbox = &(krio_priv->rx_mbox[i]);
+			if (p_mbox->running) {
+				/* Client callback (slot is not used) */
+				p_mbox->port->inb_msg[p_mbox->id].mcback(p_mbox->port,
+									 p_mbox->dev_id,
+									 p_mbox->id,
+									 0);
+			}
 		}
 	}
 }
@@ -2049,98 +2039,12 @@ static void keystone_rio_chan_work_handler(unsigned long data)
 static void keystone_rio_rx_notify(struct dma_chan *chan, void *arg)
 {
 	struct keystone_rio_data *krio_priv = arg;
-	struct keystone_rio_rx_chan_info *krx_chan;
-	int i;
 
-	for (i = 0; i < KEYSTONE_RIO_MAX_MBOX; i++) {
-		krx_chan = &(krio_priv->rx_channels[i]);
-		if (krx_chan->dma_channel)
-			dmaengine_pause(krx_chan->dma_channel);
-	}
+	dmaengine_pause(chan);
+
 	tasklet_schedule(&krio_priv->task);
 
 	return;
-}
-
-/* Release a free receive buffer */
-static void keystone_rio_rxpool_free(void *arg, unsigned q_num, unsigned bufsize, 
-				     struct dma_async_tx_descriptor *desc)
-{
-	struct keystone_rio_rx_chan_info *krx_chan = arg;
-	struct keystone_rio_data *krio_priv = krx_chan->priv;
-	struct keystone_rio_packet *p_info = desc->callback_param;
-
-	dma_unmap_sg(krio_priv->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
-	p_info->buff = NULL;
-	kfree(p_info);
-	
-	return;
-}
-
-/* Allocate a free receive buffer */
-static struct dma_async_tx_descriptor *keystone_rio_rxpool_alloc(void *arg,
-								 unsigned q_num,
-								 unsigned bufsize)
-{
-	struct keystone_rio_rx_chan_info *krx_chan = arg;
-	struct keystone_rio_data *krio_priv = krx_chan->priv;
-	struct dma_async_tx_descriptor *desc = NULL;
-	struct keystone_rio_packet *p_info;
-	u32 err = 0;
-
-	if (krx_chan->buff_temp == NULL)
-		/* No inb_buffer added */
-		return NULL;
-
-	/* Allocate a primary receive queue entry */
-	p_info = kzalloc(sizeof(*p_info), GFP_ATOMIC);
-	if (!p_info) {
-		dev_err(krio_priv->dev, "packet alloc failed\n");
-		return NULL;
-	}
-	p_info->priv = krio_priv;
-	p_info->buff = krx_chan->buff_temp;
-
-	sg_init_table(p_info->sg, KEYSTONE_RIO_SGLIST_SIZE);
-	sg_set_buf(&p_info->sg[0], p_info->epib, sizeof(p_info->epib));
-	sg_set_buf(&p_info->sg[1], p_info->psdata, sizeof(p_info->psdata));
-	sg_set_buf(&p_info->sg[2], krx_chan->buff_temp,
-		   krx_chan->buffer_sizes[q_num]);
-
-	krx_chan->buff_temp = NULL;
-
-	p_info->sg_ents = 2 + dma_map_sg(krio_priv->dev, &p_info->sg[2],
-					 1, DMA_FROM_DEVICE);
-
-	if (p_info->sg_ents != 3) {
-		dev_err(krio_priv->dev, "dma map failed\n");
-		p_info->buff = NULL;
-		kfree(p_info);
-		return NULL;
-	}
-
-	desc = dmaengine_prep_slave_sg(krx_chan->dma_channel, p_info->sg,
-				       p_info->sg_ents, DMA_DEV_TO_MEM,
-				       DMA_HAS_EPIB | DMA_HAS_PSINFO);
-
-	if (IS_ERR_OR_NULL(desc)) {
-		dma_unmap_sg(krio_priv->dev, &p_info->sg[2],
-			     1, DMA_FROM_DEVICE);
-		p_info->buff = NULL;
-		kfree(p_info);
-		err = PTR_ERR(desc);
-		if (err != -ENOMEM) {
-			dev_err(krio_priv->dev,
-				"dma prep failed, error %d\n", err);
-		}
-		return NULL;
-	}
-
-	desc->callback_param = p_info;
-	desc->callback = keystone_rio_rx_complete;
-	p_info->cookie = desc->cookie;
-
-	return desc;
 }
 
 static void keystone_rio_mp_inb_exit(int mbox, struct keystone_rio_data *krio_priv)
@@ -2180,7 +2084,6 @@ static int keystone_rio_mp_inb_init(int mbox, struct keystone_rio_data *krio_pri
 	memset(&config, 0, sizeof(config));
 	config.direction	    = DMA_DEV_TO_MEM;
 	config.scatterlist_size	    = KEYSTONE_RIO_SGLIST_SIZE;
-	config.rxpool_allocator	    = keystone_rio_rxpool_alloc;
 	config.rxpool_destructor    = keystone_rio_rxpool_free;
 	config.rxpool_param	    = krx_chan;
 	config.rxpool_thresh_enable = DMA_THRESH_NONE;
@@ -2367,6 +2270,13 @@ static int keystone_rio_open_inb_mbox(struct rio_mport *mport,
 	struct keystone_rio_rx_chan_info *krx_chan = &krio_priv->rx_channels[mbox];
 	int res;
 
+	if (mbox >= KEYSTONE_RIO_MAX_MBOX)
+		return -EINVAL;
+
+	/* Check that number of entries is a power of two to ease ring management */
+	if ((entries & (entries - 1)) != 0)
+		return -EINVAL;
+
 	dev_dbg(krio_priv->dev,
 		"open inb mbox: mport = 0x%x, dev_id = 0x%x,"
 		" mbox = %d, entries = %d\n",
@@ -2383,21 +2293,21 @@ static int keystone_rio_open_inb_mbox(struct rio_mport *mport,
 			return res;
 	}
 
-	rx_mbox->dev_id  = dev_id;
-	rx_mbox->entries = entries;
-	rx_mbox->port    = mport;
-	rx_mbox->id      = mbox;
-	rx_mbox->running = 1;
+	rx_mbox->dev_id    = dev_id;
+	rx_mbox->entries   = entries;
+	rx_mbox->port      = mport;
+	rx_mbox->id        = mbox;
+	rx_mbox->running   = 1;
 
 	/* Map the mailbox to queue/flow */
 	res = keystone_rio_map_mbox(mbox,
 				    krx_chan->queue_num,
 				    krx_chan->flow_num,
 				    mport->sys_size, krio_priv);
-	if (res)
-		return res;
 
-	return 0;
+	dmaengine_resume(krx_chan->dma_channel);
+
+	return res;
 }
 
 /**
@@ -2446,11 +2356,56 @@ static int keystone_rio_hw_add_inb_buffer(struct rio_mport *mport,
 {
 	struct keystone_rio_data *krio_priv = mport->priv;
 	struct keystone_rio_rx_chan_info *krx_chan = &krio_priv->rx_channels[mbox];
+	struct dma_async_tx_descriptor *desc = NULL;
+	struct keystone_rio_packet *p_info;
 
-	krx_chan->buff_temp = buffer;
-	dma_rxfree_refill(krx_chan->dma_channel);
+	/* Allocate a primary receive queue entry */
+	p_info = kzalloc(sizeof(*p_info), GFP_ATOMIC);
+	if (!p_info) {
+		dev_err(krio_priv->dev, "packet alloc failed\n");
+		return -ENOMEM;
+	}
+	p_info->priv = krio_priv;
+	p_info->buff = buffer;
 
-	return 0;
+	sg_init_table(p_info->sg, KEYSTONE_RIO_SGLIST_SIZE);
+	sg_set_buf(&p_info->sg[0], p_info->epib, sizeof(p_info->epib));
+	sg_set_buf(&p_info->sg[1], p_info->psdata, sizeof(p_info->psdata));
+	sg_set_buf(&p_info->sg[2], p_info->buff,
+		   krx_chan->buffer_sizes[mbox_to_pool(mbox)]);
+	
+	p_info->sg_ents = 2 + dma_map_sg(krio_priv->dev, &p_info->sg[2],
+					 1, DMA_FROM_DEVICE);
+	
+	if (p_info->sg_ents != 3) {
+		dev_err(krio_priv->dev, "dma map failed\n");
+		p_info->buff = NULL;
+		kfree(p_info);
+		return -EINVAL;
+	}
+
+	desc = dmaengine_prep_slave_sg(krx_chan->dma_channel, p_info->sg,
+				       p_info->sg_ents, DMA_DEV_TO_MEM,
+				       DMA_HAS_EPIB | DMA_HAS_PSINFO);
+
+	if (IS_ERR_OR_NULL(desc)) {
+		u32 err = 0;
+		dma_unmap_sg(krio_priv->dev, &p_info->sg[2],
+			     1, DMA_FROM_DEVICE);
+		p_info->buff = NULL;
+		kfree(p_info);
+		err = PTR_ERR(desc);
+		if (err != -ENOMEM) {
+			dev_err(krio_priv->dev,
+				"dma prep failed, error %d\n", err);
+		}
+		return -EINVAL;
+	}
+
+	desc->callback_param = p_info;
+	p_info->cookie = desc->cookie;
+
+	return dma_rxfree_refill_one(krx_chan->dma_channel, mbox_to_pool(mbox), desc);
 }
 
 /**
@@ -2465,20 +2420,23 @@ static int keystone_rio_hw_add_inb_buffer(struct rio_mport *mport,
 static void *keystone_rio_hw_get_inb_message(struct rio_mport *mport, int mbox)
 {
 	struct keystone_rio_data *krio_priv = mport->priv;
-	struct keystone_rio_mbox_info *p_mbox = &(krio_priv->rx_mbox[mbox]);
-	struct keystone_rio_packet *p_info;
-	void *buff;
-	if (p_mbox->p_info_temp == NULL)
-		return NULL;
+	struct keystone_rio_rx_chan_info *krx_chan = &(krio_priv->rx_channels[mbox]);
+	struct keystone_rio_packet *p_info = NULL;
+	void *buff = NULL;
 
-	p_info = p_mbox->p_info_temp;
+	p_info = (void *) dma_get_one(krx_chan->dma_channel);
+	if (!p_info)
+		goto end;
+
 	buff = p_info->buff;
-
-	p_mbox->p_info_temp = NULL;
-	p_info->buff = NULL;
-
+	
 	dma_unmap_sg(krio_priv->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
-	kfree(p_info);
+
+end:
+	dmaengine_resume(krx_chan->dma_channel);
+
+	if (p_info)
+		kfree(p_info);
 
 	return buff;
 }
@@ -2566,6 +2524,10 @@ static int keystone_rio_open_outb_mbox(struct rio_mport *mport,
 	if (mbox >= KEYSTONE_RIO_MAX_MBOX)
 		return -EINVAL;
 
+	/* Check that number of entries is a power of two to ease ring management */
+	if ((entries & (entries - 1)) != 0)
+		return -EINVAL;
+
 	dev_dbg(krio_priv->dev,
 		"open_outb_mbox: mport = 0x%x, dev_id = 0x%x,"
 		"mbox = %d, entries = %d\n",
@@ -2646,14 +2608,16 @@ static void keystone_rio_tx_complete(void *data)
 		 * But the semantic hereafter is dangerous in case of re-order:
 		 * bad buffer may be released...
 		 */
+		u32 slot;
 		spin_lock(&mbox->lock);
 		/* Move slot index to the next message to be sent */
 		mbox->slot++;
 		if (mbox->slot == mbox->entries)
 			mbox->slot = 0;
-		port->outb_msg[mbox_id].mcback(port, dev_id,
-					       mbox_id, mbox->slot);
+		slot = mbox->slot;
 		spin_unlock(&mbox->lock);
+		port->outb_msg[mbox_id].mcback(port, dev_id,
+					       mbox_id, slot);
 	}
 
 	kfree(p_info);
@@ -2685,10 +2649,10 @@ static int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 	int ret = 0;
 
 	/*
-	 *  Ensure that the number of bytes being transmitted is a multiple
+	 * Ensure that the number of bytes being transmitted is a multiple
 	 * of double-word. This is as per the specification.
 	 */
-	u32 plen  = ((len + 7) & ~0x7);
+	u32 plen = ((len + 7) & ~0x7);
 
 	p_info = kzalloc(sizeof(*p_info), GFP_ATOMIC);
 	if (!p_info) {
@@ -3000,7 +2964,7 @@ static void keystone_rio_get_controller_defaults(struct device_node *node,
 				       KEYSTONE_QUEUES_PER_CHAN) < 0) {
 		dev_err(krio_priv->dev,
 			"missing \"rx_buffer_size\" parameter\n");
-		krx_chan->buffer_sizes[0] = 1552;
+		krx_chan->buffer_sizes[0] = 4096;
 	}
 
 	/* Interrupt config */
