@@ -1021,62 +1021,72 @@ static int keystone_rio_get_lane_config(u32 ports, u32 path_mode)
 	return (int) lanes;
 }
 
-static void k2_rio_serdes_init_3g(struct keystone_rio_data *krio_priv)
+static void k2_rio_serdes_init_3g(u32 lanes, struct keystone_rio_data *krio_priv)
 {
 	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
 
-	/* TBD: Uses Half Rate configuration */
+	/* Uses Half Rate configuration */
 	reg_rmw(regs + 0x000, 0x00000000, 0xff000000);
 	reg_rmw(regs + 0x014, 0x00008282, 0x0000ffff);
 	reg_rmw(regs + 0x060, 0x00132c48, 0x00ffffff);
 	reg_rmw(regs + 0x064, 0x00c3c700, 0x00ffff00);
 	reg_rmw(regs + 0x078, 0x0000c000, 0x0000ff00);
 
-	reg_rmw(regs + 0x204, 0x78000080, 0xff0000ff);
-	reg_rmw(regs + 0x208, 0x00000024, 0x000000ff);
-	reg_rmw(regs + 0x20c, 0x02000000, 0xff000000);
-	reg_rmw(regs + 0x210, 0x1b000000, 0xff000000);
-	reg_rmw(regs + 0x214, 0x00006e7c, 0x0000ffff);
-	reg_rmw(regs + 0x218, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs + 0x22c, 0x00100800, 0x00ffff00);
-	reg_rmw(regs + 0x280, 0x00700070, 0x00ff00ff);
-	reg_rmw(regs + 0x284, 0x1d0f0085, 0xffff00ff);
-	reg_rmw(regs + 0x28c, 0x00003b00, 0x0000ff00);
+	if (IS_SERDES_LANE_USED(lanes, 0)) {
+		dev_dbg(krio_priv->dev, "setting lane 0 SerDes to 3GHz\n");
+		reg_rmw(regs + 0x204, 0x78000080, 0xff0000ff);
+		reg_rmw(regs + 0x208, 0x00000024, 0x000000ff);
+		reg_rmw(regs + 0x20c, 0x02000000, 0xff000000);
+		reg_rmw(regs + 0x210, 0x1b000000, 0xff000000);
+		reg_rmw(regs + 0x214, 0x00006e7c, 0x0000ffff);
+		reg_rmw(regs + 0x218, 0x758000e4, 0xffff00ff);
+		reg_rmw(regs + 0x22c, 0x00100800, 0x00ffff00);
+		reg_rmw(regs + 0x280, 0x00700070, 0x00ff00ff);
+		reg_rmw(regs + 0x284, 0x1d0f0085, 0xffff00ff);
+		reg_rmw(regs + 0x28c, 0x00003b00, 0x0000ff00);
+	}
 
-	reg_rmw(regs + 0x404, 0x78000080, 0xff0000ff);
-	reg_rmw(regs + 0x408, 0x00000024, 0x000000ff);
-	reg_rmw(regs + 0x40c, 0x02000000, 0xff000000);
-	reg_rmw(regs + 0x410, 0x1b000000, 0xff000000);
-	reg_rmw(regs + 0x414, 0x00006e7c, 0x0000ffff);
+	if (IS_SERDES_LANE_USED(lanes, 1)) {
+		dev_dbg(krio_priv->dev, "setting lane 1 SerDes to 3GHz\n");
+		reg_rmw(regs + 0x404, 0x78000080, 0xff0000ff);
+		reg_rmw(regs + 0x408, 0x00000024, 0x000000ff);
+		reg_rmw(regs + 0x40c, 0x02000000, 0xff000000);
+		reg_rmw(regs + 0x410, 0x1b000000, 0xff000000);
+		reg_rmw(regs + 0x414, 0x00006e7c, 0x0000ffff);
+		reg_rmw(regs + 0x418, 0x758000e4, 0xffff0000);
+		reg_rmw(regs + 0x42c, 0x00100800, 0x00ffff00);
+		reg_rmw(regs + 0x480, 0x00700070, 0x00ff00ff);
+		reg_rmw(regs + 0x484, 0x1d0f0085, 0xffff00ff);
+		reg_rmw(regs + 0x48c, 0x00003b00, 0x0000ff00);
+	}
 
-	reg_rmw(regs + 0x418, 0x758000e4, 0xffff0000);
-	reg_rmw(regs + 0x42c, 0x00100800, 0x00ffff00);
-	reg_rmw(regs + 0x480, 0x00700070, 0x00ff00ff);
-	reg_rmw(regs + 0x484, 0x1d0f0085, 0xffff00ff);
-	reg_rmw(regs + 0x48c, 0x00003b00, 0x0000ff00);
+	if (IS_SERDES_LANE_USED(lanes, 2)) {
+		dev_dbg(krio_priv->dev, "setting lane 2 SerDes to 3GHz\n");
+		reg_rmw(regs + 0x604, 0x78000080, 0xff0000ff);
+		reg_rmw(regs + 0x608, 0x00000024, 0x000000ff);
+		reg_rmw(regs + 0x60c, 0x02000000, 0xff000000);
+		reg_rmw(regs + 0x610, 0x1b000000, 0xff000000);
+		reg_rmw(regs + 0x614, 0x00006e7c, 0x0000ffff);
+		reg_rmw(regs + 0x618, 0x758000e4, 0xffff00ff);
+		reg_rmw(regs + 0x62c, 0x00100800, 0x00ffff00);
+		reg_rmw(regs + 0x680, 0x00700070, 0x00ff00ff);
+		reg_rmw(regs + 0x684, 0x1d0f0085, 0xffff00ff);
+		reg_rmw(regs + 0x68c, 0x00003b00, 0x0000ff00);
+	}
 
-	reg_rmw(regs + 0x604, 0x78000080, 0xff0000ff);
-	reg_rmw(regs + 0x608, 0x00000024, 0x000000ff);
-	reg_rmw(regs + 0x60c, 0x02000000, 0xff000000);
-	reg_rmw(regs + 0x610, 0x1b000000, 0xff000000);
-	reg_rmw(regs + 0x614, 0x00006e7c, 0x0000ffff);
-	reg_rmw(regs + 0x618, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs + 0x62c, 0x00100800, 0x00ffff00);
-	reg_rmw(regs + 0x680, 0x00700070, 0x00ff00ff);
-	reg_rmw(regs + 0x684, 0x1d0f0085, 0xffff00ff);
-	reg_rmw(regs + 0x68c, 0x00003b00, 0x0000ff00);
-
-	reg_rmw(regs + 0x804, 0x78000080, 0xff0000ff);
-	reg_rmw(regs + 0x808, 0x00000024, 0x000000ff);
-	reg_rmw(regs + 0x80c, 0x02000000, 0xff000000);
-	reg_rmw(regs + 0x810, 0x1b000000, 0xff000000);
-	reg_rmw(regs + 0x814, 0x00006e7c, 0x0000ffff);
-	reg_rmw(regs + 0x818, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs + 0x82c, 0x00100800, 0x00ffff00);
-
-	reg_rmw(regs + 0x880, 0x00700070, 0x00ff00ff);
-	reg_rmw(regs + 0x884, 0x1d0f0085, 0xffff00ff);
-	reg_rmw(regs + 0x88c, 0x00003b00, 0x0000ff00);
+	if (IS_SERDES_LANE_USED(lanes, 3)) {
+		dev_dbg(krio_priv->dev, "setting lane 3 SerDes to 3GHz\n");
+		reg_rmw(regs + 0x804, 0x78000080, 0xff0000ff);
+		reg_rmw(regs + 0x808, 0x00000024, 0x000000ff);
+		reg_rmw(regs + 0x80c, 0x02000000, 0xff000000);
+		reg_rmw(regs + 0x810, 0x1b000000, 0xff000000);
+		reg_rmw(regs + 0x814, 0x00006e7c, 0x0000ffff);
+		reg_rmw(regs + 0x818, 0x758000e4, 0xffff00ff);
+		reg_rmw(regs + 0x82c, 0x00100800, 0x00ffff00);
+		reg_rmw(regs + 0x880, 0x00700070, 0x00ff00ff);
+		reg_rmw(regs + 0x884, 0x1d0f0085, 0xffff00ff);
+		reg_rmw(regs + 0x88c, 0x00003b00, 0x0000ff00);
+	}
 
 	reg_rmw(regs + 0xa00, 0x00000800, 0x0000ff00);
 	reg_rmw(regs + 0xa08, 0x37720000, 0xffff0000);
@@ -1091,7 +1101,7 @@ static void k2_rio_serdes_init_3g(struct keystone_rio_data *krio_priv)
 	reg_rmw(regs + 0xa00, 0x0000005f, 0x000000ff);
 }
 
-static void k2_rio_serdes_init_5g(struct keystone_rio_data *krio_priv)
+static void k2_rio_serdes_init_5g(u32 lanes, struct keystone_rio_data *krio_priv)
 {
 	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
 
@@ -1101,43 +1111,58 @@ static void k2_rio_serdes_init_5g(struct keystone_rio_data *krio_priv)
 	reg_rmw(regs + 0x060, 0x00142438, 0x00ffffff);
 	reg_rmw(regs + 0x064, 0x00c3c700, 0x00ffff00);
 	reg_rmw(regs + 0x078, 0x0000c000, 0x0000ff00);
-	reg_rmw(regs + 0x204, 0x78000080, 0xff0000ff);
-	reg_rmw(regs + 0x208, 0x00000026, 0x000000ff);
-	reg_rmw(regs + 0x20c, 0x02000000, 0xff000000);
-	reg_rmw(regs + 0x214, 0x00006f38, 0x0000ffff);
-	reg_rmw(regs + 0x218, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs + 0x22c, 0x00200800, 0x00ffff00);
-	reg_rmw(regs + 0x280, 0x00860086, 0x00ff00ff);
-	reg_rmw(regs + 0x284, 0x1d0f0085, 0xffff00ff);
-	reg_rmw(regs + 0x28c, 0x00002c00, 0x0000ff00);
-	reg_rmw(regs + 0x404, 0x78000080, 0xff0000ff);
-	reg_rmw(regs + 0x408, 0x00000026, 0x000000ff);
-	reg_rmw(regs + 0x40c, 0x02000000, 0xff000000);
-	reg_rmw(regs + 0x414, 0x00006f38, 0x0000ffff);
-	reg_rmw(regs + 0x418, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs + 0x42c, 0x00200800, 0x00ffff00);
-	reg_rmw(regs + 0x480, 0x00860086, 0x00ff00ff);
-	reg_rmw(regs + 0x484, 0x1d0f0085, 0xffff00ff);
-	reg_rmw(regs + 0x48c, 0x00002c00, 0x0000ff00);
-	reg_rmw(regs + 0x604, 0x78000080, 0xff0000ff);
-	reg_rmw(regs + 0x608, 0x00000026, 0x000000ff);
-	reg_rmw(regs + 0x60c, 0x02000000, 0xff000000);
-	reg_rmw(regs + 0x614, 0x00006f38, 0x0000ffff);
-	reg_rmw(regs + 0x618, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs + 0x62c, 0x00200800, 0x00ffff00);
-	reg_rmw(regs + 0x680, 0x00860086, 0x00ff00ff);
-	reg_rmw(regs + 0x684, 0x1d0f0085, 0xffff00ff);
-	reg_rmw(regs + 0x68c, 0x00002c00, 0x0000ff00);
 
-	reg_rmw(regs + 0x804, 0x78000080, 0xff0000ff);
-	reg_rmw(regs + 0x808, 0x00000026, 0x000000ff);
-	reg_rmw(regs + 0x80c, 0x02000000, 0xff000000);
-	reg_rmw(regs + 0x814, 0x00006f38, 0x0000ffff);
-	reg_rmw(regs + 0x818, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs + 0x82c, 0x00200800, 0x00ffff00);
-	reg_rmw(regs + 0x880, 0x00860086, 0x00ff00ff);
-	reg_rmw(regs + 0x884, 0x1d0f0085, 0xffff00ff);
-	reg_rmw(regs + 0x88c, 0x00002c00, 0x0000ff00);
+	if (IS_SERDES_LANE_USED(lanes, 0)) {
+		dev_dbg(krio_priv->dev, "setting lane 0 SerDes to 5GHz\n");
+		reg_rmw(regs + 0x204, 0x78000080, 0xff0000ff);
+		reg_rmw(regs + 0x208, 0x00000026, 0x000000ff);
+		reg_rmw(regs + 0x20c, 0x02000000, 0xff000000);
+		reg_rmw(regs + 0x214, 0x00006f38, 0x0000ffff);
+		reg_rmw(regs + 0x218, 0x758000e4, 0xffff00ff);
+		reg_rmw(regs + 0x22c, 0x00200800, 0x00ffff00);
+		reg_rmw(regs + 0x280, 0x00860086, 0x00ff00ff);
+		reg_rmw(regs + 0x284, 0x1d0f0085, 0xffff00ff);
+		reg_rmw(regs + 0x28c, 0x00002c00, 0x0000ff00);
+	}
+
+	if (IS_SERDES_LANE_USED(lanes, 1)) {
+		dev_dbg(krio_priv->dev, "setting lane 1 SerDes to 5GHz\n");
+		reg_rmw(regs + 0x404, 0x78000080, 0xff0000ff);
+		reg_rmw(regs + 0x408, 0x00000026, 0x000000ff);
+		reg_rmw(regs + 0x40c, 0x02000000, 0xff000000);
+		reg_rmw(regs + 0x414, 0x00006f38, 0x0000ffff);
+		reg_rmw(regs + 0x418, 0x758000e4, 0xffff00ff);
+		reg_rmw(regs + 0x42c, 0x00200800, 0x00ffff00);
+		reg_rmw(regs + 0x480, 0x00860086, 0x00ff00ff);
+		reg_rmw(regs + 0x484, 0x1d0f0085, 0xffff00ff);
+		reg_rmw(regs + 0x48c, 0x00002c00, 0x0000ff00);
+	}
+
+	if (IS_SERDES_LANE_USED(lanes, 2)) {
+		dev_dbg(krio_priv->dev, "setting lane 2 SerDes to 5GHz\n");
+		reg_rmw(regs + 0x604, 0x78000080, 0xff0000ff);
+		reg_rmw(regs + 0x608, 0x00000026, 0x000000ff);
+		reg_rmw(regs + 0x60c, 0x02000000, 0xff000000);
+		reg_rmw(regs + 0x614, 0x00006f38, 0x0000ffff);
+		reg_rmw(regs + 0x618, 0x758000e4, 0xffff00ff);
+		reg_rmw(regs + 0x62c, 0x00200800, 0x00ffff00);
+		reg_rmw(regs + 0x680, 0x00860086, 0x00ff00ff);
+		reg_rmw(regs + 0x684, 0x1d0f0085, 0xffff00ff);
+		reg_rmw(regs + 0x68c, 0x00002c00, 0x0000ff00);
+	}
+
+	if (IS_SERDES_LANE_USED(lanes, 3)) {
+		dev_dbg(krio_priv->dev, "setting lane 3 SerDes to 5GHz\n");
+		reg_rmw(regs + 0x804, 0x78000080, 0xff0000ff);
+		reg_rmw(regs + 0x808, 0x00000026, 0x000000ff);
+		reg_rmw(regs + 0x80c, 0x02000000, 0xff000000);
+		reg_rmw(regs + 0x814, 0x00006f38, 0x0000ffff);
+		reg_rmw(regs + 0x818, 0x758000e4, 0xffff00ff);
+		reg_rmw(regs + 0x82c, 0x00200800, 0x00ffff00);
+		reg_rmw(regs + 0x880, 0x00860086, 0x00ff00ff);
+		reg_rmw(regs + 0x884, 0x1d0f0085, 0xffff00ff);
+		reg_rmw(regs + 0x88c, 0x00002c00, 0x0000ff00);
+	}
 
 	reg_rmw(regs + 0xa00, 0x00008000, 0x0000ff00);
 	reg_rmw(regs + 0xa08, 0x38d20000, 0xffff0000);
@@ -1203,19 +1228,19 @@ static int k2_rio_serdes_config(u32 lanes, u32 baud, struct keystone_rio_data *k
 	switch (baud) {
 	case KEYSTONE_RIO_BAUD_1_250:
 		rate = KEYSTONE_RIO_QUARTER_RATE;
-		k2_rio_serdes_init_5g(krio_priv);
+		k2_rio_serdes_init_5g(lanes, krio_priv);
 		break;
 	case KEYSTONE_RIO_BAUD_2_500:
 		rate = KEYSTONE_RIO_HALF_RATE;
-		k2_rio_serdes_init_5g(krio_priv);
+		k2_rio_serdes_init_5g(lanes, krio_priv);
 		break;
 	case KEYSTONE_RIO_BAUD_5_000:
 		rate = KEYSTONE_RIO_FULL_RATE;
-		k2_rio_serdes_init_5g(krio_priv);
+		k2_rio_serdes_init_5g(lanes, krio_priv);
 		break;
 	case KEYSTONE_RIO_BAUD_3_125:
 		rate = KEYSTONE_RIO_HALF_RATE;
-		k2_rio_serdes_init_3g(krio_priv);
+		k2_rio_serdes_init_3g(lanes, krio_priv);
 		break;
 	default:
 		dev_warn(krio_priv->dev, "unsupported baud rate %d\n", baud);
@@ -1621,14 +1646,15 @@ static int keystone_rio_port_status(int port, struct keystone_rio_data *krio_pri
 			dev_err(krio_priv->dev,
 				"link test failed on port %d\n", port);
 			return -EIO;
-		} else
-			return 0; /* port must be solid OK */
+		}
 	} else {
 		dev_err(krio_priv->dev,
 			"port %d is not initialized - PORT_OK not set\n",
 			port);
 		return -EIO;
 	}
+
+	return 0; /* port must be solid OK */
 }
 
 /**
@@ -2901,6 +2927,21 @@ static void keystone_rio_get_controller_defaults(struct device_node *node,
 	if (of_property_read_u32(node, "path_mode", &c->path_mode)) {
 		dev_err(krio_priv->dev,
 			"Missing \"path_mode\" parameter\n");
+	}
+	
+       /* Max possible ports configurations per path_mode */
+	if ((c->path_mode == 0 &&
+	     c->ports & ~KEYSTONE_MAX_PORTS_PATH_MODE_0) ||
+	    (c->path_mode == 1 &&
+	     c->ports & ~KEYSTONE_MAX_PORTS_PATH_MODE_1) ||
+	    (c->path_mode == 2 &&
+	     c->ports & ~KEYSTONE_MAX_PORTS_PATH_MODE_2) ||
+	    (c->path_mode == 3 &&
+	     c->ports & ~KEYSTONE_MAX_PORTS_PATH_MODE_3) ||
+	    (c->path_mode == 4 &&
+	     c->ports & ~KEYSTONE_MAX_PORTS_PATH_MODE_4)) {
+		dev_err(krio_priv->dev,
+			"\"path_mode\" and \"ports\" configuration mismatch\n");
 	}
 
 	/* Port register timeout */

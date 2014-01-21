@@ -79,6 +79,16 @@
 #define KEYSTONE_RIO_HALF_RATE		1
 #define KEYSTONE_RIO_QUARTER_RATE	2
 
+/* Max ports configuration per path modes */
+#define KEYSTONE_MAX_PORTS_PATH_MODE_0  0xf /* 4 ports */
+#define KEYSTONE_MAX_PORTS_PATH_MODE_1  0x7 /* 3 ports */
+#define KEYSTONE_MAX_PORTS_PATH_MODE_2  0x7 /* 3 ports */
+#define KEYSTONE_MAX_PORTS_PATH_MODE_3  0x3 /* 2 ports */ 
+#define KEYSTONE_MAX_PORTS_PATH_MODE_4  0x1 /* 1 ports */
+
+#define SERDES_LANE(lane_num)	                (0x01 << lane_num)
+#define IS_SERDES_LANE_USED(lanes, lane_num)	(lanes & SERDES_LANE(lane_num))
+
 /*
  * Various RIO defines
  */
