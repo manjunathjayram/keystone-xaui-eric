@@ -114,9 +114,9 @@ static void khwq_set_notify(struct hwqueue_instance *inst, bool enabled)
 	} else if (range->flags & RANGE_HAS_IRQ) {
 		queue = hwqueue_inst_to_id(inst) - range->queue_base;
 		if (enabled)
-			enable_irq(range->irqs[queue]);
+			enable_irq(range->irqs[queue].irq);
 		else
-			disable_irq_nosync(range->irqs[queue]);
+			disable_irq_nosync(range->irqs[queue].irq);
 	} else
 		hwqueue_set_poll(inst, enabled);
 }
@@ -127,13 +127,20 @@ static int khwq_setup_irq(struct khwq_range_info *range,
 	struct khwq_instance *kq = hwqueue_inst_to_priv(inst);
 	unsigned queue = hwqueue_inst_to_id(inst) - range->queue_base;
 	int ret = 0, irq;
+	unsigned long cpu_map;
 
 	if (range->flags & RANGE_HAS_IRQ) {
-		irq = range->irqs[queue];
+		irq = range->irqs[queue].irq;
+		cpu_map = range->irqs[queue].cpu_map;
 
 		ret = request_irq(irq, khwq_int_handler, 0, kq->irq_name, inst);
 		if (ret >= 0)
 			disable_irq(irq);
+
+		if (cpu_map)
+			if (irq_set_affinity(irq, to_cpumask(&cpu_map)))
+				dev_warn(range->kdev->dev,
+						"Failed to set IRQ affinity\n");
 	}
 
 	return ret;
@@ -147,7 +154,7 @@ static void khwq_free_irq(struct hwqueue_instance *inst)
 	int irq;
 
 	if (range->flags & RANGE_HAS_IRQ) {
-		irq = range->irqs[id];
+		irq = range->irqs[id].irq;
 		free_irq(irq, inst);
 	}
 }
@@ -699,11 +706,34 @@ static int khwq_setup_queue_range(struct khwq_device *kdev,
 	}
 
 	for (i = 0; i < RANGE_MAX_IRQS; i++) {
-		range->irqs[i] = irq_of_parse_and_map(node, i);
-		if (range->irqs[i] == IRQ_NONE)
+		struct of_irq oirq;
+
+		if (of_irq_map_one(node, i, &oirq))
 			break;
+
+		range->irqs[i].irq = irq_create_of_mapping(oirq.controller,
+					oirq.specifier, oirq.size);
+
+		/* Check for a valid IRQ */
+		if (range->irqs[i].irq == IRQ_NONE)
+			break;
+
 		range->num_irqs++;
+
+		/* If it is an SPI interrupt then extract the interrupt
+		 * cpu mask. This mask will be used later to set the
+		 * CPU affinity for the IRQ.
+		 * For details on encoding of interrupt-cells for ARM GIC,
+		 * refer to Documentation/devicetree/bindings/arm/gic.txt.
+		 */
+		if (oirq.specifier[0])
+			continue;
+
+		if (oirq.size >= 3)
+			range->irqs[i].cpu_map =
+				(oirq.specifier[2] & 0x0000ff00) >> 8;
 	}
+
 	range->num_irqs = min(range->num_irqs, range->num_queues);
 	if (range->num_irqs)
 		range->flags |= RANGE_HAS_IRQ;

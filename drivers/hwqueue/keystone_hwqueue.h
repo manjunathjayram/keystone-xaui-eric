@@ -174,6 +174,11 @@ struct khwq_pdsp_info {
 
 struct khwq_range_ops;
 
+struct khwq_irq_info {
+	int	irq;
+	u32	cpu_map;
+};
+
 struct khwq_range_info {
 	const char		*name;
 	struct khwq_device	*kdev;
@@ -187,7 +192,7 @@ struct khwq_range_info {
 	struct khwq_acc_channel	*acc;
 	struct khwq_qos_info	*qos_info;
 	unsigned		 num_irqs;
-	int			 irqs[RANGE_MAX_IRQS];
+	struct khwq_irq_info	 irqs[RANGE_MAX_IRQS];
 };
 
 struct khwq_range_ops {
