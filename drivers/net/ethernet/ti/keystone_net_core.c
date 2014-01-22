@@ -654,11 +654,19 @@ static void netcp_dump_packet(struct netcp_packet *p_info, const char *cause)
 		tail[0x0c], tail[0x0d], tail[0x0e], tail[0x0f]);
 }
 
+static inline void netcp_frag_free(bool is_frag, void *ptr)
+{
+	if (is_frag)
+		put_page(virt_to_head_page(ptr));
+	else
+		kfree(ptr);
+}
+
 static void netcp_rx_complete(void *data)
 {
 	struct netcp_packet *p_info = data;
 	struct netcp_priv *netcp = p_info->netcp;
-	struct sk_buff *skb = p_info->skb;
+	struct sk_buff *skb;
 	struct scatterlist *sg;
 	enum dma_status status;
 	unsigned int frags;
@@ -672,23 +680,46 @@ static void netcp_rx_complete(void *data)
 		netcp->rx_state != RX_STATE_POLL	&&
 		netcp->rx_state != RX_STATE_TEARDOWN);
 
-	/* sg[2] describes the buffer already attached to the sk_buff. */
+	/* sg[2] describes the primary buffer */
+	/* Build a new sk_buff for this buffer */
+	dma_unmap_single(&netcp->pdev->dev, sg_dma_address(&p_info->sg[2]),
+			p_info->primary_bufsiz, DMA_FROM_DEVICE);
+	skb = build_skb(p_info->primary_bufptr, p_info->primary_bufsiz);
+	if (unlikely(!skb)) {
+		 /* Free the primary buffer */
+		netcp_frag_free((p_info->primary_bufsiz <= PAGE_SIZE), 
+				p_info->primary_bufptr);
+		 /* Free other buffers in the scatterlist */
+		for (frags = 0, sg = sg_next(&p_info->sg[2]);
+				frags < NETCP_SGLIST_SIZE-3 && sg;
+				++frags, sg = sg_next(sg)) {
+			dma_unmap_page(&netcp->pdev->dev, sg_dma_address(sg),
+					PAGE_SIZE, DMA_FROM_DEVICE);
+			__free_page(sg_page(sg));
+		}
+		return;
+	}
+	p_info->skb = skb;
+	skb->dev = netcp->ndev;
+
+	/* Update data, tail, and len */
+	skb_reserve(skb, NET_IP_ALIGN + NET_SKB_PAD);
 	len = sg_dma_len(&p_info->sg[2]);
 	if (sg_is_last(&p_info->sg[2]))
 		len -= 4;
-	skb_put(skb, len);
+	__skb_put(skb, len);
 
 	/* Fill in the page fragment list from sg[3] and later */
 	for (frags = 0, sg = sg_next(&p_info->sg[2]);
 			frags < NETCP_SGLIST_SIZE-3 && sg;
 			++frags, sg = sg_next(sg)) {
+		dma_unmap_page(&netcp->pdev->dev, sg_dma_address(sg),
+				PAGE_SIZE, DMA_FROM_DEVICE);
 		len = sg_dma_len(sg);
 		if (sg_is_last(sg))
 			len -= 4;
-		skb_add_rx_frag(skb, frags, sg_page(sg), sg->offset, len, len);
+		skb_add_rx_frag(skb, frags, sg_page(sg), sg->offset, len, PAGE_SIZE);
 	}
-
-	dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], frags+1, DMA_FROM_DEVICE);
 
 	if (unlikely(netcp->rx_state == RX_STATE_TEARDOWN)) {
 		dev_dbg(netcp->dev,
@@ -752,7 +783,6 @@ static void netcp_rx_complete(void *data)
 	netcp->ndev->stats.rx_packets++;
 	netcp->ndev->stats.rx_bytes += skb->len;
 
-	p_info->skb = NULL;
 	kmem_cache_free(netcp_pinfo_cache, p_info);
 
 	/* push skb up the stack */
@@ -760,50 +790,58 @@ static void netcp_rx_complete(void *data)
 	netif_receive_skb(skb);
 }
 
+/*
+ *  Another ugly layering violation. We can only pass one
+ *  value describing a secondary buffer, but we need both
+ *  the page and dma addresses. -rrp
+ */
+#define	page_to_dma(dev,pg)	pfn_to_dma(dev, page_to_pfn(pg))
+
 /* Release a free receive buffer */
 static void netcp_rxpool_free(void *arg, unsigned q_num, unsigned bufsize,
 		struct dma_async_tx_descriptor *desc)
 {
 	struct netcp_priv *netcp = arg;
+	struct device *dev = &netcp->pdev->dev;
 
 	if (q_num == 0) {
 		struct netcp_packet *p_info = desc->callback_param;
-		struct sk_buff *skb = p_info->skb;
 
-		dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
-		dev_kfree_skb(skb);
+		dma_unmap_single(dev, sg_dma_address(&p_info->sg[2]),
+				p_info->primary_bufsiz, DMA_FROM_DEVICE);
+		netcp_frag_free((p_info->primary_bufsiz <= PAGE_SIZE), 
+				p_info->primary_bufptr);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
 	} else {
-		void *bufptr = desc->callback_param;
-		struct scatterlist sg[1];
-
-		sg_init_table(sg, 1);
-		sg_set_buf(&sg[0], bufptr, PAGE_SIZE);
-		sg_dma_address(&sg[0]) = virt_to_dma(&netcp->pdev->dev, bufptr);
-		dma_unmap_sg(&netcp->pdev->dev, sg, 1, DMA_FROM_DEVICE);
-		free_page((unsigned long)bufptr);
+		struct page *page = desc->callback_param;
+		dma_unmap_page(dev, page_to_dma(dev, page),
+				PAGE_SIZE, DMA_FROM_DEVICE);
+		__free_page(page);
 	}
 }
 
 static void netcp_rx_complete2nd(void *data)
 {
+	struct page *page = data;
+
 	WARN(1, "Attempt to complete secondary receive buffer!\n");
+	/* FIXME: We need to unmap the page, but don't have the info needed */
+	__free_page(page);
 }
 
 /* Allocate a free receive buffer */
 static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
-		unsigned q_num, unsigned bufsize)
+		unsigned q_num, unsigned size)
 {
 	struct netcp_priv *netcp = arg;
 	struct dma_async_tx_descriptor *desc;
-	struct dma_device *device;
-	u32 err = 0;
-
-	device = netcp->rx_channel->device;
+	int err = 0;
 
 	if (q_num == 0) {
 		struct netcp_packet *p_info;
-		struct sk_buff *skb;
+		void *bufptr;
+		unsigned char *data;
+		unsigned int bufsiz;
 
 		/* Allocate a primary receive queue entry */
 		p_info = kmem_cache_alloc(netcp_pinfo_cache, GFP_ATOMIC);
@@ -811,27 +849,38 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 			dev_err(netcp->dev, "packet alloc failed\n");
 			return NULL;
 		}
+		p_info->skb = NULL;
 		p_info->netcp = netcp;
 
-		skb = netdev_alloc_skb_ip_align(netcp->ndev, bufsize);
-		if (!skb) {
-			dev_err(netcp->dev, "skb alloc failed\n");
+		bufsiz = SKB_DATA_ALIGN(size + NET_IP_ALIGN + NET_SKB_PAD) +
+			 SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+		if (bufsiz <= PAGE_SIZE) {
+			bufptr = netdev_alloc_frag(bufsiz);
+			p_info->primary_bufsiz = bufsiz;
+		} else {
+			bufptr = kmalloc(bufsiz, GFP_ATOMIC | __GFP_COLD);
+			p_info->primary_bufsiz = 0;
+		}
+		if (!bufptr) {
+			dev_warn(netcp->dev, "Primary RX buffer allocation failed\n");
 			kmem_cache_free(netcp_pinfo_cache, p_info);
 			return NULL;
 		}
-		skb->dev = netcp->ndev;
-		p_info->skb = skb;
+		p_info->primary_bufptr = bufptr;
+		
+		/* Same as skb_reserve(skb, NET_IP_ALIGN + NET_SKB_PAD) */
+		data = bufptr + NET_IP_ALIGN + NET_SKB_PAD;
 
 		sg_init_table(p_info->sg, NETCP_SGLIST_SIZE);
 		sg_set_buf(&p_info->sg[0], p_info->epib, sizeof(p_info->epib));
 		sg_set_buf(&p_info->sg[1], p_info->psdata, sizeof(p_info->psdata));
-		sg_set_buf(&p_info->sg[2], skb_tail_pointer(skb), skb_tailroom(skb));
+		sg_set_buf(&p_info->sg[2], data, size);
 
 		p_info->sg_ents = 2 + dma_map_sg(&netcp->pdev->dev, &p_info->sg[2],
 						 1, DMA_FROM_DEVICE);
 		if (p_info->sg_ents != 3) {
 			dev_err(netcp->dev, "dma map failed\n");
-			dev_kfree_skb(skb);
+			netcp_frag_free((bufsiz <= PAGE_SIZE), bufptr);
 			kmem_cache_free(netcp_pinfo_cache, p_info);
 			return NULL;
 		}
@@ -841,7 +890,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 					       DMA_HAS_EPIB | DMA_HAS_PSINFO);
 		if (IS_ERR_OR_NULL(desc)) {
 			dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
-			dev_kfree_skb(skb);
+			netcp_frag_free((bufsiz <= PAGE_SIZE), bufptr);
 			kmem_cache_free(netcp_pinfo_cache, p_info);
 			err = PTR_ERR(desc);
 			if (err != -ENOMEM) {
@@ -856,24 +905,24 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		p_info->cookie = desc->cookie;
 
 	} else {
+		struct page *page;
 
 		/* Allocate a secondary receive queue entry */
 		struct scatterlist sg[1];
-		void *bufptr;
 
-		bufptr = (void *)__get_free_page(GFP_ATOMIC);
-		if (!bufptr) {
+		page = alloc_page(GFP_ATOMIC | GFP_DMA32 | __GFP_COLD);
+		if (!page) {
 			dev_warn(netcp->dev, "page alloc failed for pool %d\n", q_num);
 			return NULL;
 		}
 
 		sg_init_table(sg, 1);
-		sg_set_buf(&sg[0], bufptr, PAGE_SIZE);
+		sg_set_page(&sg[0], page, PAGE_SIZE, 0);
 
 		err = dma_map_sg(&netcp->pdev->dev, sg, 1, DMA_FROM_DEVICE);
 		if (err != 1) {
 			dev_warn(netcp->dev, "map error for pool %d\n", q_num);
-			free_page((unsigned long)bufptr);
+			__free_page(page);
 			return NULL;
 		}
 
@@ -882,7 +931,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 					       q_num << DMA_QNUM_SHIFT);
 		if (IS_ERR_OR_NULL(desc)) {
 			dma_unmap_sg(&netcp->pdev->dev, sg, 1, DMA_FROM_DEVICE);
-			free_page((unsigned long)bufptr);
+			__free_page(page);
 
 			err = PTR_ERR(desc);
 			if (err != -ENOMEM) {
@@ -892,7 +941,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 			return NULL;
 		}
 
-		desc->callback_param = bufptr;
+		desc->callback_param = page;
 		desc->callback = netcp_rx_complete2nd;
 	}
 

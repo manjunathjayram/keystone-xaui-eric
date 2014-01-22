@@ -136,6 +136,8 @@ struct netcp_packet {
 	void				*ts_context;
 	int				(*txtstamp_complete)(void *context,
 						struct netcp_packet *packet);
+	void				*primary_bufptr;
+	unsigned int			 primary_bufsiz;
 	int				 sg_ents;
 	struct scatterlist		 sg[NETCP_SGLIST_SIZE];
 	u32				 psdata[NETCP_PSDATA_LEN];
