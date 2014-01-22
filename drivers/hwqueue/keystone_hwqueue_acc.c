@@ -120,7 +120,7 @@ static irqreturn_t khwq_acc_int_handler(int irq, void *_instdata)
 	if ((range->flags & RANGE_MULTI_QUEUE) == 0) {
 		/* TODO: this needs extent checks */
 		for (queue = 0; queue < range->num_irqs; queue++)
-			if (range->irqs[queue] == irq)
+			if (range->irqs[queue].irq == irq)
 				break;
 		inst	 = hwqueue_id_to_inst(hdev, range_base + queue);
 		kq	 = hwqueue_inst_to_priv(inst);
@@ -226,15 +226,18 @@ int khwq_range_setup_acc_irq(struct khwq_range_info *range, int queue,
 {
 	struct khwq_device *kdev = range->kdev;
 	struct khwq_acc_channel *acc;
+	unsigned long cpu_map;
 	int ret = 0, irq;
 	u32 old, new;
 
 	if (range->flags & RANGE_MULTI_QUEUE) {
 		acc = range->acc;
-		irq = range->irqs[0];
+		irq = range->irqs[0].irq;
+		cpu_map = range->irqs[0].cpu_map;
 	} else {
 		acc = range->acc + queue;
-		irq = range->irqs[queue];
+		irq = range->irqs[queue].irq;
+		cpu_map = range->irqs[queue].cpu_map;
 	}
 
 	old = acc->open_mask;
@@ -255,6 +258,10 @@ int khwq_range_setup_acc_irq(struct khwq_range_info *range, int queue,
 			acc->name, acc->name);
 		ret = request_irq(irq, khwq_acc_int_handler, 0, acc->name,
 				  range);
+		if (cpu_map)
+			if (irq_set_affinity(irq, to_cpumask(&cpu_map)))
+				dev_warn(range->kdev->dev,
+						"Failed to set IRQ affinity\n");
 	}
 
 	if (old && !new) {
