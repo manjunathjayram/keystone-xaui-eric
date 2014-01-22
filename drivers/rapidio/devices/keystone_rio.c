@@ -1338,7 +1338,7 @@ static int keystone_rio_hw_init(u32 mode, u32 baud, struct keystone_rio_data *kr
 	/* Set control register 1 configuration */
 	__raw_writel(0x00000000, &krio_priv->regs->per_set_cntl1);
 
-	/* Set Control register (disable promiscuous) */
+	/* Set control register (disable promiscuous) */
 	__raw_writel(0x00053800, &krio_priv->regs->per_set_cntl);
 
 	if (!K2_SERDES(krio_priv)) {
@@ -2429,7 +2429,7 @@ static void *keystone_rio_hw_get_inb_message(struct rio_mport *mport, int mbox)
 		goto end;
 
 	buff = p_info->buff;
-	
+
 	dma_unmap_sg(krio_priv->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
 
 end:
@@ -2600,6 +2600,19 @@ static void keystone_rio_tx_complete(void *data)
 
 	dma_unmap_sg(krio_priv->dev, &p_info->sg[2], 1, DMA_TO_DEVICE);
 
+	if (p_info->status == DMA_ERROR) {
+		dev_warn(krio_priv->dev, "dma transfer failed\n");
+		goto end;
+	}
+
+#if defined(CONFIG_RAPIDIO_CHMAN) || defined(CONFIG_RAPIDIO_CHMAN_MODULE)
+	/*
+	 * Free the temporary buffer
+	 */
+	if (p_info->buff)
+		kfree(p_info->buff);
+#endif
+
 	if (mbox->running) {
 		/*
 		 * Client is in charge of freeing the associated buffers
@@ -2616,10 +2629,11 @@ static void keystone_rio_tx_complete(void *data)
 			mbox->slot = 0;
 		slot = mbox->slot;
 		spin_unlock(&mbox->lock);
+
 		port->outb_msg[mbox_id].mcback(port, dev_id,
 					       mbox_id, slot);
 	}
-
+end:
 	kfree(p_info);
 }
 
@@ -2647,6 +2661,7 @@ static int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 	struct dma_device *device;
 	u32 packet_type;
 	int ret = 0;
+	void *send_buffer = NULL;
 
 	/*
 	 * Ensure that the number of bytes being transmitted is a multiple
@@ -2654,11 +2669,26 @@ static int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 	 */
 	u32 plen = ((len + 7) & ~0x7);
 
+#if defined(CONFIG_RAPIDIO_CHMAN) || defined(CONFIG_RAPIDIO_CHMAN_MODULE)
+	/*
+	 * Copy the outbound message in a temporary buffer. This is needed for
+	 * RIO_CM.
+	 */
+	send_buffer = kmalloc(plen, GFP_ATOMIC);
+	if (!send_buffer) {
+		dev_warn(krio_priv->dev, "failed to alloc send buffer\n");
+		return -ENOMEM;
+	}
+	
+	memcpy(send_buffer, buffer, plen);
+#endif
+
 	p_info = kzalloc(sizeof(*p_info), GFP_ATOMIC);
 	if (!p_info) {
+		if (send_buffer)
+			kfree(send_buffer);
 		dev_warn(krio_priv->dev, "failed to alloc packet info\n");
-		ret = -ENOMEM;
-		goto out;
+		return -ENOMEM;
 	}
 
 	p_info->priv = krio_priv;
@@ -2699,21 +2729,26 @@ static int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 	dev_dbg(krio_priv->dev, "buf(len=%d, plen=%d)\n", len, plen);
 
 	p_info->mbox = mbox;
+#if defined(CONFIG_RAPIDIO_CHMAN) || defined(CONFIG_RAPIDIO_CHMAN_MODULE)
+	p_info->buff = send_buffer;
+#else
 	p_info->buff = buffer;
+#endif
 
 	sg_init_table(p_info->sg, KEYSTONE_RIO_SGLIST_SIZE);
 	sg_set_buf(&p_info->sg[0], p_info->epib, sizeof(p_info->epib));
 	sg_set_buf(&p_info->sg[1], p_info->psdata, sizeof(p_info->psdata));
-	sg_set_buf(&p_info->sg[2], buffer, plen);
+	sg_set_buf(&p_info->sg[2], p_info->buff, plen);
 
 	p_info->sg_ents = 2 + dma_map_sg(krio_priv->dev, &p_info->sg[2],
 					 1, DMA_TO_DEVICE);
 
 	if (p_info->sg_ents != KEYSTONE_RIO_SGLIST_SIZE) {
 		kfree(p_info);
+		if (send_buffer)
+			kfree(send_buffer);
 		dev_warn(krio_priv->dev, "failed to map transmit packet\n");
-		ret = -ENXIO;
-		goto out;
+		return -ENXIO;
 	}
 
 	device = krio_priv->tx_channel->device;
@@ -2726,15 +2761,16 @@ static int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 	if (IS_ERR_OR_NULL(desc)) {
 		dma_unmap_sg(krio_priv->dev, &p_info->sg[2], 1, DMA_TO_DEVICE);
 		kfree(p_info);
+		if (send_buffer)
+			kfree(send_buffer);
 		dev_warn(krio_priv->dev, "failed to prep slave dma\n");
-		ret = -ENOBUFS;
-		goto out;
+		return -ENOBUFS;
 	}
 
 	desc->callback_param = p_info;
 	desc->callback = keystone_rio_tx_complete;
 	p_info->cookie = dmaengine_submit(desc);
-out:
+
 	return ret;
 }
 
