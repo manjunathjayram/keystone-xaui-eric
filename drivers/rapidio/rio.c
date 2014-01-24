@@ -68,6 +68,19 @@ u16 rio_local_get_device_id(struct rio_mport *port)
 }
 
 /**
+ * rio_local_set_device_id - Set the base/extended device id for a port
+ * @port: RIO master port
+ * @did: Device ID value to be written
+ *
+ * Writes the base/extended device id from a device.
+ */
+void rio_local_set_device_id(struct rio_mport *port, u16 did)
+{
+	rio_local_write_config_32(port, RIO_DID_CSR, RIO_SET_DID(port->sys_size,
+								 did));
+}
+
+/**
  * rio_add_device- Adds a RIO device to the device model
  * @rdev: RIO device
  *
@@ -1928,6 +1941,10 @@ int rio_register_mport(struct rio_mport *port)
 	}
 	mutex_unlock(&rio_mport_list_lock);
 
+	/* If host deviceId is defined, already set it into CSR */
+	if (port->host_deviceid >= 0)
+		rio_local_set_device_id(port, port->host_deviceid);
+
 	pr_debug("RIO: %s %s id=%d\n", __func__, port->name, port->id);
 	return 0;
 }
@@ -1959,6 +1976,7 @@ int rio_unregister_mport(struct rio_mport *port)
 EXPORT_SYMBOL_GPL(rio_unregister_mport);
 
 EXPORT_SYMBOL_GPL(rio_local_get_device_id);
+EXPORT_SYMBOL_GPL(rio_local_set_device_id);
 EXPORT_SYMBOL_GPL(rio_get_device);
 EXPORT_SYMBOL_GPL(rio_get_asm);
 EXPORT_SYMBOL_GPL(rio_request_inb_dbell);
