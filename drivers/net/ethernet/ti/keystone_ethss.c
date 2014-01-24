@@ -2720,12 +2720,12 @@ static bool phy_ptp_tstamp(const struct netcp_packet *p_info, bool is_tx)
 	return false;
 }
 
-static int cpsw_txtstamp_complete(void *context, struct netcp_packet *p_info)
+static int cpsw_txtstamp_complete(void *context, struct sk_buff *skb)
 {
 	struct cpsw_intf *cpsw_intf = context;
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 
-	return cpts_tx_timestamp(&cpsw_dev->cpts, p_info->skb);
+	return cpts_tx_timestamp(&cpsw_dev->cpts, skb);
 }
 
 static bool cpsw_cpts_txtstamp(struct cpsw_intf *cpsw_intf,
