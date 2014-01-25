@@ -39,6 +39,35 @@
 
 #include "mm.h"
 
+static inline dma_addr_t __pfn_to_dma(struct device *dev, unsigned long pfn)
+{
+	return (dma_addr_t)__pfn_to_bus(pfn);
+}
+
+static inline unsigned long __dma_to_pfn(struct device *dev, dma_addr_t addr)
+{
+	return __bus_to_pfn(addr);
+}
+
+static inline void *__dma_to_virt(struct device *dev, dma_addr_t addr)
+{
+	return (void *)__bus_to_virt((unsigned long)addr);
+}
+
+static inline dma_addr_t __virt_to_dma(struct device *dev, void *addr)
+{
+	return (dma_addr_t)__virt_to_bus((unsigned long)(addr));
+}
+
+dma_addr_t (*__arch_pfn_to_dma)(struct device *dev, unsigned long pfn) = __pfn_to_dma;
+EXPORT_SYMBOL(__arch_pfn_to_dma);
+unsigned long (*__arch_dma_to_pfn)(struct device *dev, dma_addr_t addr) = __dma_to_pfn;
+EXPORT_SYMBOL(__arch_dma_to_pfn);
+void* (*__arch_dma_to_virt)(struct device *dev, dma_addr_t addr) = __dma_to_virt;
+EXPORT_SYMBOL(__arch_dma_to_virt);
+dma_addr_t (*__arch_virt_to_dma)(struct device *dev, void *addr) = __virt_to_dma;
+EXPORT_SYMBOL(__arch_virt_to_dma);
+
 /*
  * The DMA API is built upon the notion of "buffer ownership".  A buffer
  * is either exclusively owned by the CPU (and therefore may be accessed
