@@ -14,6 +14,7 @@
 #include <linux/init.h>
 #include <linux/of_platform.h>
 #include <linux/of_address.h>
+#include <linux/dma-mapping.h>
 
 #include <asm/setup.h>
 #include <asm/mach/map.h>
@@ -53,6 +54,28 @@ static phys_addr_t keystone_virt_to_idmap(unsigned long x)
 	return (phys_addr_t)(x) - CONFIG_PAGE_OFFSET + KEYSTONE_LOW_PHYS_START;
 }
 
+static unsigned long keystone_dma_pfn_offset __read_mostly;
+
+static dma_addr_t keystone_pfn_to_dma(struct device *dev, unsigned long pfn)
+{
+	return PFN_PHYS(pfn - keystone_dma_pfn_offset);
+}
+
+static unsigned long keystone_dma_to_pfn(struct device *dev, dma_addr_t addr)
+{
+	return PFN_DOWN(addr) + keystone_dma_pfn_offset;
+}
+
+static void *keystone_dma_to_virt(struct device *dev, dma_addr_t addr)
+{
+	return phys_to_virt(addr + PFN_PHYS(keystone_dma_pfn_offset));
+}
+
+static dma_addr_t keystone_virt_to_dma(struct device *dev, void *addr)
+{
+	return virt_to_phys(addr) - PFN_PHYS(keystone_dma_pfn_offset);
+}
+
 static void __init keystone_init_meminfo(void)
 {
 	bool lpae = IS_ENABLED(CONFIG_ARM_LPAE);
@@ -88,6 +111,14 @@ static void __init keystone_init_meminfo(void)
 
 	/* Populate the arch idmap hook */
 	arch_virt_to_idmap = keystone_virt_to_idmap;
+
+	/* Populate the arch DMA hooks */
+	keystone_dma_pfn_offset = PFN_DOWN(KEYSTONE_HIGH_PHYS_START -
+					   KEYSTONE_LOW_PHYS_START);
+	__arch_pfn_to_dma = keystone_pfn_to_dma;
+	__arch_dma_to_pfn = keystone_dma_to_pfn;
+	__arch_dma_to_virt = keystone_dma_to_virt;
+	__arch_virt_to_dma = keystone_virt_to_dma;
 
 	pr_info("Switching to high address space at 0x%llx\n", (u64)offset);
 }
