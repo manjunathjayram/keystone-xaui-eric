@@ -2063,6 +2063,13 @@ static void keystone_rio_chan_work_handler(unsigned long data)
 	}
 }
 
+/*
+ * A dummy receive callback is needed for dmaengine teardown
+ */
+static void keystone_rio_rx_complete(void *data)
+{
+}
+
 static void keystone_rio_rx_notify(struct dma_chan *chan, void *arg)
 {
 	struct keystone_rio_data *krio_priv = arg;
@@ -2443,6 +2450,7 @@ static int keystone_rio_hw_add_inb_buffer(struct rio_mport *mport,
 	}
 
 	desc->callback_param = p_info;
+	desc->callback = keystone_rio_rx_complete;
 	p_info->cookie = desc->cookie;
 
 	return dma_rxfree_refill_one(krx_chan->dma_channel, 0, desc);
