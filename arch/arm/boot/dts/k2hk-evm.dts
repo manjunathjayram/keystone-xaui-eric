@@ -1903,23 +1903,23 @@
 				ranges;
 				region-12 {
 					id = <12>;
-					values	= <4096 128>;	/* num_desc desc_size */
+					values	= <8192 128>;	/* num_desc desc_size */
 					link-index = <0x4000>;
 				};
 				region-13 {
 					id = <13>;
 					values	= <2048 256>;	/* num_desc desc_size */
-					link-index = <0x5000>;
+					link-index = <0x6000>;
 				};
 				region-14 {
 					id = <14>;
 					values	= <2048 128>;	/* num_desc desc_size */
-					link-index = <0x5800>;
+					link-index = <0x6800>;
 				};
 			};
 			descriptors {
 				pool-net {
-					values = <2048 128>;	/* num_desc desc_size */
+					values = <6144 128>;	/* num_desc desc_size */
 					region-id = <12>;
 				};
 				pool-rio {
@@ -2080,7 +2080,7 @@
 					label		= "qos-bypass-0";
 					pool		= "pool-net";
 					submit-queue	= <645>;
-					/* complete-queue = <xx>; */
+					complete-queue 	= <8716>;
 					/* debug; */
 					/* channel = <xx>; */
 					/* priority = <1>; */
@@ -2090,7 +2090,7 @@
 					label		= "qos-bypass-1";
 					pool		= "pool-net";
 					submit-queue	= <645>;
-					/* complete-queue = <xx>; */
+					complete-queue 	= <8717>;
 					/* debug; */
 					/* channel = <xx>; */
 					/* priority = <1>; */
@@ -2620,15 +2620,15 @@
 			interfaces {
 				interface0: interface-0 {
 					rx-channel = "netrx0";
-					rx-queue-depth = <128 128 0 0>;
-					rx-buffer-size = <1500 4096 0 0>;
+					rx-queue-depth = <1024 128 0 0>;
+					rx-buffer-size = <1536 4096 0 0>;
 					efuse-mac = <1>;
 					/*local-mac-address = [02 18 31 7e 3e 6e]; */
 				};
 				interface1: interface-1 {
 					rx-channel = "netrx1";
-					rx-queue-depth = <128 128 0 0>;
-					rx-buffer-size = <1500 4096 0 0>;
+					rx-queue-depth = <1024 128 0 0>;
+					rx-buffer-size = <1536 4096 0 0>;
 					efuse-mac = <0>;
 					local-mac-address = [02 18 31 7e 3e 6f];
 				};
@@ -2720,7 +2720,7 @@
 				interface-0 {
 					chan-0 {
 						tx-channel = "qos-bypass-0";
-						tx_queue_depth = <128>;
+						tx_queue_depth = <1024>;
 					};
 					chan-1 {
 						tx-channel = "qos0";
@@ -2750,7 +2750,7 @@
 				interface-1 {
 					chan-0 {
 						tx-channel = "qos-bypass-1";
-						tx_queue_depth = <128>;
+						tx_queue_depth = <1024>;
 					};
 					chan-1 {
 						tx-channel = "qos6";
