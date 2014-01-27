@@ -82,6 +82,7 @@
 #define CPSW_STATS1_MODULE			1
 #define CPSW_STATS2_MODULE			2
 
+#define HOST_TX_PRI_MAP_DEFAULT			0x00000000
 #define MAX_SIZE_STREAM_BUFFER		        9504
 
 struct cpswx_slave {
@@ -857,6 +858,14 @@ static ssize_t cpsw_port_tx_pri_map_show(struct cpswx_priv *cpsw_dev,
 
 	port = (int)(attr->context);
 
+	/* Host port */
+	if (port == cpsw_dev->host_port) {
+		reg = __raw_readl(&cpsw_dev->host_port_regs->tx_pri_map);
+		len = cpsw_attr_info_show(attr->info, attr->info_size,
+					reg, buf);
+		return len;
+	}
+
 	for_each_intf(cpsw_intf, cpsw_dev) {
 		if (cpsw_intf->multi_if) {
 			slave = cpsw_intf->slaves;
@@ -900,6 +909,12 @@ static ssize_t cpsw_port_tx_pri_map_store(struct cpswx_priv *cpsw_dev,
 
 	i = &(attr->info[res.control]);
 
+	/* Host port */
+	if (port == cpsw_dev->host_port) {
+		r = &cpsw_dev->host_port_regs->tx_pri_map;
+		goto set;
+	}
+
 	/* Slave port */
 	for_each_intf(cpsw_intf, cpsw_dev) {
 		if (cpsw_intf->multi_if) {
@@ -926,6 +941,12 @@ set:
 	return count;
 }
 
+static struct cpswx_attribute cpsw_tx_pri_0_attribute =
+	__CPSW_CTXT_ATTR(0, S_IRUGO | S_IWUSR,
+			cpsw_port_tx_pri_map_show,
+			cpsw_port_tx_pri_map_store,
+			cpsw_port_tx_pri_maps, (void *)0);
+
 static struct cpswx_attribute cpsw_tx_pri_1_attribute =
 	__CPSW_CTXT_ATTR(1, S_IRUGO | S_IWUSR,
 			cpsw_port_tx_pri_map_show,
@@ -939,6 +960,7 @@ static struct cpswx_attribute cpsw_tx_pri_2_attribute =
 			cpsw_port_tx_pri_maps, (void *)2);
 
 static struct attribute *cpsw_tx_pri_default_attrs[] = {
+	&cpsw_tx_pri_0_attribute.attr,
 	&cpsw_tx_pri_1_attribute.attr,
 	&cpsw_tx_pri_2_attribute.attr,
 	NULL
@@ -1687,6 +1709,10 @@ static void cpsw_slave_open(struct cpswx_slave *slave,
 static void cpsw_init_host_port(struct cpswx_priv *priv,
 				struct cpswx_intf *cpsw_intf)
 {
+	/* Host Tx Pri */
+	__raw_writel(HOST_TX_PRI_MAP_DEFAULT,
+		     &priv->host_port_regs->tx_pri_map);
+
 	/* Max length register */
 	__raw_writel(MAX_SIZE_STREAM_BUFFER,
 		     &priv->host_port_regs->rx_maxlen);
