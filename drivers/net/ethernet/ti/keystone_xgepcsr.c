@@ -59,6 +59,14 @@
 	__raw_writel(((__raw_readl(addr) & (~(mask))) | \
 			(value & (mask))), (addr))
 
+/* bit mask of width w at offset s */
+#define MASK_WID_SH(w, s)	(((1 << w) - 1) << s)
+
+/* shift value v to offset s */
+#define VAL_SH(v, s)		(v << s)
+
+#define PHY_A(serdes)		0
+
 struct serdes_cfg {
 	u32 ofs;
 	u32 val;
@@ -257,10 +265,207 @@ static int keystone_xge_wait_pll_locked(void __iomem *sw_regs)
 
 }
 
-static inline void keystone_xge_serdes_enable_xgmii_port(
-			void __iomem *sw_regs)
+static inline void keystone_xge_serdes_enable_xgmii_port(void __iomem *sw_regs)
 {
 	__raw_writel(0x03, sw_regs + XGE_CTRL_OFFSET);
+}
+
+static u32 keystone_serdes_read_tbus_val(void __iomem *serdes_regs)
+{
+	u32 tmp;
+
+	if (PHY_A(serdes_regs)) {
+		tmp  = (readl(serdes_regs + 0x0ec) >> 24) & 0x0ff;
+		tmp |= ((readl(serdes_regs + 0x0fc) >> 16) & 0x00f00);
+	} else
+		tmp  = (readl(serdes_regs + 0x0f8) >> 16) & 0x0fff;
+
+	return tmp;
+}
+
+static void keystone_serdes_write_tbus_addr(void __iomem *serdes_regs,
+					int select, int ofs)
+{
+	if (PHY_A(serdes_regs)) {
+		reg_rmw(serdes_regs + 0x0008,
+				((select << 5) + ofs) << 24,
+				~0x00ffffff);
+		return;
+	}
+
+	/* For 2 lane Phy-B, lane0 is actually lane1 */
+	switch (select) {
+	case 1:
+		select = 2;
+		break;
+	case 2:
+		select = 3;
+		break;
+	default:
+		return;
+	}
+
+	reg_rmw(serdes_regs + 0x00fc,
+			((select << 8) + ofs) << 16,
+			~0xf800ffff);
+}
+
+u32 keystone_serdes_read_select_tbus(void __iomem *serdes_regs,
+					int select, int ofs)
+{
+	/* Set tbus address */
+	keystone_serdes_write_tbus_addr(serdes_regs, select, ofs);
+	/* Get TBUS Value */
+	return keystone_serdes_read_tbus_val(serdes_regs);
+}
+
+void keystone_serdes_reset_cdr(void __iomem *serdes_regs,
+			void __iomem *sig_detect_reg, int lane)
+{
+	u32 tmp, dlpf, tbus;
+
+	/*Get the DLPF values */
+	tmp = keystone_serdes_read_select_tbus(
+			serdes_regs, lane + 1, 5);
+
+	dlpf = tmp >> 2;
+
+	if (dlpf < 400 || dlpf > 700) {
+		reg_rmw(sig_detect_reg, VAL_SH(2, 1), MASK_WID_SH(2, 1));
+		mdelay(1);
+		reg_rmw(sig_detect_reg, VAL_SH(0, 1), MASK_WID_SH(2, 1));
+	} else {
+		tbus = keystone_serdes_read_select_tbus(serdes_regs,
+							lane + 1, 0xe);
+
+		pr_debug("XGE: CDR centered, DLPF: %4d,%d,%d.\n",
+			tmp >> 2, tmp & 3, (tbus >> 2) & 3);
+	}
+}
+
+/* Call every 100 ms */
+int keystone_xge_check_link_status(void __iomem *serdes_regs,
+		      void __iomem *sw_regs,
+		      u32 lanes,
+		      u32 *current_state,
+		      u32 *lane_down)
+{
+	void __iomem *pcsr_base = sw_regs + 0x0600;
+	void __iomem *sig_detect_reg;
+	u32 pcsr_rx_stat, blk_lock, blk_errs;
+	int loss, i, status = 1;
+
+	for (i = 0; i < lanes; i++) {
+		/* Get the Loss bit */
+		loss = readl(serdes_regs + 0x1fc0 + 0x20 + (i * 0x04)) & 0x1;
+
+		/* Get Block Errors and Block Lock bits */
+		pcsr_rx_stat = readl(pcsr_base + 0x0c + (i * 0x80));
+		blk_lock = (pcsr_rx_stat >> 30) & 0x1;
+		blk_errs = (pcsr_rx_stat >> 16) & 0x0ff;
+
+		/* Get Signal Detect Overlay Address */
+		sig_detect_reg = serdes_regs + (i * 0x200) + 0x200 + 0x04;
+
+		/* If Block errors maxed out, attempt recovery! */
+		if (blk_errs == 0x0ff)
+			blk_lock = 0;
+
+		switch (current_state[i]) {
+		case 0:
+			/* if good link lock the signal detect ON! */
+			if (!loss && blk_lock) {
+				pr_debug("XGE PCSR Linked Lane: %d\n", i);
+				reg_rmw(sig_detect_reg, VAL_SH(3, 1),
+							MASK_WID_SH(2, 1));
+				current_state[i] = 1;
+			} else {
+				/* if no lock, then reset CDR */
+				if (!blk_lock) {
+					pr_debug("XGE PCSR Recover Lane: %d\n",
+						i);
+
+					keystone_serdes_reset_cdr(serdes_regs,
+							sig_detect_reg, i);
+				}
+			}
+			break;
+		case 1:
+			if (!blk_lock) {
+				/* Link Lost? */
+				lane_down[i] = 1;
+				current_state[i] = 2;
+			}
+			break;
+		case 2:
+			if (blk_lock)
+				/* Nope just noise */
+				current_state[i] = 1;
+			else {
+				/* Lost the block lock, reset CDR if it is
+				   not centered and go back to sync state
+				 */
+				keystone_serdes_reset_cdr(serdes_regs,
+						sig_detect_reg, i);
+
+				current_state[i] = 0;
+			}
+		default:
+			pr_info("XGE: unknown current_state[%d] %d\n",
+				i, current_state[i]);
+			break;
+		}
+
+		if (blk_errs > 0) {
+			/* Reset the Error counts! */
+			reg_rmw(pcsr_base + 0x08 + (i * 0x80),
+					VAL_SH(0x19, 0), MASK_WID_SH(8, 0));
+
+			reg_rmw(pcsr_base + 0x08 + (i * 0x80),
+					VAL_SH(0x00, 0), MASK_WID_SH(8, 0));
+		}
+
+		status &= (current_state[i] == 1);
+	}
+
+	return status;
+}
+
+static int keystone_xge_serdes_check_lane(void __iomem *serdes_regs,
+					  void __iomem *sw_regs)
+{
+	u32 current_state[2] = {0, 0};
+	int retries = 0, link_up;
+	u32 lane_down[2];
+
+	do {
+		lane_down[0] = 0;
+		lane_down[1] = 0;
+
+		link_up = keystone_xge_check_link_status(serdes_regs, sw_regs,
+					   2, current_state, lane_down);
+
+		/* if we did not get link up then wait 100ms
+		   before calling it again
+		 */
+		if (link_up)
+			break;
+
+		if (lane_down[0])
+			pr_debug("XGE: detected link down on lane 0\n");
+
+		if (lane_down[1])
+			pr_debug("XGE: detected link down on lane 1\n");
+
+		if (++retries > 1) {
+			pr_debug("XGE: timeout waiting for serdes link up\n");
+			return -ETIMEDOUT;
+		}
+		mdelay(100);
+	} while (!link_up);
+
+	pr_debug("XGE: PCSR link is up\n");
+	return 0;
 }
 
 static inline void keystone_xge_serdes_setup_cm_c1_c2(void __iomem *serdes_regs,
@@ -318,6 +523,8 @@ static int keystone_xge_serdes_config(void __iomem *serdes_regs,
 
 	keystone_xge_serdes_enable_xgmii_port(sw_regs);
 
+	keystone_xge_serdes_check_lane(serdes_regs, sw_regs);
+
 	return ret;
 }
 
@@ -333,7 +540,7 @@ static int keystone_xge_serdes_start(void)
 	/* read COMLANE bits 4:0 */
 	val = __raw_readl(serdes_regs + 0xa00);
 	if (val & 0x1f) {
-		pr_info("XGE: serdes in operation - reset before config\n");
+		pr_debug("XGE: serdes already in operation - reset\n");
 		keystone_xge_reset_serdes(serdes_regs);
 	}
 
