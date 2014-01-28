@@ -1817,8 +1817,8 @@
 					interrupts = <0 48 0x104 0 49 0x204 0 50 0xf04 0 51 0xf04
 						      0 52 0xf04 0 53 0xf04 0 54 0xf04 0 55 0xf04
 						      0 56 0xf04 0 57 0xf04 0 58 0xf04 0 59 0xf04
-						      0 60 0x404 0 61 0x404 0 62 0xf04 0 63 0xf04
-						      0 64 0xf04 0 65 0xf04 0 66 0xf04 0 59 0xf04
+						      0 60 0x104 0 61 0x204 0 62 0x404 0 63 0x804
+						      0 64 0x404 0 65 0x804 0 66 0xf04 0 59 0xf04
 						      0 68 0xf04 0 69 0xf04 0 70 0xf04 0 71 0xf04
 						      0 72 0xf04 0 73 0xf04 0 74 0xf04 0 75 0xf04
 						      0 76 0xf04 0 77 0xf04 0 78 0xf04 0 79 0xf04>;
@@ -1903,23 +1903,23 @@
 				ranges;
 				region-12 {
 					id = <12>;
-					values	= <8192 128>;	/* num_desc desc_size */
+					values	= <14336 128>;	/* num_desc desc_size */
 					link-index = <0x4000>;
 				};
 				region-13 {
 					id = <13>;
 					values	= <2048 256>;	/* num_desc desc_size */
-					link-index = <0x6000>;
+					link-index = <0x7800>;
 				};
 				region-14 {
 					id = <14>;
 					values	= <2048 128>;	/* num_desc desc_size */
-					link-index = <0x6800>;
+					link-index = <0x8000>;
 				};
 			};
 			descriptors {
 				pool-net {
-					values = <6144 128>;	/* num_desc desc_size */
+					values = <12288 128>;	/* num_desc desc_size */
 					region-id = <12>;
 				};
 				pool-rio {
@@ -2013,6 +2013,26 @@
 					/* channel = <0>; */
 					/* priority = <1>; */
 				};
+				nettx2 {
+					transmit;
+					label		= "nettx2";
+					pool		= "pool-net";
+					submit-queue	= <648>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <0>; */
+					/* priority = <1>; */
+				};
+				nettx3 {
+					transmit;
+					label		= "nettx3";
+					pool		= "pool-net";
+					submit-queue	= <648>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <0>; */
+					/* priority = <1>; */
+				};
 				netrx0 {
 					receive;
 					label		= "netrx0";
@@ -2032,6 +2052,26 @@
 					/* debug; */
 					/* channel = <0>; */
 					flow		= <23>;
+				};
+				netrx2 {
+					receive;
+					label		= "netrx2";
+					pool		= "pool-net";
+					/* submit-queue   = <xx>; */
+					complete-queue = <8718>;
+					/* debug; */
+					/* channel = <0>; */
+					flow		= <24>;
+				};
+				netrx3 {
+					receive;
+					label		= "netrx3";
+					pool		= "pool-net";
+					/* submit-queue   = <xx>; */
+					complete-queue = <8719>;
+					/* debug; */
+					/* channel = <0>; */
+					flow		= <25>;
 				};
 				satx-0 {
 					transmit;
@@ -2071,6 +2111,26 @@
 					pool		= "pool-net";
 					submit-queue	= <645>;
 					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <xx>; */
+					/* priority = <1>; */
+				};
+				patx-pdsp5-2 {
+					transmit;
+					label		= "patx-pdsp5-2";
+					pool		= "pool-net";
+					submit-queue	= <645>;
+					complete-queue = <8720>;
+					/* debug; */
+					/* channel = <xx>; */
+					/* priority = <1>; */
+				};
+				patx-pdsp5-3 {
+					transmit;
+					label		= "patx-pdsp5-3";
+					pool		= "pool-net";
+					submit-queue	= <645>;
+					complete-queue = <8721>;
 					/* debug; */
 					/* channel = <xx>; */
 					/* priority = <1>; */
@@ -2632,6 +2692,20 @@
 					efuse-mac = <0>;
 					local-mac-address = [02 18 31 7e 3e 6f];
 				};
+				interface2: interface-2 {
+					rx-channel = "netrx2";
+					rx-queue-depth = <1024 128 0 0>;
+					rx-buffer-size = <1536 4096 0 0>;
+					efuse-mac = <0>;
+					/*local-mac-address = [02 18 31 7e 3e 7e]; */
+				};
+				interface3: interface-3 {
+					rx-channel = "netrx3";
+					rx-queue-depth = <1024 128 0 0>;
+					rx-buffer-size = <1536 4096 0 0>;
+					efuse-mac = <0>;
+					/*local-mac-address = [02 18 31 7e 3e 7f]; */
+				};
 			};
 
 			cpsw: cpsw@2090000 {
@@ -2641,18 +2715,20 @@
 				intf_tx_queues = <7>;
 
 				sgmii_module_ofs  = <0x100>;
+				sgmii_module34_ofs  = <0x400>;
 				switch_module_ofs = <0x800>;
 				host_port_reg_ofs = <0x834>;
 				slave_reg_ofs	  = <0x860>;
 				sliver_reg_ofs	  = <0x900>;
+				slave23_reg_ofs	  = <0xa00>;
 				hw_stats_reg_ofs  = <0xb00>;
 				cpts_reg_ofs	  = <0xd00>;
 				ale_reg_ofs	  = <0xe00>;
 
-				num_slaves  = <2>;
+				num_slaves  = <4>;
 				ale_ageout  = <30>;
 				ale_entries = <1024>;
-				ale_ports   = <3>;
+				ale_ports   = <5>;
 
 				cpts_rftclk_sel = <0>;
 				/*cpts_rftclk_freq = <399360000>;*/
@@ -2663,7 +2739,7 @@
 				/* force_no_hwtstamp; */
 
 				multi-interface;
-				num-interfaces = <2>;
+				num-interfaces = <4>;
 				slaves-per-interface = <1>;
 
 				interfaces {
@@ -2677,6 +2753,16 @@
 						tx-channel = "nettx1";
 						tx_queue_depth = <32>;
 					};
+					interface-2 {
+						slave_port = <2>;
+						tx-channel = "nettx2";
+						tx_queue_depth = <32>;
+					};
+					interface-3 {
+						slave_port = <3>;
+						tx-channel = "nettx3";
+						tx_queue_depth = <32>;
+					};
 				};
 
 				slaves {
@@ -2688,7 +2774,14 @@
 						label		= "slave1";
 						link-interface	= <4>;
 					};
-
+					slave2 {
+						label		= "slave2";
+						link-interface	= <2>;
+					};
+					slave3 {
+						label		= "slave3";
+						link-interface	= <2>;
+					};
 				};
 			};
 			pa: pa@2000000 {
@@ -2698,8 +2791,8 @@
 				txhook-softcsum		= <40>;
 				rxhook-order		= <10>;
 
-				tx_cmd_queue_depth	= <32>;
-				tx_data_queue_depth	= <32>;
+				tx_cmd_queue_depth	= <64>;
+				tx_data_queue_depth	= <1024>;
 				rx_pool_depth		= <64>;
 				rx_buffer_size		= <128>;
 				lut-ranges		= <0 43 56 63>;
