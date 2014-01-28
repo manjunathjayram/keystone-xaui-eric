@@ -588,8 +588,9 @@ EXPORT_SYMBOL(netcp_unregister_rxhook);
 		    NETIF_MSG_PKTDATA	| NETIF_MSG_TX_QUEUED	|	\
 		    NETIF_MSG_RX_STATUS)
 
-#define NETCP_NAPI_WEIGHT	128
-#define NETCP_TX_TIMEOUT	40
+#define NETCP_NAPI_WEIGHT_RX	128
+#define NETCP_NAPI_WEIGHT_TX	64
+#define NETCP_TX_TIMEOUT	(5 * HZ)
 #define NETCP_MIN_PACKET_SIZE	ETH_ZLEN
 #define NETCP_MAX_PACKET_SIZE	(VLAN_ETH_FRAME_LEN + ETH_FCS_LEN)
 
@@ -895,6 +896,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		desc->callback = netcp_rx_complete2nd;
 	}
 
+	wmb();
 	return desc;
 }
 
@@ -1155,6 +1157,8 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 
 	desc->callback_param = p_info;
 	desc->callback = netcp_tx_complete;
+	wmb();
+
 	cookie = dmaengine_submit(desc);
 	if (dma_submit_error(cookie)) {
 		dev_warn(netcp->dev, "failed to submit packet for dma: %d\n",
@@ -1253,7 +1257,7 @@ int netcp_txpipe_init(struct netcp_tx_pipe *tx_pipe,
 
 	netcp_set_txpipe_state(tx_pipe, TX_STATE_INVALID);
 	netif_napi_add(netcp_priv->ndev, &tx_pipe->dma_poll_napi,
-			netcp_tx_poll, NETCP_NAPI_WEIGHT);
+			netcp_tx_poll, NETCP_NAPI_WEIGHT_TX);
 
 	dev_dbg(tx_pipe->netcp_priv->dev, "initialized tx pipe %s, %d/%d\n",
 		tx_pipe->dma_chan_name, tx_pipe->dma_pause_threshold,
@@ -1872,7 +1876,7 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 	}
 
 	/* NAPI register */
-	netif_napi_add(ndev, &netcp->napi, netcp_poll, NETCP_NAPI_WEIGHT);
+	netif_napi_add(ndev, &netcp->napi, netcp_poll, NETCP_NAPI_WEIGHT_RX);
 
 	/* Register the network device */
 	ndev->dev_id		= 0;

@@ -22,16 +22,20 @@
 #define XGE_SERDES_BASE		0x0231E000
 #define XGE_SERDES_SIZE		0x2000
 
-#define XGE_SGMII_1_STATUS	0x02f00114
-#define XGE_SGMII_2_STATUS	0x02f00214
 #define XGE_SW_BASE		0x02f00000
 #define XGE_SW_SIZE		0x00001000
+
+#define XGE_CTRL_OFFSET		0x0c
+#define XGE_SGMII_1_OFFSET	0x0114
+#define XGE_SGMII_2_OFFSET	0x0214
 
 #define PCSR_OFFSET(x)	((x == 0) ? (0x600) : (0x680))
 
 /*
  * PCS-R registers
  */
+#define PCSR_CPU_CTRL_OFFSET	0x1fd0
+
 #define PCSR_TX_CTL(x)		(PCSR_OFFSET(x) + 0x00)
 #define PCSR_TX_STATUS(x)	(PCSR_OFFSET(x) + 0x04)
 #define PCSR_RX_CTL(x)		(PCSR_OFFSET(x) + 0x08)
@@ -48,10 +52,20 @@
 #define PCSR_RX_ERR_FIFO(x)	(PCSR_OFFSET(x) + 0x2C)
 
 #define PCSR_SIGNAL_OK_EN	BIT(1)
+#define POR_EN			BIT(29)
+#define POR_EN_MASK		BIT(29)
 
 #define reg_rmw(addr, value, mask) \
 	__raw_writel(((__raw_readl(addr) & (~(mask))) | \
 			(value & (mask))), (addr))
+
+/* bit mask of width w at offset s */
+#define MASK_WID_SH(w, s)	(((1 << w) - 1) << s)
+
+/* shift value v to offset s */
+#define VAL_SH(v, s)		(v << s)
+
+#define PHY_A(serdes)		0
 
 struct serdes_cfg {
 	u32 ofs;
@@ -59,17 +73,18 @@ struct serdes_cfg {
 	u32 mask;
 };
 
-struct serdes_cfg cfg_cmu0_156p25mhz_10p3125g[] = {
+struct serdes_cfg cfg_phyb_1p25g_156p25mhz_cmu0[] = {
 	{0x0000, 0x00800002, 0x00ff00ff},
 	{0x0014, 0x00003838, 0x0000ffff},
 	{0x0060, 0x1c44e438, 0xffffffff},
 	{0x0064, 0x00c18400, 0x00ffffff},
 	{0x0068, 0x17078200, 0xffffff00},
 	{0x006c, 0x00000014, 0x000000ff},
-	{0x0078, 0x0000c000, 0x0000ff00}
+	{0x0078, 0x0000c000, 0x0000ff00},
+	{0x0000, 0x00000003, 0x000000ff},
 };
 
-struct serdes_cfg cfg_cmu1_156p25mhz_10p3125g[] = {
+struct serdes_cfg cfg_phyb_10p3125g_156p25mhz_cmu1[] = {
 	{0x0c00, 0x00030002, 0x00ff00ff},
 	{0x0c14, 0x00005252, 0x0000ffff},
 	{0x0c28, 0x80000000, 0xff000000},
@@ -83,37 +98,21 @@ struct serdes_cfg cfg_cmu1_156p25mhz_10p3125g[] = {
 	{0x0c54, 0x00002100, 0x0000ff00},
 	{0x0c58, 0x00000060, 0x000000ff},
 	{0x0c60, 0x80131e7c, 0xffffffff},
-	{0x0c64, 0x00008b02, 0x0000ffff},
+	{0x0c64, 0x8400cb02, 0xff00ffff},
 	{0x0c68, 0x17078200, 0xffffff00},
-	{0x0c6c, 0x0000001a, 0x000000ff},
+	{0x0c6c, 0x00000016, 0x000000ff},
 	{0x0c74, 0x00000400, 0x0000ff00},
-	{0x0c78, 0x0000c000, 0x0000ff00}
+	{0x0c78, 0x0000c000, 0x0000ff00},
+	{0x0c00, 0x00000003, 0x000000ff},
 };
 
-struct serdes_cfg cfg_comlane_156p25mhz_10p3125g[] = {
-	{0x0a00, 0x00000800, 0x0000ff00},
-	{0x0a84, 0x00000000, 0x000000ff},
-	{0x0a8c, 0x00130000, 0x00ff0000},
-	{0x0a90, 0x77a00000, 0xffff0000},
-	{0x0a94, 0x00007777, 0x0000ffff},
-	{0x0b08, 0x000f0000, 0xffff0000},
-	{0x0b0c, 0x000f0000, 0x00ffffff},
-	{0x0b10, 0xbe000000, 0xff000000},
-	{0x0b14, 0x000000ff, 0x000000ff},
-	{0x0b18, 0x00000014, 0x000000ff},
-	{0x0b5c, 0x981b0000, 0xffff0000},
-	{0x0b64, 0x00001100, 0x0000ff00},
-	{0x0b78, 0x00000c00, 0x0000ff00},
-	{0x0abc, 0xff000000, 0xff000000},
-	{0x0ac0, 0x0000008b, 0x000000ff}
-};
-
-struct serdes_cfg cfg_lane_156p25mhz_10p3125g[] = {
-	{0x0204, 0xfc000080, 0xff0000ff},
-	{0x0208, 0x00009341, 0x0000ffff},
+struct serdes_cfg cfg_phyb_10p3125g_16bit_lane[] = {
+	{0x0204, 0x00000080, 0x000000ff},
+	{0x0208, 0x0000920d, 0x0000ffff},
+	{0x0204, 0xfc000000, 0xff000000},
+	{0x0208, 0x00009104, 0x0000ffff},
 	{0x0210, 0x1a000000, 0xff000000},
-	/* Set dlpf_div2_ena. Orig = 0x58 */
-	{0x0214, 0x00006b5c, 0x00ffffff},
+	{0x0214, 0x00006b58, 0x00ffffff},
 	{0x0218, 0x75800084, 0xffff00ff},
 	{0x022c, 0x00300000, 0x00ff0000},
 	{0x0230, 0x00003800, 0x0000ff00},
@@ -131,12 +130,35 @@ struct serdes_cfg cfg_lane_156p25mhz_10p3125g[] = {
 	{0x029c, 0x00000003, 0x000000ff},
 	{0x02a4, 0x00000f13, 0x0000ffff},
 	{0x02a8, 0x0001b600, 0x00ffff00},
-	/* CJT, sb=0x30, disable aneg */
-	{0x0380, 0x00000020, 0x000000ff},
-	/* CJT, sb=0x02, disable training */
-	{0x03c0, 0x00000000, 0x0000ff00},
+	{0x0380, 0x00000030, 0x000000ff},
+	{0x03c0, 0x00000200, 0x0000ff00},
 	{0x03cc, 0x00000018, 0x000000ff},
 	{0x03cc, 0x00000000, 0x000000ff},
+};
+
+struct serdes_cfg cfg_phyb_10p3125g_comlane[] = {
+	{0x0a00, 0x00000800, 0x0000ff00},
+	{0x0a84, 0x00000000, 0x000000ff},
+	{0x0a8c, 0x00130000, 0x00ff0000},
+	{0x0a90, 0x77a00000, 0xffff0000},
+	{0x0a94, 0x00007777, 0x0000ffff},
+	{0x0b08, 0x000f0000, 0xffff0000},
+	{0x0b0c, 0x000f0000, 0x00ffffff},
+	{0x0b10, 0xbe000000, 0xff000000},
+	{0x0b14, 0x000000ff, 0x000000ff},
+	{0x0b18, 0x00000014, 0x000000ff},
+	{0x0b5c, 0x981b0000, 0xffff0000},
+	{0x0b64, 0x00001100, 0x0000ff00},
+	{0x0b78, 0x00000c00, 0x0000ff00},
+	{0x0abc, 0xff000000, 0xff000000},
+	{0x0ac0, 0x0000008b, 0x000000ff},
+};
+
+struct serdes_cfg cfg_cm_c1_c2[] = {
+	{0x0208, 0x00000000, 0x00000f00},
+	{0x0208, 0x00000000, 0x0000001f},
+	{0x0204, 0x00000000, 0x00040000},
+	{0x0208, 0x000000a0, 0x000000e0},
 };
 
 static inline void keystone_xge_serdes_init(void __iomem *serdes_regs)
@@ -144,126 +166,339 @@ static inline void keystone_xge_serdes_init(void __iomem *serdes_regs)
 	int i;
 
 	/* cmu0 setup */
-	for (i = 0; i < ARRAY_SIZE(cfg_cmu0_156p25mhz_10p3125g); i++) {
-		reg_rmw(serdes_regs + cfg_cmu0_156p25mhz_10p3125g[i].ofs,
-			cfg_cmu0_156p25mhz_10p3125g[i].val,
-			cfg_cmu0_156p25mhz_10p3125g[i].mask);
+	for (i = 0; i < ARRAY_SIZE(cfg_phyb_1p25g_156p25mhz_cmu0); i++) {
+		reg_rmw(serdes_regs + cfg_phyb_1p25g_156p25mhz_cmu0[i].ofs,
+			cfg_phyb_1p25g_156p25mhz_cmu0[i].val,
+			cfg_phyb_1p25g_156p25mhz_cmu0[i].mask);
 	}
 
 	/* cmu1 setup */
-	for (i = 0; i < ARRAY_SIZE(cfg_cmu1_156p25mhz_10p3125g); i++) {
-		reg_rmw(serdes_regs + cfg_cmu1_156p25mhz_10p3125g[i].ofs,
-			cfg_cmu1_156p25mhz_10p3125g[i].val,
-			cfg_cmu1_156p25mhz_10p3125g[i].mask);
-	}
-
-	/* comlane setup */
-	for (i = 0; i < ARRAY_SIZE(cfg_comlane_156p25mhz_10p3125g); i++) {
-		reg_rmw(serdes_regs + cfg_comlane_156p25mhz_10p3125g[i].ofs,
-			cfg_comlane_156p25mhz_10p3125g[i].val,
-			cfg_comlane_156p25mhz_10p3125g[i].mask);
+	for (i = 0; i < ARRAY_SIZE(cfg_phyb_10p3125g_156p25mhz_cmu1); i++) {
+		reg_rmw(serdes_regs + cfg_phyb_10p3125g_156p25mhz_cmu1[i].ofs,
+			cfg_phyb_10p3125g_156p25mhz_cmu1[i].val,
+			cfg_phyb_10p3125g_156p25mhz_cmu1[i].mask);
 	}
 }
 
+/* lane is 0 based */
 static inline void keystone_xge_serdes_lane_config(
 			void __iomem *serdes_regs, int lane)
 {
 	int i;
 
 	/* lane setup */
-	for (i = 0; i < ARRAY_SIZE(cfg_lane_156p25mhz_10p3125g); i++) {
+	for (i = 0; i < ARRAY_SIZE(cfg_phyb_10p3125g_16bit_lane); i++) {
 		reg_rmw(serdes_regs +
-				cfg_lane_156p25mhz_10p3125g[i].ofs +
+				cfg_phyb_10p3125g_16bit_lane[i].ofs +
 				(0x200 * lane),
-			cfg_lane_156p25mhz_10p3125g[i].val,
-			cfg_lane_156p25mhz_10p3125g[i].mask);
+			cfg_phyb_10p3125g_16bit_lane[i].val,
+			cfg_phyb_10p3125g_16bit_lane[i].mask);
 	}
+
+	/* disable auto negotiation*/
+	reg_rmw(serdes_regs + (0x200 * lane) + 0x0380,
+		0x00000000, 0x00000010);
+
+	/* disable link training */
+	reg_rmw(serdes_regs + (0x200 * lane) + 0x03c0,
+		0x00000000, 0x00000200);
 }
 
 static inline void keystone_xge_serdes_com_enable(void __iomem *serdes_regs)
 {
-	/* Bring SerDes out of Reset if SerDes is Shutdown & is in Reset Mode*/
-	reg_rmw(serdes_regs + 0x10, 0x0, 0x10000000);
-	reg_rmw(serdes_regs + 0x0c10, 0x0, 0x10000000);
+	int i;
 
-	/* Enable CMU and COMLANE */
-	reg_rmw(serdes_regs + 0x0000, 0x03, 0x000000ff);
-	reg_rmw(serdes_regs + 0x0c00, 0x03, 0x000000ff);
-	reg_rmw(serdes_regs + 0x0a00, 0x5f, 0x000000ff);
+	for (i = 0; i < ARRAY_SIZE(cfg_phyb_10p3125g_comlane); i++) {
+		reg_rmw(serdes_regs + cfg_phyb_10p3125g_comlane[i].ofs,
+			cfg_phyb_10p3125g_comlane[i].val,
+			cfg_phyb_10p3125g_comlane[i].mask);
+	}
 }
 
 static inline void keystone_xge_serdes_lane_enable(
 			void __iomem *serdes_regs, int lane)
 {
-	/* Bit 28 Toggled. Bring it out of Reset TX PLL for all lanes */
-	reg_rmw(serdes_regs + 0x0200 * (lane + 1) + 0x28, 0x0, 0x20000000);
-
 	/* Set Lane Control Rate */
 	__raw_writel(0xe0e9e038, serdes_regs + 0x1fe0 + (4 * lane));
-
-	/* Set NES bit if Loopback Enabled */
 }
 
-static inline void keystone_xge_serdes_pll_enable(void __iomem *serdes_regs,
-							int enable)
+static inline void keystone_xge_serdes_phyb_rst_clr(void __iomem *serdes_regs)
 {
-	/* Set PLL Enable Val */
-	if (enable)
-		__raw_writel(0xee000000, serdes_regs + 0x1ff4);
-	else
-		__raw_writel(0x08000000, serdes_regs + 0x1ff4);
+	reg_rmw(serdes_regs + 0x0a00, 0x0000001f, 0x000000ff);
 }
 
-static inline void keystone_xge_wait_pll_locked(
-			void __iomem *sw_regs)
+static inline void keystone_xge_serdes_pll_disable(void __iomem *serdes_regs)
 {
-	u32 val;
+	__raw_writel(0x88000000, serdes_regs + 0x1ff4);
+}
 
+static inline void keystone_xge_serdes_pll_enable(void __iomem *serdes_regs)
+{
+	keystone_xge_serdes_phyb_rst_clr(serdes_regs);
+	__raw_writel(0xee000000, serdes_regs + 0x1ff4);
+}
+
+static int keystone_xge_wait_pll_locked(void __iomem *sw_regs)
+{
+	unsigned long timeout;
+	int ret = 0;
+	u32 val_1, val_0;
+
+	timeout = jiffies + msecs_to_jiffies(500);
 	do {
-		/* sgmii 1 status */
-		val = __raw_readl(sw_regs + 0x0114);
-	} while ((val & 0x10) != 0x10);
+		val_0 = (__raw_readl(sw_regs + XGE_SGMII_1_OFFSET) & BIT(4));
+		val_1 = (__raw_readl(sw_regs + XGE_SGMII_2_OFFSET) & BIT(4));
 
-	do {
-		/* sgmii 2 status */
-		val = __raw_readl(sw_regs + 0x0214);
-	} while ((val & 0x10) != 0x10);
+		if (val_1 && val_0)
+			return 0;
+
+		if (time_after(jiffies, timeout)) {
+			ret = -ETIMEDOUT;
+			break;
+		}
+
+		cpu_relax();
+	} while (true);
+
+	pr_info("XGE serdes not locked: time out.\n");
+	return ret;
+
 }
 
-static inline void keystone_xge_serdes_enable_xgmii_port(
-			void __iomem *sw_regs)
+static inline void keystone_xge_serdes_enable_xgmii_port(void __iomem *sw_regs)
 {
-	__raw_writel(0x03, sw_regs + 0x0c);
+	__raw_writel(0x03, sw_regs + XGE_CTRL_OFFSET);
 }
 
-static inline void keystone_xge_serdes_fixup(void __iomem *serdes_regs)
+static u32 keystone_serdes_read_tbus_val(void __iomem *serdes_regs)
 {
-	u32 i, val;
+	u32 tmp;
 
-	/* Kick the PCS block...
-	   This is temporary workaround for SERDES PCS not coming
-	   up correctly. Not adding to CSL just yet.
-	*/
-	for (i = 0; i < 2; i++) {
-		val = __raw_readl(serdes_regs + 0x204 + (i * 0x200));
-		reg_rmw(serdes_regs + 0x204 + (i * 0x200),
-				0x00000004, 0x00000006);
-		reg_rmw(serdes_regs + 0x204 + (i * 0x200),
-				val & 0x00000006, 0x00000006);
+	if (PHY_A(serdes_regs)) {
+		tmp  = (readl(serdes_regs + 0x0ec) >> 24) & 0x0ff;
+		tmp |= ((readl(serdes_regs + 0x0fc) >> 16) & 0x00f00);
+	} else
+		tmp  = (readl(serdes_regs + 0x0f8) >> 16) & 0x0fff;
+
+	return tmp;
+}
+
+static void keystone_serdes_write_tbus_addr(void __iomem *serdes_regs,
+					int select, int ofs)
+{
+	if (PHY_A(serdes_regs)) {
+		reg_rmw(serdes_regs + 0x0008,
+				((select << 5) + ofs) << 24,
+				~0x00ffffff);
+		return;
 	}
-	/* wait... 2uS */
-	udelay(20);
+
+	/* For 2 lane Phy-B, lane0 is actually lane1 */
+	switch (select) {
+	case 1:
+		select = 2;
+		break;
+	case 2:
+		select = 3;
+		break;
+	default:
+		return;
+	}
+
+	reg_rmw(serdes_regs + 0x00fc,
+			((select << 8) + ofs) << 16,
+			~0xf800ffff);
 }
 
-static void keystone_xge_serdes_start(void)
+u32 keystone_serdes_read_select_tbus(void __iomem *serdes_regs,
+					int select, int ofs)
 {
-	void __iomem *serdes_regs, *xge_sw_regs;
-	u32 i;
+	/* Set tbus address */
+	keystone_serdes_write_tbus_addr(serdes_regs, select, ofs);
+	/* Get TBUS Value */
+	return keystone_serdes_read_tbus_val(serdes_regs);
+}
 
-	serdes_regs = ioremap(XGE_SERDES_BASE, XGE_SERDES_SIZE);
-	xge_sw_regs = ioremap(XGE_SW_BASE, XGE_SW_SIZE);
+void keystone_serdes_reset_cdr(void __iomem *serdes_regs,
+			void __iomem *sig_detect_reg, int lane)
+{
+	u32 tmp, dlpf, tbus;
 
-	keystone_xge_serdes_pll_enable(serdes_regs, 0);
+	/*Get the DLPF values */
+	tmp = keystone_serdes_read_select_tbus(
+			serdes_regs, lane + 1, 5);
+
+	dlpf = tmp >> 2;
+
+	if (dlpf < 400 || dlpf > 700) {
+		reg_rmw(sig_detect_reg, VAL_SH(2, 1), MASK_WID_SH(2, 1));
+		mdelay(1);
+		reg_rmw(sig_detect_reg, VAL_SH(0, 1), MASK_WID_SH(2, 1));
+	} else {
+		tbus = keystone_serdes_read_select_tbus(serdes_regs,
+							lane + 1, 0xe);
+
+		pr_debug("XGE: CDR centered, DLPF: %4d,%d,%d.\n",
+			tmp >> 2, tmp & 3, (tbus >> 2) & 3);
+	}
+}
+
+/* Call every 100 ms */
+int keystone_xge_check_link_status(void __iomem *serdes_regs,
+		      void __iomem *sw_regs,
+		      u32 lanes,
+		      u32 *current_state,
+		      u32 *lane_down)
+{
+	void __iomem *pcsr_base = sw_regs + 0x0600;
+	void __iomem *sig_detect_reg;
+	u32 pcsr_rx_stat, blk_lock, blk_errs;
+	int loss, i, status = 1;
+
+	for (i = 0; i < lanes; i++) {
+		/* Get the Loss bit */
+		loss = readl(serdes_regs + 0x1fc0 + 0x20 + (i * 0x04)) & 0x1;
+
+		/* Get Block Errors and Block Lock bits */
+		pcsr_rx_stat = readl(pcsr_base + 0x0c + (i * 0x80));
+		blk_lock = (pcsr_rx_stat >> 30) & 0x1;
+		blk_errs = (pcsr_rx_stat >> 16) & 0x0ff;
+
+		/* Get Signal Detect Overlay Address */
+		sig_detect_reg = serdes_regs + (i * 0x200) + 0x200 + 0x04;
+
+		/* If Block errors maxed out, attempt recovery! */
+		if (blk_errs == 0x0ff)
+			blk_lock = 0;
+
+		switch (current_state[i]) {
+		case 0:
+			/* if good link lock the signal detect ON! */
+			if (!loss && blk_lock) {
+				pr_debug("XGE PCSR Linked Lane: %d\n", i);
+				reg_rmw(sig_detect_reg, VAL_SH(3, 1),
+							MASK_WID_SH(2, 1));
+				current_state[i] = 1;
+			} else {
+				/* if no lock, then reset CDR */
+				if (!blk_lock) {
+					pr_debug("XGE PCSR Recover Lane: %d\n",
+						i);
+
+					keystone_serdes_reset_cdr(serdes_regs,
+							sig_detect_reg, i);
+				}
+			}
+			break;
+		case 1:
+			if (!blk_lock) {
+				/* Link Lost? */
+				lane_down[i] = 1;
+				current_state[i] = 2;
+			}
+			break;
+		case 2:
+			if (blk_lock)
+				/* Nope just noise */
+				current_state[i] = 1;
+			else {
+				/* Lost the block lock, reset CDR if it is
+				   not centered and go back to sync state
+				 */
+				keystone_serdes_reset_cdr(serdes_regs,
+						sig_detect_reg, i);
+
+				current_state[i] = 0;
+			}
+		default:
+			pr_info("XGE: unknown current_state[%d] %d\n",
+				i, current_state[i]);
+			break;
+		}
+
+		if (blk_errs > 0) {
+			/* Reset the Error counts! */
+			reg_rmw(pcsr_base + 0x08 + (i * 0x80),
+					VAL_SH(0x19, 0), MASK_WID_SH(8, 0));
+
+			reg_rmw(pcsr_base + 0x08 + (i * 0x80),
+					VAL_SH(0x00, 0), MASK_WID_SH(8, 0));
+		}
+
+		status &= (current_state[i] == 1);
+	}
+
+	return status;
+}
+
+static int keystone_xge_serdes_check_lane(void __iomem *serdes_regs,
+					  void __iomem *sw_regs)
+{
+	u32 current_state[2] = {0, 0};
+	int retries = 0, link_up;
+	u32 lane_down[2];
+
+	do {
+		lane_down[0] = 0;
+		lane_down[1] = 0;
+
+		link_up = keystone_xge_check_link_status(serdes_regs, sw_regs,
+					   2, current_state, lane_down);
+
+		/* if we did not get link up then wait 100ms
+		   before calling it again
+		 */
+		if (link_up)
+			break;
+
+		if (lane_down[0])
+			pr_debug("XGE: detected link down on lane 0\n");
+
+		if (lane_down[1])
+			pr_debug("XGE: detected link down on lane 1\n");
+
+		if (++retries > 1) {
+			pr_debug("XGE: timeout waiting for serdes link up\n");
+			return -ETIMEDOUT;
+		}
+		mdelay(100);
+	} while (!link_up);
+
+	pr_debug("XGE: PCSR link is up\n");
+	return 0;
+}
+
+static inline void keystone_xge_serdes_setup_cm_c1_c2(void __iomem *serdes_regs,
+				int lane, int cm, int c1, int c2)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(cfg_cm_c1_c2); i++) {
+		reg_rmw(serdes_regs +
+				cfg_cm_c1_c2[i].ofs + (0x200 * lane),
+			cfg_cm_c1_c2[i].val,
+			cfg_cm_c1_c2[i].mask);
+	}
+}
+
+static inline void keystone_xge_reset_serdes(void __iomem *serdes_regs)
+{
+	/* Toggle the POR_EN bit in CONFIG.CPU_CTRL */
+	/* enable POR_EN bit */
+	reg_rmw(serdes_regs + PCSR_CPU_CTRL_OFFSET, POR_EN, POR_EN_MASK);
+	udelay(10);
+
+	/* disable POR_EN bit */
+	reg_rmw(serdes_regs + PCSR_CPU_CTRL_OFFSET, 0, POR_EN_MASK);
+	udelay(10);
+}
+
+static int keystone_xge_serdes_config(void __iomem *serdes_regs,
+				      void __iomem *sw_regs)
+{
+	u32 ret, i;
+
+	keystone_xge_serdes_pll_disable(serdes_regs);
 
 	keystone_xge_serdes_init(serdes_regs);
 
@@ -272,32 +507,65 @@ static void keystone_xge_serdes_start(void)
 
 	keystone_xge_serdes_com_enable(serdes_regs);
 
+	/* This is EVM + RTM-BOC specific */
+	for (i = 0; i < 2; i++)
+		keystone_xge_serdes_setup_cm_c1_c2(serdes_regs, i, 0, 0, 5);
+
+	keystone_xge_serdes_pll_enable(serdes_regs);
+
 	for (i = 0; i < 2; i++)
 		keystone_xge_serdes_lane_enable(serdes_regs, i);
 
-	keystone_xge_serdes_pll_enable(serdes_regs, 1);
-
 	/* SB PLL Status Poll */
-	keystone_xge_wait_pll_locked(xge_sw_regs);
+	ret = keystone_xge_wait_pll_locked(sw_regs);
+	if (ret)
+		return ret;
 
-	keystone_xge_serdes_enable_xgmii_port(xge_sw_regs);
+	keystone_xge_serdes_enable_xgmii_port(sw_regs);
 
-	keystone_xge_serdes_fixup(serdes_regs);
+	keystone_xge_serdes_check_lane(serdes_regs, sw_regs);
+
+	return ret;
+}
+
+static int keystone_xge_serdes_start(void)
+{
+	void __iomem *serdes_regs, *xge_sw_regs;
+	u32 val;
+	int ret;
+
+	serdes_regs = ioremap(XGE_SERDES_BASE, XGE_SERDES_SIZE);
+	xge_sw_regs = ioremap(XGE_SW_BASE, XGE_SW_SIZE);
+
+	/* read COMLANE bits 4:0 */
+	val = __raw_readl(serdes_regs + 0xa00);
+	if (val & 0x1f) {
+		pr_debug("XGE: serdes already in operation - reset\n");
+		keystone_xge_reset_serdes(serdes_regs);
+	}
+
+	ret = keystone_xge_serdes_config(serdes_regs, xge_sw_regs);
 
 	iounmap(serdes_regs);
 	iounmap(xge_sw_regs);
+	return ret;
 }
 
 static int keystone_xge_serdes_configured;  /* FIXME */
 
-void xge_serdes_init_156p25Mhz(void)
+int xge_serdes_init_156p25Mhz(void)
 {
+	int ret;
+
 	/* Serdes should only be configured once */
 	if (keystone_xge_serdes_configured)
-		return;
+		return 0;
 
-	keystone_xge_serdes_start();
-	keystone_xge_serdes_configured = 1;
+	ret = keystone_xge_serdes_start();
+	if (!ret)
+		keystone_xge_serdes_configured = 1;
+
+	return ret;
 }
 
 int keystone_pcsr_config(void __iomem *pcsr_ofs, int port, u32 interface)
