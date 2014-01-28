@@ -58,6 +58,21 @@
 #define ALE_TBL_ENTRY_SHOW_LEN		160
 #define ALE_RAW_TBL_ENTRY_SHOW_LEN	32
 
+/* These bit lengths depend on the version of CPSW */
+#ifdef CONFIG_ARCH_KEYSTONE
+#define ALE_ENTRY_PORT_MASK_BITS	5
+#define ALE_ENTRY_PORT_NUM_BITS		3
+#define ALE_ENTRY_VLAN_FILED_BITS	5
+#define ALE_PORTCTL_BCAST_BITS		8
+#define ALE_UNKNOWN_VLAN_FIELD_BITS	5
+#else
+#define ALE_ENTRY_PORT_MASK_BITS	3
+#define ALE_ENTRY_PORT_NUM_BITS		2
+#define ALE_ENTRY_VLAN_FILED_BITS	3
+#define ALE_PORTCTL_BCAST_BITS		8
+#define ALE_UNKNOWN_VLAN_FIELD_BITS	6
+#endif
+
 static inline int cpsw_ale_get_field(u32 *ale_entry, u32 start, u32 bits)
 {
 	int idx;
@@ -94,16 +109,16 @@ static inline void cpsw_ale_set_##name(u32 *ale_entry, u32 value)	\
 DEFINE_ALE_FIELD(entry_type,		60,	2)
 DEFINE_ALE_FIELD(vlan_id,		48,	12)
 DEFINE_ALE_FIELD(mcast_state,		62,	2)
-DEFINE_ALE_FIELD(port_mask,		66,     3)
+DEFINE_ALE_FIELD(port_mask,		66,     ALE_ENTRY_PORT_MASK_BITS)
 DEFINE_ALE_FIELD(super,			65,	1)
 DEFINE_ALE_FIELD(ucast_type,		62,     2)
-DEFINE_ALE_FIELD(port_num,		66,     2)
+DEFINE_ALE_FIELD(port_num,		66,     ALE_ENTRY_PORT_NUM_BITS)
 DEFINE_ALE_FIELD(blocked,		65,     1)
 DEFINE_ALE_FIELD(secure,		64,     1)
-DEFINE_ALE_FIELD(vlan_untag_force,	24,	3)
-DEFINE_ALE_FIELD(vlan_reg_mcast,	16,	3)
-DEFINE_ALE_FIELD(vlan_unreg_mcast,	8,	3)
-DEFINE_ALE_FIELD(vlan_member_list,	0,	3)
+DEFINE_ALE_FIELD(vlan_untag_force,	24,	ALE_ENTRY_VLAN_FILED_BITS)
+DEFINE_ALE_FIELD(vlan_reg_mcast,	16,	ALE_ENTRY_VLAN_FILED_BITS)
+DEFINE_ALE_FIELD(vlan_unreg_mcast,	8,	ALE_ENTRY_VLAN_FILED_BITS)
+DEFINE_ALE_FIELD(vlan_member_list,	0,	ALE_ENTRY_VLAN_FILED_BITS)
 DEFINE_ALE_FIELD(mcast,			40,	1)
 
 /* The MAC address field in the ALE entry cannot be macroized as above */
@@ -601,7 +616,7 @@ static const struct ale_control_info ale_controls[ALE_NUM_CONTROLS] = {
 		.port_offset	= 4,
 		.shift		= 16,
 		.port_shift	= 0,
-		.bits		= 8,
+		.bits		= ALE_PORTCTL_BCAST_BITS,
 	},
 	[ALE_PORT_BCAST_LIMIT]	= {
 		.name		= "bcast_limit",
@@ -609,7 +624,7 @@ static const struct ale_control_info ale_controls[ALE_NUM_CONTROLS] = {
 		.port_offset	= 4,
 		.shift		= 24,
 		.port_shift	= 0,
-		.bits		= 8,
+		.bits		= ALE_PORTCTL_BCAST_BITS,
 	},
 	[ALE_PORT_UNKNOWN_VLAN_MEMBER] = {
 		.name		= "unknown_vlan_member",
@@ -617,7 +632,7 @@ static const struct ale_control_info ale_controls[ALE_NUM_CONTROLS] = {
 		.port_offset	= 0,
 		.shift		= 0,
 		.port_shift	= 0,
-		.bits		= 6,
+		.bits		= ALE_UNKNOWN_VLAN_FIELD_BITS,
 	},
 	[ALE_PORT_UNKNOWN_MCAST_FLOOD] = {
 		.name		= "unknown_mcast_flood",
@@ -625,7 +640,7 @@ static const struct ale_control_info ale_controls[ALE_NUM_CONTROLS] = {
 		.port_offset	= 0,
 		.shift		= 8,
 		.port_shift	= 0,
-		.bits		= 6,
+		.bits		= ALE_UNKNOWN_VLAN_FIELD_BITS,
 	},
 	[ALE_PORT_UNKNOWN_REG_MCAST_FLOOD] = {
 		.name		= "unknown_reg_flood",
@@ -633,7 +648,7 @@ static const struct ale_control_info ale_controls[ALE_NUM_CONTROLS] = {
 		.port_offset	= 0,
 		.shift		= 16,
 		.port_shift	= 0,
-		.bits		= 6,
+		.bits		= ALE_UNKNOWN_VLAN_FIELD_BITS,
 	},
 	[ALE_PORT_UNTAGGED_EGRESS] = {
 		.name		= "unknown_force_untag_egress",
@@ -641,7 +656,7 @@ static const struct ale_control_info ale_controls[ALE_NUM_CONTROLS] = {
 		.port_offset	= 0,
 		.shift		= 24,
 		.port_shift	= 0,
-		.bits		= 6,
+		.bits		= ALE_UNKNOWN_VLAN_FIELD_BITS,
 	},
 };
 
@@ -813,6 +828,7 @@ static ssize_t cpsw_ale_control_show(struct device *dev,
 	const struct ale_control_info *info;
 	struct cpsw_ale *ale = control_attr_to_ale(attr);
 	u32 reg;
+	const char *fmt = "%s=%d\n";
 
 	for (i = 0, info = ale_controls; i < ALE_NUM_CONTROLS; i++, info++) {
 		if (i == ALE_VERSION) {
@@ -828,8 +844,12 @@ static ssize_t cpsw_ale_control_show(struct device *dev,
 
 		/* global controls */
 		if (info->port_shift == 0 &&  info->port_offset == 0) {
+			if ((i >= ALE_PORT_UNKNOWN_VLAN_MEMBER) &&
+			    (i <= ALE_PORT_UNTAGGED_EGRESS))
+				fmt = "%s=0x%x\n";
+
 			len += snprintf(buf + len, SZ_4K - len,
-					"%s=%d\n", info->name,
+					fmt, info->name,
 					cpsw_ale_control_get(ale, 0, i));
 			continue;
 		}

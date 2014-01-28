@@ -39,7 +39,8 @@
 #define SGMII_REG_STATUS_AUTONEG	BIT(2)
 #define SGMII_REG_CONTROL_AUTONEG	BIT(0)
 
-#define SGMII_OFFSET(x)	((x <= 1)? (x * 0x100): ((x * 0x100) + 0x100))
+#define SGMII23_OFFSET(x)	((x - 2) * 0x100)
+#define SGMII_OFFSET(x)		((x <= 1) ? (x * 0x100) : (SGMII23_OFFSET(x)))
 /*
  * SGMII registers
  */
@@ -92,6 +93,7 @@ int serdes_init(void)
 	return 0;
 }
 
+/* port is 0 based */
 int keystone_sgmii_reset(void __iomem *sgmii_ofs, int port)
 {
 	/* Soft reset */
@@ -101,6 +103,7 @@ int keystone_sgmii_reset(void __iomem *sgmii_ofs, int port)
 	return 0;
 }
 
+/* assumes ports <= 2 */
 int keystone_sgmii_link_status(void __iomem *sgmii_ofs, int ports)
 {
 	u32 status = 0, link = 0;
