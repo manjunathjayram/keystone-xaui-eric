@@ -2198,6 +2198,8 @@ static void cpsw_slave_open(struct cpsw_slave *slave,
 static void cpsw_init_host_port(struct cpsw_priv *priv,
 				struct cpsw_intf *cpsw_intf)
 {
+	int bypass_en = 1;
+
 	/* Max length register */
 	__raw_writel(MAX_SIZE_STREAM_BUFFER,
 		     &priv->host_port_regs->rx_maxlen);
@@ -2205,8 +2207,10 @@ static void cpsw_init_host_port(struct cpsw_priv *priv,
 	if (priv->ale_refcnt == 1)
 		cpsw_ale_start(priv->ale);
 
-	if (priv->multi_if)
-		cpsw_ale_control_set(priv->ale, 0, ALE_BYPASS, 1);
+	if (!priv->multi_if)
+		bypass_en = 0;
+
+	cpsw_ale_control_set(priv->ale, 0, ALE_BYPASS, bypass_en);
 
 	cpsw_ale_control_set(priv->ale, 0, ALE_NO_PORT_VLAN, 1);
 

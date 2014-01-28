@@ -1709,6 +1709,8 @@ static void cpsw_slave_open(struct cpswx_slave *slave,
 static void cpsw_init_host_port(struct cpswx_priv *priv,
 				struct cpswx_intf *cpsw_intf)
 {
+	int bypass_en = 1;
+
 	/* Host Tx Pri */
 	__raw_writel(HOST_TX_PRI_MAP_DEFAULT,
 		     &priv->host_port_regs->tx_pri_map);
@@ -1720,8 +1722,10 @@ static void cpsw_init_host_port(struct cpswx_priv *priv,
 	if (priv->ale_refcnt == 1)
 		cpsw_ale_start(priv->ale);
 
-	if (priv->multi_if)
-		cpsw_ale_control_set(priv->ale, 0, ALE_BYPASS, 1);
+	if (!priv->multi_if)
+		bypass_en = 0;
+
+	cpsw_ale_control_set(priv->ale, 0, ALE_BYPASS, bypass_en);
 
 	cpsw_ale_control_set(priv->ale, 0, ALE_NO_PORT_VLAN, 1);
 
