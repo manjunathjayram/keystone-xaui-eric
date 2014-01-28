@@ -896,6 +896,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		desc->callback = netcp_rx_complete2nd;
 	}
 
+	wmb();
 	return desc;
 }
 
@@ -1156,6 +1157,8 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 
 	desc->callback_param = p_info;
 	desc->callback = netcp_tx_complete;
+	wmb();
+
 	cookie = dmaengine_submit(desc);
 	if (dma_submit_error(cookie)) {
 		dev_warn(netcp->dev, "failed to submit packet for dma: %d\n",
