@@ -695,8 +695,6 @@ static void netcp_rx_complete(void *data)
 	/* Update data, tail, and len */
 	skb_reserve(skb, NET_IP_ALIGN + NET_SKB_PAD);
 	len = sg_dma_len(&p_info->sg[2]);
-	if (sg_is_last(&p_info->sg[2]))
-		len -= 4;
 	__skb_put(skb, len);
 
 	/* Fill in the page fragment list from sg[3] and later */
@@ -706,10 +704,11 @@ static void netcp_rx_complete(void *data)
 		dma_unmap_page(&netcp->pdev->dev, sg_dma_address(sg),
 				PAGE_SIZE, DMA_FROM_DEVICE);
 		len = sg_dma_len(sg);
-		if (sg_is_last(sg))
-			len -= 4;
 		skb_add_rx_frag(skb, frags, sg_page(sg), sg->offset, len, PAGE_SIZE);
 	}
+
+	/* Remove the FCS from the packet (last 4 bytes) */
+	__pskb_trim(skb, skb->len - ETH_FCS_LEN);
 
 	if (unlikely(netcp->rx_state == RX_STATE_TEARDOWN)) {
 		dev_dbg(netcp->dev,
