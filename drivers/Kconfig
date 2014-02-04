@@ -160,6 +160,4 @@ source "drivers/irqchip/Kconfig"
 
 source "drivers/ipack/Kconfig"
 
-source "drivers/rapidio/Kconfig"
-
 endmenu
