@@ -1,11 +1,15 @@
 /*
- * RapidIO channel management on mports
+ * RapidIO mport character device
  *
  * Copyright 2013 Prodrive B.V.
  * Jerry Jacobs <jerry.jacobs@prodrive.nl>
  *
  * Original version was modified by Alex Bounine <alexandre.bounine@idt.com>
  * for testing of RIO_CM RapidIO Messaging Chanel Management driver.
+ * 
+ * Copyright (C) 2014 Texas Instruments Incorporated
+ * Aurelien Jacquiot <a-jacquiot@ti.com>
+ * - Introduced DirectI/O, doorbell and basic maintenance operations
  *
  * This program is free software; you can redistribute  it and/or modify it
  * under  the terms of  the GNU General  Public License as published by the
@@ -44,26 +48,26 @@ MODULE_LICENSE("GPL");
 
 #define DRV_PREFIX		"RIO " DRV_NAME ": "
 #define DEV_NAME		"rio_mport"
-#define CHANNEL_MINORS	256
+#define MPORT_MINORS	        256
 
 /*
- * An channel_dev represents a structure on mport
+ * An mport_dev represents a structure on mport
  * @node	List node to maintain list of registered mports
  * @cdev	Character device
  * @dev		Associated device object
  * @mport	Associated master port
  */
-struct channel_dev {
+struct mport_dev {
 	struct list_head node;
 	struct cdev	cdev;
 	struct device	*dev;
 	struct rio_mport *mport;
 };
 
-static LIST_HEAD(channel_devs);
-static DEFINE_MUTEX(channel_devs_lock);
+static LIST_HEAD(mport_devs);
+static DEFINE_MUTEX(mport_devs_lock);
 #if (0) /* used by commented out portion of poll function : FIXME */
-static DECLARE_WAIT_QUEUE_HEAD(channel_cdev_wait);
+static DECLARE_WAIT_QUEUE_HEAD(mport_cdev_wait);
 #endif
 
 static struct class *dev_class;
@@ -76,8 +80,7 @@ static dev_t dev_number;
  * @data:	Driver private data
  * @size:	List size
  */
-static int channel_ep_get_list_size(struct channel_dev *data,
-				void __user *size)
+static int channel_ep_get_list_size(struct mport_dev *data, void __user *size)
 {
 	u32 count = 0;
 	int err;
@@ -97,8 +100,7 @@ static int channel_ep_get_list_size(struct channel_dev *data,
  * @data:	Driver private data
  * @arg:	List of endpoint destination IDs in the network
  */
-static int channel_ep_get_list(struct channel_dev *data,
-		void __user *arg)
+static int channel_ep_get_list(struct mport_dev *data, void __user *arg)
 {
 	int ret = 0;
 	uint32_t entries = 0;
@@ -127,7 +129,7 @@ out:
  * @data:	Driver private data
  * @arg:	Channel to close
  */
-static int channel_close(struct channel_dev *data, void __user *arg)
+static int channel_close(struct mport_dev *data, void __user *arg)
 {
 	u16 __user *p = arg;
 	u16 ch_num;
@@ -142,7 +144,7 @@ static int channel_close(struct channel_dev *data, void __user *arg)
  * @data:	Driver private data
  * @arg:	Channel information
  */
-static int channel_create(struct channel_dev *data, void __user *arg)
+static int channel_create(struct mport_dev *data, void __user *arg)
 {
 	u16 __user *p = arg;
 	u16 ch_num;
@@ -162,7 +164,7 @@ static int channel_create(struct channel_dev *data, void __user *arg)
  * @data:	Driver private data
  * @arg:	Channel number
  */
-static int channel_bind(struct channel_dev *data, void __user *arg)
+static int channel_bind(struct mport_dev *data, void __user *arg)
 {
 	u16 __user *p = arg;
 	u16 ch_num;
@@ -178,7 +180,7 @@ static int channel_bind(struct channel_dev *data, void __user *arg)
  * @data:	Driver private data
  * @arg:	Channel number
  */
-static int channel_listen(struct channel_dev *data, void __user *arg)
+static int channel_listen(struct mport_dev *data, void __user *arg)
 {
 	u16 __user *p = arg;
 	u16 ch_num;
@@ -194,7 +196,7 @@ static int channel_listen(struct channel_dev *data, void __user *arg)
  * @data:	Driver private data
  * @arg:	Channel number
  */
-static int channel_accept(struct channel_dev *data, void __user *arg)
+static int channel_accept(struct mport_dev *data, void __user *arg)
 {
 	u16 __user *p = arg;
 	u16 ch_num;
@@ -215,7 +217,7 @@ static int channel_accept(struct channel_dev *data, void __user *arg)
  * @data:	Driver private data
  * @arg:	Channel information
  */
-static int channel_connect(struct channel_dev *data, void __user *arg)
+static int channel_connect(struct mport_dev *data, void __user *arg)
 {
 	int ret = 0;
 	struct rio_mport_channel chan;
@@ -237,7 +239,7 @@ err:
  * @data:	Driver private data
  * @arg:	Outbound message information
  */
-static int channel_msg_send(struct channel_dev *data, void __user *arg)
+static int channel_msg_send(struct mport_dev *data, void __user *arg)
 {
 	struct rio_mport_ch_msg msg;
 	void *buf;
@@ -269,7 +271,7 @@ out:
  * @data:	Driver private data
  * @arg:	Inbound message information
  */
-static int channel_msg_rcv(struct channel_dev *data, void __user *arg)
+static int channel_msg_rcv(struct mport_dev *data, void __user *arg)
 {
 	struct rio_mport_ch_msg msg;
 	void *buf;
@@ -298,16 +300,286 @@ out:
 }
 
 /*
+ * dbell_send() - Send a doorbell
+ * @data:	Driver private data
+ * @arg:	Dbell information
+ */
+static int dbell_send(struct mport_dev *data, void __user *arg)
+{
+	struct rio_mport_dbell dbell;
+	int ret;
+
+	if (copy_from_user(&dbell, arg, sizeof(struct rio_mport_dbell)))
+		return -EFAULT;
+
+	if (!data->mport->ops->dsend)
+		return -EPROTONOSUPPORT;
+
+	pr_debug(DRV_PREFIX "Send doorbell %d to dest Id %d\n", dbell.id, dbell.num);
+
+	ret = data->mport->ops->dsend(data->mport,
+				      data->mport->id,
+				      dbell.id,
+				      dbell.num);
+
+	return ret;
+}
+
+/*
+ * dio_transfer() - Perform a DirectI/O transfer
+ * @data:	Driver private data
+ * @arg:	DirectI/O transfer information
+ */
+static int dio_transfer(struct mport_dev *data, void __user *arg)
+{
+	struct rio_mport_dio_transfer dio_transfer;
+	int ret;
+	void *vaddr;
+
+	if (copy_from_user(&dio_transfer, arg, sizeof(struct rio_mport_dio_transfer)))
+		return -EFAULT;
+
+	if (!data->mport->ops->transfer)
+		return -EPROTONOSUPPORT;
+
+	if (dio_transfer.length >= RIO_MAX_DIO_CHUNK_SIZE)
+		return -EINVAL;
+
+	pr_debug(DRV_PREFIX "Perform DirectI/O %d to dest Id %d\n",
+		 dio_transfer.id, dio_transfer.mode);
+
+	/*
+	 * We use a copy there, zero-copy will be implemented when moving
+	 * to DMA engine interface.
+	 */
+	vaddr = kmalloc(dio_transfer.length, GFP_KERNEL);
+	if (!vaddr)
+		return -ENOMEM;
+
+	if ((dio_transfer.mode ==  RIO_DIO_MODE_WRITER)
+	    || (dio_transfer.mode ==  RIO_DIO_MODE_WRITE)
+	    || (dio_transfer.mode ==  RIO_DIO_MODE_SWRITE)) {
+		if (copy_from_user(vaddr,
+				   dio_transfer.src_addr,
+				   dio_transfer.length)) {
+			ret = -EFAULT;
+			goto end;
+		}
+	}
+
+	ret = data->mport->ops->transfer(data->mport,
+					 data->mport->id,
+					 dio_transfer.id,
+					 (u32) vaddr,
+					 (u32) dio_transfer.tgt_addr,
+					 (int) dio_transfer.length,
+					 (int) dio_transfer.mode);
+	if (ret < 0)
+		goto end;
+
+	if (dio_transfer.mode ==  RIO_DIO_MODE_READ) {
+		if (copy_to_user(dio_transfer.src_addr,
+				 vaddr,
+				 dio_transfer.length)) {
+			ret = -EFAULT;
+			goto end;
+		}
+	}
+end:
+	kfree(vaddr);
+	return ret;
+}
+
+/*
+ * maint_lconfig_read() - Perform a local config space read transaction
+ * @data:	Driver private data
+ * @arg:	Maintenance transaction information
+ */
+static int maint_lconfig_read(struct mport_dev *data, void __user *arg)
+{
+	struct rio_mport_maint_transfer maint_transfer;
+	int ret;
+	void *buf;
+
+	if (copy_from_user(&maint_transfer, arg, sizeof(struct rio_mport_maint_transfer)))
+		return -EFAULT;
+
+	if (!data->mport->ops->lcread)
+		return -EPROTONOSUPPORT;
+
+	pr_debug(DRV_PREFIX "Perform a local maintenance read at offset %d\n",
+		 maint_transfer.offset);
+
+	buf = kmalloc(maint_transfer.length, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	ret = data->mport->ops->lcread(data->mport,
+				       data->mport->id,
+				       maint_transfer.offset,
+				       maint_transfer.length,
+				       (u32 *) buf);
+
+	if (copy_to_user(maint_transfer.val, buf, maint_transfer.length))
+		return -EFAULT;
+
+	return ret;
+}
+
+/*
+ * maint_lconfig_write() - Perform a local config space write transaction
+ * @data:	Driver private data
+ * @arg:	Maintenance transaction information
+ */
+static int maint_lconfig_write(struct mport_dev *data, void __user *arg)
+{
+	struct rio_mport_maint_transfer maint_transfer;
+	int ret;
+	u32 val;
+
+	if (copy_from_user(&maint_transfer, arg, sizeof(struct rio_mport_maint_transfer)))
+		return -EFAULT;
+
+	if (!data->mport->ops->lcwrite)
+		return -EPROTONOSUPPORT;
+
+	pr_debug(DRV_PREFIX "Perform a local maintenance read at offset %d\n",
+		 maint_transfer.offset);
+
+	if (copy_from_user(&val, maint_transfer.val, sizeof(data)))
+		return -EFAULT;
+
+	ret = data->mport->ops->lcwrite(data->mport,
+					data->mport->id,
+					maint_transfer.offset,
+					maint_transfer.length,
+					val);
+
+	return ret;
+}
+
+/*
+ * maint_config_read() - Perform a remote config space read transaction
+ * @data:	Driver private data
+ * @arg:	Maintenance transaction information
+ */
+static int maint_config_read(struct mport_dev *data, void __user *arg)
+{
+	struct rio_mport_maint_transfer maint_transfer;
+	int ret;
+	void *buf;
+
+	if (copy_from_user(&maint_transfer, arg, sizeof(struct rio_mport_maint_transfer)))
+		return -EFAULT;
+
+	if (!data->mport->ops->cread)
+		return -EPROTONOSUPPORT;
+
+	pr_debug(DRV_PREFIX "Perform a remote maintenance read at offset %d\n",
+		 maint_transfer.offset);
+
+	buf = kmalloc(maint_transfer.length, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	ret = data->mport->ops->cread(data->mport,
+				      data->mport->id,
+				      maint_transfer.id,
+				      maint_transfer.hopcount,
+				      maint_transfer.offset,
+				      maint_transfer.length,
+				      (u32 *) buf);
+
+	if (copy_to_user(maint_transfer.val, buf, maint_transfer.length))
+		return -EFAULT;
+
+	return ret;
+}
+
+/*
+ * maint_config_write() - Perform a remote config space write transaction
+ * @data:	Driver private data
+ * @arg:	Maintenance transaction information
+ */
+static int maint_config_write(struct mport_dev *data, void __user *arg)
+{
+	struct rio_mport_maint_transfer maint_transfer;
+	int ret;
+	u32 val;
+
+	if (copy_from_user(&maint_transfer, arg, sizeof(struct rio_mport_maint_transfer)))
+		return -EFAULT;
+
+	if (!data->mport->ops->cwrite)
+		return -EPROTONOSUPPORT;
+
+	pr_debug(DRV_PREFIX "Perform a remote maintenance read at offset %d\n",
+		 maint_transfer.offset);
+
+	if (copy_from_user(&val, maint_transfer.val, sizeof(data)))
+		return -EFAULT;
+
+	ret = data->mport->ops->cwrite(data->mport,
+				       data->mport->id,
+				       maint_transfer.id,
+				       maint_transfer.hopcount,
+				       maint_transfer.offset,
+				       maint_transfer.length,
+				       val);
+
+	return ret;
+}
+
+/*
+ * maint_hdid_set() - Set the host Device ID
+ * @data:	Driver private data
+ * @arg:	Device Id
+ */
+static int maint_hdid_set(struct mport_dev *data, void __user *arg)
+{
+	uint16_t hdid;
+
+	if (copy_from_user(&hdid, arg, sizeof(uint16_t)))
+		return -EFAULT;
+
+	data->mport->host_deviceid = hdid;
+	rio_local_set_device_id(data->mport, hdid);
+	
+	pr_debug(DRV_PREFIX "Set host device Id to %d\n", hdid);
+
+	return 0;
+}
+
+/*
+ * maint_comptag_set() - Set the host Component Tag
+ * @data:	Driver private data
+ * @arg:	Component Tag
+ */
+static int maint_comptag_set(struct mport_dev *data, void __user *arg)
+{
+	uint32_t comptag;
+
+	if (copy_from_user(&comptag, arg, sizeof(uint32_t)))
+		return -EFAULT;
+
+	rio_local_write_config_32(data->mport, RIO_COMPONENT_TAG_CSR, comptag);
+
+	pr_debug(DRV_PREFIX "Set host Component Tag to %d\n", comptag);
+
+	return 0;
+}
+
+/*
  * Mport cdev management
  */
 
 /**
- * channel_cdev_open() - Open character device (mport)
+ * mport_cdev_open() - Open character device (mport)
  */
-static int channel_cdev_open(struct inode *inode, struct file *filp)
+static int mport_cdev_open(struct inode *inode, struct file *filp)
 {
 	int minor = iminor(inode);
-	struct channel_dev *chdev = NULL;
+	struct mport_dev *chdev = NULL;
 
 	/* Test for valid device */
 	if (minor >= dev_count) {
@@ -315,28 +587,28 @@ static int channel_cdev_open(struct inode *inode, struct file *filp)
 		return -EINVAL;
 	}
 
-	chdev = container_of(inode->i_cdev, struct channel_dev, cdev);
+	chdev = container_of(inode->i_cdev, struct mport_dev, cdev);
 	filp->private_data = chdev;
 
 	return 0;
 }
 
 /**
- * channel_cdev_release() - Release character device
+ * mport_cdev_release() - Release character device
  */
-static int channel_cdev_release(struct inode *inode, struct file *filp)
+static int mport_cdev_release(struct inode *inode, struct file *filp)
 {
 	return 0;
 }
 
 /**
- * channel_cdev_ioctl() - IOCTLs for character device
+ * mport_cdev_ioctl() - IOCTLs for character device
  */
-static long channel_cdev_ioctl(struct file *filp,
+static long mport_cdev_ioctl(struct file *filp,
 		unsigned int cmd, unsigned long arg)
 {
 	int err = 0;
-	struct channel_dev *data = filp->private_data;
+	struct mport_dev *data = filp->private_data;
 
 	switch (cmd) {
 	case RIO_MPORT_CHANNEL_EP_GET_LIST_SIZE:
@@ -369,6 +641,30 @@ static long channel_cdev_ioctl(struct file *filp,
 	case RIO_MPORT_CHANNEL_RECEIVE:
 		err = channel_msg_rcv(data, (void __user *)arg);
 		break;
+	case RIO_MPORT_DBELL_SEND:
+		err = dbell_send(data, (void __user *)arg);
+		break;
+	case RIO_MPORT_DIO_TRANSFER:
+		err = dio_transfer(data, (void __user *)arg);
+		break;
+	case RIO_MPORT_MAINT_LOCAL_CONFIG_READ:
+		err = maint_lconfig_read(data, (void __user *)arg);
+		break;
+	case RIO_MPORT_MAINT_LOCAL_CONFIG_WRITE:
+		err = maint_lconfig_write(data, (void __user *)arg);
+		break;
+	case RIO_MPORT_MAINT_CONFIG_READ:
+		err = maint_config_read(data, (void __user *)arg);
+		break;
+	case RIO_MPORT_MAINT_CONFIG_WRITE:
+		err = maint_config_write(data, (void __user *)arg);
+		break;
+	case RIO_MPORT_MAINT_HDID_SET:
+		err = maint_hdid_set(data, (void __user *)arg);
+		break;
+	case RIO_MPORT_MAINT_COMPTAG_SET:
+		err = maint_comptag_set(data, (void __user *)arg);
+		break;
 	default:
 		err = -EINVAL;
 		break;
@@ -377,13 +673,14 @@ static long channel_cdev_ioctl(struct file *filp,
 	return err;
 }
 
-unsigned int channel_poll(struct file *file, poll_table *wait)
+unsigned int mport_poll(struct file *file, poll_table *wait)
 {
 	unsigned int mask = 0;
 #if 0
-	struct channel_dev *chdev = file->private_data;
 
-	poll_wait(file, &channel_cdev_wait, wait);
+	struct mport_dev *chdev = file->private_data;
+
+	poll_wait(file, &mport_cdev_wait, wait);
 
 	if (chdev->rx_head != chdev->rx_tail)
 		mask |= POLLIN | POLLRDNORM;
@@ -392,20 +689,20 @@ unsigned int channel_poll(struct file *file, poll_table *wait)
 	return mask;
 }
 
-static const struct file_operations channel_fops = {
+static const struct file_operations mport_fops = {
 	.owner		= THIS_MODULE,
-	.open		= channel_cdev_open,
-	.release	= channel_cdev_release,
-	.poll		= channel_poll,
-	.unlocked_ioctl = channel_cdev_ioctl
+	.open		= mport_cdev_open,
+	.release	= mport_cdev_release,
+	.poll		= mport_poll,
+	.unlocked_ioctl = mport_cdev_ioctl
 };
 
-static int channel_cdev_init(void)
+static int mport_cdev_init(void)
 {
 	int ret;
 	int major;
 
-	ret = alloc_chrdev_region(&dev_number, 0, CHANNEL_MINORS, DRV_NAME);
+	ret = alloc_chrdev_region(&dev_number, 0, MPORT_MINORS, DRV_NAME);
 	if (ret < 0)
 		return ret;
 
@@ -419,25 +716,25 @@ static int channel_cdev_init(void)
  */
 
 /**
- * channel_cdev_add() - Create channel_dev from rio_mport
+ * mport_cdev_add() - Create mport_dev from rio_mport
  * @mport:	RapidIO master port
- * TODO add created channel_devs to global list
+ * TODO add created mport_devs to global list
  */
-static struct channel_dev *channel_cdev_add(struct rio_mport *mport)
+static struct mport_dev *mport_cdev_add(struct rio_mport *mport)
 {
 	int ret = 0;
 	dev_t devno;
-	struct channel_dev *device;
+	struct mport_dev *device;
 
-	device = kzalloc(sizeof(struct channel_dev), GFP_KERNEL);
+	device = kzalloc(sizeof(struct mport_dev), GFP_KERNEL);
 	device->mport = mport;
 
 	/* Initialize cdev structure in crypter_dev structure,
 	 * set owner, operations and register it */
 	devno = MKDEV(dev_major, dev_count);
-	cdev_init(&device->cdev, &channel_fops);
+	cdev_init(&device->cdev, &mport_fops);
 	device->cdev.owner = THIS_MODULE;
-	device->cdev.ops = &channel_fops;
+	device->cdev.ops = &mport_fops;
 	ret = cdev_add(&device->cdev, devno, 1);
 	if (ret < 0) {
 		if (device) {
@@ -457,10 +754,10 @@ static struct channel_dev *channel_cdev_add(struct rio_mport *mport)
 		return NULL;
 	}
 
-	mutex_lock(&channel_devs_lock);
-	list_add_tail(&device->node, &channel_devs);
+	mutex_lock(&mport_devs_lock);
+	list_add_tail(&device->node, &mport_devs);
 	dev_count++;
-	mutex_unlock(&channel_devs_lock);
+	mutex_unlock(&mport_devs_lock);
 
 	pr_info(DRV_PREFIX "Added %s cdev(%d:%d)\n",
 		mport->name, dev_major, dev_count);
@@ -469,10 +766,10 @@ static struct channel_dev *channel_cdev_add(struct rio_mport *mport)
 }
 
 /**
- * channel_dev_remove() - Remove channel character device from channel_devs
- * @dev:	Channel device to remove
+ * mport_dev_remove() - Remove mport character device from mport_devs
+ * @dev:	Mport device to remove
  */
-static void channel_dev_remove(struct channel_dev *dev)
+static void mport_dev_remove(struct mport_dev *dev)
 {
 	if (!dev)
 		return;
@@ -487,21 +784,21 @@ static void channel_dev_remove(struct channel_dev *dev)
  */
 
 /**
- * channel_add_mport() - Add rio_mport from LDM device struct
+ * mport_add_mport() - Add rio_mport from LDM device struct
  * @dev:		Linux device model struct
  * @class_intf:	Linux class_interface
  */
-static int channel_add_mport(struct device *dev,
+static int mport_add_mport(struct device *dev,
 		struct class_interface *class_intf)
 {
 	struct rio_mport *mport = NULL;
-	struct channel_dev *chdev = NULL;
+	struct mport_dev *chdev = NULL;
 
 	mport = to_rio_mport(dev);
 	if (!mport)
 		return -ENODEV;
 
-	chdev = channel_cdev_add(mport);
+	chdev = mport_cdev_add(mport);
 	if (!chdev)
 		return -ENODEV;
 
@@ -509,37 +806,37 @@ static int channel_add_mport(struct device *dev,
 }
 
 /**
- * channel_remove_mport() - Remove rio_mport from global list
- * TODO remove device from global channel_dev list
+ * mport_remove_mport() - Remove rio_mport from global list
+ * TODO remove device from global mport_dev list
  */
-static void channel_remove_mport(struct device *dev,
+static void mport_remove_mport(struct device *dev,
 		struct class_interface *class_intf)
 {
 	struct rio_mport *mport = NULL;
-	struct channel_dev *chdev;
+	struct mport_dev *chdev;
 	mport = to_rio_mport(dev);
 	if (!mport)
 		return;
 
 	pr_debug(DRV_PREFIX "%s: Removing mport %s\n", __func__, mport->name);
 
-	mutex_lock(&channel_devs_lock);
-	list_for_each_entry(chdev, &channel_devs, node) {
+	mutex_lock(&mport_devs_lock);
+	list_for_each_entry(chdev, &mport_devs, node) {
 		if (chdev->mport->id == mport->id) {
-			channel_dev_remove(chdev);
+			mport_dev_remove(chdev);
 			list_del(&chdev->node);
 			kfree(chdev);
 			break;
 		}
 	}
-	mutex_unlock(&channel_devs_lock);
+	mutex_unlock(&mport_devs_lock);
 }
 
 /* the rio_mport_interface is used to handle local mport devices */
 static struct class_interface rio_mport_interface __refdata = {
 	.class		= &rio_mport_class,
-	.add_dev	= channel_add_mport,
-	.remove_dev	= channel_remove_mport,
+	.add_dev	= mport_add_mport,
+	.remove_dev	= mport_remove_mport,
 };
 
 /*
@@ -547,9 +844,9 @@ static struct class_interface rio_mport_interface __refdata = {
  */
 
 /**
- * channel_init - Driver module loading
+ * mport_init - Driver module loading
  */
-static int __init channel_init(void)
+static int __init mport_init(void)
 {
 	int ret;
 
@@ -561,7 +858,7 @@ static int __init channel_init(void)
 	}
 
 	/* Get class major number */
-	dev_major = channel_cdev_init();
+	dev_major = mport_cdev_init();
 	if (dev_major < 0)
 		return -ENOMEM;
 
@@ -579,14 +876,14 @@ static int __init channel_init(void)
 }
 
 /**
- * channel_exit - Driver module unloading
+ * mport_exit - Driver module unloading
  */
-static void __exit channel_exit(void)
+static void __exit mport_exit(void)
 {
 	class_interface_unregister(&rio_mport_interface);
 	class_destroy(dev_class);
-	unregister_chrdev_region(dev_number, CHANNEL_MINORS);
+	unregister_chrdev_region(dev_number, MPORT_MINORS);
 }
 
-module_init(channel_init);
-module_exit(channel_exit);
+module_init(mport_init);
+module_exit(mport_exit);
