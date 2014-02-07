@@ -55,28 +55,16 @@ static inline int dma_set_mask(struct device *dev, u64 mask)
  * functions used internally by the DMA-mapping API to provide DMA
  * addresses. They must not be used by drivers.
  */
-#ifndef __arch_pfn_to_dma
-static inline dma_addr_t pfn_to_dma(struct device *dev, unsigned long pfn)
-{
-	return (dma_addr_t)__pfn_to_bus(pfn);
-}
 
-static inline unsigned long dma_to_pfn(struct device *dev, dma_addr_t addr)
-{
-	return __bus_to_pfn(addr);
-}
+extern dma_addr_t (*__arch_pfn_to_dma)(struct device *dev, unsigned long pfn);
+extern unsigned long (*__arch_dma_to_pfn)(struct device *dev, dma_addr_t addr);
+extern void* (*__arch_dma_to_virt)(struct device *dev, dma_addr_t addr);
+extern dma_addr_t (*__arch_virt_to_dma)(struct device *dev, void *addr);
 
-static inline void *dma_to_virt(struct device *dev, dma_addr_t addr)
-{
-	return (void *)__bus_to_virt((unsigned long)addr);
-}
 
-static inline dma_addr_t virt_to_dma(struct device *dev, void *addr)
-{
-	return (dma_addr_t)__virt_to_bus((unsigned long)(addr));
-}
+/* Keep __arch_pfn_to_dma defined as it's used by some drivers (V4L2)*/
+#define __arch_pfn_to_dma __arch_pfn_to_dma
 
-#else
 static inline dma_addr_t pfn_to_dma(struct device *dev, unsigned long pfn)
 {
 	return __arch_pfn_to_dma(dev, pfn);
@@ -96,7 +84,6 @@ static inline dma_addr_t virt_to_dma(struct device *dev, void *addr)
 {
 	return __arch_virt_to_dma(dev, addr);
 }
-#endif
 
 /* The ARM override for dma_max_pfn() */
 static inline unsigned long dma_max_pfn(struct device *dev)

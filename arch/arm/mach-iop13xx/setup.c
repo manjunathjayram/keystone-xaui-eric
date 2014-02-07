@@ -351,8 +351,66 @@ static struct platform_device iop13xx_adma_2_channel = {
 	},
 };
 
+#define IOP13XX_PMMR_V_START (IOP13XX_PMMR_VIRT_MEM_BASE)
+#define IOP13XX_PMMR_V_END   (IOP13XX_PMMR_VIRT_MEM_BASE + IOP13XX_PMMR_SIZE)
+#define IOP13XX_PMMR_P_START (IOP13XX_PMMR_PHYS_MEM_BASE)
+#define IOP13XX_PMMR_P_END   (IOP13XX_PMMR_PHYS_MEM_BASE + IOP13XX_PMMR_SIZE)
+
+static inline dma_addr_t __virt_to_lbus(void __iomem *x)
+{
+	return x + IOP13XX_PMMR_PHYS_MEM_BASE - IOP13XX_PMMR_VIRT_MEM_BASE;
+}
+
+static inline void __iomem *__lbus_to_virt(dma_addr_t x)
+{
+	return x + IOP13XX_PMMR_VIRT_MEM_BASE - IOP13XX_PMMR_PHYS_MEM_BASE;
+}
+
+#define __is_lbus_dma(a)				\
+	((a) >= IOP13XX_PMMR_P_START && (a) < IOP13XX_PMMR_P_END)
+
+#define __is_lbus_virt(a)				\
+	((a) >= IOP13XX_PMMR_V_START && (a) < IOP13XX_PMMR_V_END)
+
+/* Device is an lbus device if it is on the platform bus of the IOP13XX */
+#define is_lbus_device(dev)				\
+	(dev && strncmp(dev->bus->name, "platform", 8) == 0)
+
+static dma_addr_t iop13xx_pfn_to_dma(struct device *dev, unsigned long pfn)
+{
+	/* __is_lbus_virt() can never be true for RAM pages */
+	return __pfn_to_phys(pfn);
+}
+
+static unsigned long iop13xx_dma_to_pfn(struct device *dev, dma_addr_t addr)
+{
+	return __phys_to_pfn(addr);
+}
+
+static void *iop13xx_dma_to_virt(struct device *dev, dma_addr_t addr)
+{
+	if (is_lbus_device(dev) && __is_lbus_dma(addr))
+		return __lbus_to_virt(addr);
+	else
+		return (void *)__phys_to_virt(addr);
+}
+
+static dma_addr_t iop13xx_virt_to_dma(struct device *dev, void *addr)
+{
+	if (is_lbus_device(dev) && __is_lbus_virt(addr))
+		return __virt_to_lbus(addr);
+	else
+		return __virt_to_phys((unsigned long)addr);
+}
+
+
 void __init iop13xx_map_io(void)
 {
+	__arch_pfn_to_dma = iop13xx_pfn_to_dma;
+	__arch_dma_to_pfn = iop13xx_dma_to_pfn;
+	__arch_dma_to_virt = iop13xx_dma_to_virt;
+	__arch_virt_to_dma = iop13xx_virt_to_dma;
+
 	/* Initialize the Static Page Table maps */
 	iotable_init(iop13xx_std_desc, ARRAY_SIZE(iop13xx_std_desc));
 }
