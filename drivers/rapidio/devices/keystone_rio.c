@@ -501,7 +501,7 @@ out:
  * @mport: RapidIO master port info
  * @index: ID of the RapidIO interface
  * @dest_id: destination device id 
- * @src_add.r: source (host) address
+ * @src_addr: source (host) address
  * @tgt_addr: target global address
  * @size_bytes: size in bytes
  * @dio_mode: DIO transfer mode (write, write_r, swrite , read)
@@ -1533,13 +1533,12 @@ static void keystone_rio_start(struct keystone_rio_data *krio_priv)
 
 static int keystone_rio_test_link(u8 port, struct keystone_rio_data *krio_priv)
 {
-	int res;
+	int res = 0;
 	u32 value;
 
-	res = keystone_rio_maint_read(krio_priv, port, 0xff,
+	res = keystone_rio_maint_read(krio_priv, port, 0xffff,
 				      krio_priv->board_rio_cfg.size,
 				      0, 0, sizeof(value), &value);
-
 	return res;
 }
 
@@ -1704,9 +1703,11 @@ static void keystone_rio_port_set_routing(u32 port, struct keystone_rio_data *kr
 		__raw_readl(&krio_priv->car_csr_regs->base_dev_id) & 0xffff :
 		(__raw_readl(&krio_priv->car_csr_regs->base_dev_id) >> 16) & 0xff;
 
-	/* Enable routing to LLM for this port */
+	u32 brr = KEYSTONE_RIO_PKT_FW_BRR_NUM;
+
+	/* Enable routing to LLM for this BRR and port */
 	__raw_writel(0x84000000,
-		     &(krio_priv->transport_regs->transport_sp[port].base_route[KEYSTONE_RIO_PKT_FW_BRR_NUM].ctl));
+		     &(krio_priv->transport_regs->transport_sp[port].base_route[brr].ctl));
 
 	/* 
 	 * Configure the Base Routing Register (BRR) to ensure that all packets
@@ -1714,11 +1715,28 @@ static void keystone_rio_port_set_routing(u32 port, struct keystone_rio_data *kr
 	 */
 	__raw_writel((base_dev_id << 16) |
 		     (krio_priv->board_rio_cfg.size ? 0xffff : 0xff),
-		     &(krio_priv->transport_regs->transport_sp[port].base_route[KEYSTONE_RIO_PKT_FW_BRR_NUM].pattern_match));
+		     &(krio_priv->transport_regs->transport_sp[port].base_route[brr].pattern_match));
 
 	dev_dbg(krio_priv->dev, "pattern_match = 0x%x for BRR %d\n",
-		__raw_readl(&krio_priv->transport_regs->transport_sp[port].base_route[KEYSTONE_RIO_PKT_FW_BRR_NUM].pattern_match),
-		KEYSTONE_RIO_PKT_FW_BRR_NUM);
+		__raw_readl(&krio_priv->transport_regs->transport_sp[port].base_route[brr].pattern_match),
+		brr);
+
+	/* Enable routing to LLM for this BRR and port */
+	brr += 1;
+	__raw_writel(0x84000000,
+		     &(krio_priv->transport_regs->transport_sp[port].base_route[brr].ctl));
+
+	/* 
+	 * Configure the Base Routing Register (BRR) to ensure that all broadcast 
+	 * packets are admitted as well.
+	 */
+	__raw_writel((0xffff << 16) |
+		     (krio_priv->board_rio_cfg.size ? 0xffff : 0xff),
+		     &(krio_priv->transport_regs->transport_sp[port].base_route[brr].pattern_match));
+	
+	dev_dbg(krio_priv->dev, "pattern_match = 0x%x for BRR %d\n",
+		__raw_readl(&krio_priv->transport_regs->transport_sp[port].base_route[brr].pattern_match),
+		brr);
 }
 
 /**
@@ -2238,11 +2256,12 @@ static int keystone_rio_map_mbox(int mbox,
 		return -ENOMEM;
 
 	rx_mbox->rxu_map_id[0] = i;
+
 	dev_dbg(krio_priv->dev,
 		"Using RXU map %d @ 0x%08x: mbox = %d,"
 		" flowid = %d, queue = %d pkt_type = %d\n",
 		i, (u32)&(krio_priv->regs->rxu_map[i]), mbox,
-	       flowid, queue, pkt_type);
+		flowid, queue, pkt_type);
 
 	if (pkt_type == RIO_PACKET_TYPE_MESSAGE) {
 		/* Set packet type 11 rx mapping */
@@ -2280,10 +2299,10 @@ static int keystone_rio_map_mbox(int mbox,
 
 		rx_mbox->rxu_map_id[1] = i;
 	        dev_dbg(krio_priv->dev,
-		       "Using RXU map %d @ 0x%08x: mbox = %d,"
-		       " flowid = %d, queue = %d pkt_type = %d\n",
-		       i, (u32)&(krio_priv->regs->rxu_map[i]), mbox,
-		       flowid, queue, pkt_type);
+			"Using RXU map %d @ 0x%08x: mbox = %d,"
+			" flowid = %d, queue = %d pkt_type = %d\n",
+			i, (u32)&(krio_priv->regs->rxu_map[i]), mbox,
+			flowid, queue, pkt_type);
 
 		__raw_writel(mapping_entry_low,
 			     &(krio_priv->regs->rxu_map[i].ltr_mbox_src));
@@ -2305,7 +2324,7 @@ static int keystone_rio_map_mbox(int mbox,
  *
  * Initializes buffer ring, request the inbound message interrupt,
  * and enables the inbound message unit. Returns %0 on success
- * and %-EINVAL or %-ENOMEM on failure.
+ * and %-EINVAL, %-EBUSY or %-ENOMEM on failure.
  */
 static int keystone_rio_open_inb_mbox(struct rio_mport *mport,
 				      void *dev_id,
@@ -2324,14 +2343,14 @@ static int keystone_rio_open_inb_mbox(struct rio_mport *mport,
 	if ((entries & (entries - 1)) != 0)
 		return -EINVAL;
 
+	/* Check if already initialized */
+	if (rx_mbox->port)
+		return -EBUSY;
+
 	dev_dbg(krio_priv->dev,
 		"open inb mbox: mport = 0x%x, dev_id = 0x%x,"
 		" mbox = %d, entries = %d\n",
 		(u32) mport, (u32) dev_id, mbox, entries);
-
-	/* Check if the port is already registered in this queue */
-	if (rx_mbox->port == mport)
-		return 0;
 
 	/* Initialization of RapidIO inbound MP */
 	if (!(krx_chan->dma_channel)) {
@@ -2420,10 +2439,10 @@ static int keystone_rio_hw_add_inb_buffer(struct rio_mport *mport,
 	sg_set_buf(&p_info->sg[0], p_info->epib, sizeof(p_info->epib));
 	sg_set_buf(&p_info->sg[1], p_info->psdata, sizeof(p_info->psdata));
 	sg_set_buf(&p_info->sg[2], p_info->buff, krx_chan->buffer_sizes[0]);
-	
+
 	p_info->sg_ents = 2 + dma_map_sg(krio_priv->dev, &p_info->sg[2],
 					 1, DMA_FROM_DEVICE);
-	
+
 	if (p_info->sg_ents != 3) {
 		dev_err(krio_priv->dev, "dma map failed\n");
 		p_info->buff = NULL;
@@ -2473,9 +2492,10 @@ static void *keystone_rio_hw_get_inb_message(struct rio_mport *mport, int mbox)
 	void *buff = NULL;
 	u32   cc;
 
-	p_info = (void *) dma_get_one(krx_chan->dma_channel);
-	if (!p_info)
+	p_info = (struct keystone_rio_packet *) dma_get_one(krx_chan->dma_channel);
+	if (!p_info) {
 		goto end;
+	}
 
 	buff = p_info->buff;
 
@@ -2564,7 +2584,7 @@ fail:
  *
  * Initializes buffer ring, request the outbound message interrupt,
  * and enables the outbound message unit. Returns %0 on success and
- * %-EINVAL or %-ENOMEM on failure.
+ * %-EINVAL, %-EBUSY or %-ENOMEM on failure.
  */
 static int keystone_rio_open_outb_mbox(struct rio_mport *mport,
 				       void *dev_id,
@@ -2582,14 +2602,14 @@ static int keystone_rio_open_outb_mbox(struct rio_mport *mport,
 	if ((entries & (entries - 1)) != 0)
 		return -EINVAL;
 
+	/* Check if already initialized */
+	if (tx_mbox->port)
+		return -EBUSY;
+
 	dev_dbg(krio_priv->dev,
-		"open_outb_mbox: mport = 0x%x, dev_id = 0x%x,"
+		"open_outb_mbox: mport = 0x%x, dev_id = 0x%x, "
 		"mbox = %d, entries = %d\n",
 		(u32) mport, (u32) dev_id, mbox, entries);
-
-	/* Check if already initialized */
-	if (tx_mbox->port == mport)
-		return 0;
 
 	/* Initialization of RapidIO outbound MP */
 	if (!(krio_priv->tx_channel)) {
@@ -2712,7 +2732,6 @@ static int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 	struct keystone_rio_data *krio_priv = mport->priv;
 	struct dma_async_tx_descriptor *desc;
 	struct keystone_rio_packet *p_info;
-	struct dma_device *device;
 	u32 packet_type;
 	int ret = 0;
 	void *send_buffer = NULL;
@@ -2806,8 +2825,6 @@ static int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 		return -ENXIO;
 	}
 
-	device = krio_priv->tx_channel->device;
-
 	desc = dmaengine_prep_slave_sg(krio_priv->tx_channel, p_info->sg,
 				       p_info->sg_ents, DMA_MEM_TO_DEV,
 				       DMA_HAS_EPIB | DMA_HAS_PSINFO | DMA_HAS_PKTTYPE
@@ -2825,6 +2842,15 @@ static int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 	desc->callback_param = p_info;
 	desc->callback = keystone_rio_tx_complete;
 	p_info->cookie = dmaengine_submit(desc);
+
+	if (dma_submit_error(p_info->cookie)) {
+		dev_warn(krio_priv->dev, "failed to submit packet for dma: %d\n",
+			 p_info->cookie);
+		kfree(p_info);
+		if (send_buffer)
+			kfree(send_buffer);
+		return -EBUSY;
+	}
 
 	return ret;
 }

@@ -152,7 +152,7 @@
 #define KEYSTONE_RIO_MSG_SSIZE		0xe
 #define KEYSTONE_RIO_SGLIST_SIZE	3
 
-#define KEYSTONE_RIO_PKT_FW_BRR_NUM     0    /* BRR used for packet forwarding */
+#define KEYSTONE_RIO_PKT_FW_BRR_NUM     1    /* BRR used for packet forwarding */
 
 /*
  * Dev Id and dev revision
