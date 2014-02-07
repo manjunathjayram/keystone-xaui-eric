@@ -25,6 +25,8 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/io.h>
+#include <linux/device.h>
+#include <linux/dma-mapping.h>
 
 #include <mach/hardware.h>
 #include <asm/mach/arch.h>
@@ -64,8 +66,56 @@ static void __init ks8695_clock_info(void)
 			sysclk[scdc] / 1000000, cpuclk[scdc] / 1000000);
 }
 
+#ifdef CONFIG_PCI
+
+/* PCI mappings */
+#define __virt_to_lbus(x)	((x) - PAGE_OFFSET + KS8695_PCIMEM_PA)
+#define __lbus_to_virt(x)	((x) - KS8695_PCIMEM_PA + PAGE_OFFSET)
+
+/* Platform-bus mapping */
+extern struct bus_type platform_bus_type;
+#define is_lbus_device(dev)		(dev && dev->bus == &platform_bus_type)
+
+static dma_addr_t ks8695_pfn_to_dma(struct device *dev, unsigned long pfn)
+{
+	dma_addr_t __dma = __pfn_to_phys(pfn);
+
+	if (!is_lbus_device(dev))
+		__dma = __dma - PHYS_OFFSET + KS8695_PCIMEM_PA;
+	return __dma;
+}
+static unsigned long ks8695_dma_to_pfn(struct device *dev, dma_addr_t addr)
+{
+	dma_addr_t __dma = addr;
+
+	if (!is_lbus_device(dev))
+		__dma += PHYS_OFFSET - KS8695_PCIMEM_PA;
+	return __phys_to_pfn(__dma);
+}
+
+static void *ks8695_dma_to_virt(struct device *dev, dma_addr_t addr)
+{
+	return (void *) (is_lbus_device(dev) ? __phys_to_virt(addr) : __lbus_to_virt(addr));
+}
+
+static dma_addr_t ks8695_virt_to_dma(struct device *dev, void *addr)
+{
+	unsigned long __addr = (unsigned long)(addr);
+	return (dma_addr_t) (is_lbus_device(dev) ? __virt_to_phys(__addr) : __virt_to_lbus(__addr));
+}
+
+#endif
+
+
 void __init ks8695_map_io(void)
 {
+#ifdef CONFIG_PCI
+	__arch_pfn_to_dma = ks8695_pfn_to_dma;
+	__arch_dma_to_pfn = ks8695_dma_to_pfn;
+	__arch_dma_to_virt = ks8695_dma_to_virt;
+	__arch_virt_to_dma = ks8695_virt_to_dma;
+#endif
+
 	iotable_init(ks8695_io_desc, ARRAY_SIZE(ks8695_io_desc));
 
 	ks8695_processor_info();

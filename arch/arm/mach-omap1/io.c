@@ -19,6 +19,7 @@
 #include <mach/mux.h>
 #include <mach/tc.h>
 #include <linux/omap-dma.h>
+#include <linux/dma-mapping.h>
 
 #include "iomap.h"
 #include "common.h"
@@ -86,10 +87,61 @@ static struct map_desc omap16xx_io_desc[] __initdata = {
 #endif
 
 /*
+ * Bus address is physical address, except for OMAP-1510 Local Bus.
+ * OMAP-1510 bus address is translated into a Local Bus address if the
+ * OMAP bus type is lbus. We do the address translation based on the
+ * device overriding the defaults used in the dma-mapping API.
+ * Note that the is_lbus_device() test is not very efficient on 1510
+ * because of the strncmp().
+ */
+#if defined(CONFIG_ARCH_OMAP15XX)
+
+#define virt_to_lbus(x)		((x) - PAGE_OFFSET + OMAP1510_LB_OFFSET)
+#define lbus_to_virt(x)		((x) - OMAP1510_LB_OFFSET + PAGE_OFFSET)
+#define is_lbus_device(dev)	(cpu_is_omap15xx() && dev && (strncmp(dev_name(dev), "ohci", 4) == 0))
+
+static dma_addr_t omap1_pfn_to_dma(struct device *dev, unsigned long pfn)
+{
+	dma_addr_t __dma = __pfn_to_phys(pfn);
+
+	if (is_lbus_device(dev))
+		__dma = __dma - PHYS_OFFSET + OMAP1510_LB_OFFSET;
+	return __dma;
+}
+static unsigned long omap1_dma_to_pfn(struct device *dev, dma_addr_t addr)
+{
+	dma_addr_t __dma = addr;
+
+	if (is_lbus_device(dev))
+		__dma += PHYS_OFFSET - OMAP1510_LB_OFFSET;
+	return __phys_to_pfn(__dma);
+}
+
+static void *omap1_dma_to_virt(struct device *dev, dma_addr_t addr)
+{
+	return (void *) (is_lbus_device(dev) ? lbus_to_virt(addr) : __phys_to_virt(addr));
+}
+
+static dma_addr_t omap1_virt_to_dma(struct device *dev, void *addr)
+{
+	unsigned long __addr = (unsigned long)(addr);
+	return (dma_addr_t) (is_lbus_device(dev) ? virt_to_lbus(__addr) : __virt_to_phys(__addr));
+}
+
+#endif	/* CONFIG_ARCH_OMAP15XX */
+
+/*
  * Maps common IO regions for omap1
  */
 static void __init omap1_map_common_io(void)
 {
+#if defined(CONFIG_ARCH_OMAP15XX)
+	__arch_pfn_to_dma = omap1_pfn_to_dma;
+	__arch_dma_to_pfn = omap1_dma_to_pfn;
+	__arch_dma_to_virt = omap1_dma_to_virt;
+	__arch_virt_to_dma = omap1_virt_to_dma;
+#endif
+
 	iotable_init(omap_io_desc, ARRAY_SIZE(omap_io_desc));
 }
 
