@@ -385,7 +385,7 @@ struct keystone_rio_regs {
 
 	u32	__rsvd8[2];		/* 025c - 0260 */
 
-	u32	interupt_ctl;		/* 0264 */
+	u32	interrupt_ctl;		/* 0264 */
 
 	u32	__rsvd9[26];		/* 0268, 026c, 0270 - 02cc */
 
