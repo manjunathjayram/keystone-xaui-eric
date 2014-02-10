@@ -27,6 +27,8 @@
 #include <linux/list.h>
 #include <linux/net.h>
 #include <linux/poll.h>
+#include <linux/spinlock.h>
+#include <linux/sched.h>
 
 #include <linux/mm.h>
 #include <linux/slab.h>
@@ -58,9 +60,9 @@ MODULE_LICENSE("GPL");
  * @mport	Associated master port
  */
 struct mport_dev {
-	struct list_head node;
-	struct cdev	cdev;
-	struct device	*dev;
+	struct list_head  node;
+	struct cdev	  cdev;
+	struct device	 *dev;
 	struct rio_mport *mport;
 };
 
@@ -74,6 +76,18 @@ static struct class *dev_class;
 static int dev_count;
 static int dev_major;
 static dev_t dev_number;
+
+static spinlock_t       dbell_i_lock;
+static spinlock_t       dbell_list_lock;
+static struct list_head dbell_list;
+
+struct dbell_cell {
+	struct list_head  node;
+	u16               info;
+	u16               src_id;
+	u16               dst_id;
+	wait_queue_head_t waitq;
+};
 
 /**
  * channel_ep_get_list_size() - Get amount of endpoints in network
@@ -321,6 +335,162 @@ static int dbell_send(struct mport_dev *data, void __user *arg)
 				      data->mport->id,
 				      dbell.id,
 				      dbell.num);
+
+	return ret;
+}
+
+static void dbell_callback(struct rio_mport *mport, 
+			   void *dev_id,
+			   u16 src,
+			   u16 dst,
+			   u16 info)
+{
+	struct dbell_cell *dbell = (struct dbell_cell*) dev_id;
+
+	/* Wake up user process */
+	if (waitqueue_active(&dbell->waitq)) {
+		dbell->src_id = src;
+		dbell->dst_id = dst;
+		dbell->info   = info;
+		wake_up_all(&dbell->waitq);
+	}
+}
+
+static struct dbell_cell* dbell_lookup(u16 info)
+{
+	struct dbell_cell *dbell;
+	int found = 0;
+
+	spin_lock(&dbell_list_lock);
+
+	/* Look if a waitqueue already exists for this doorbell */
+	list_for_each_entry(dbell, &dbell_list, node) {
+		if (dbell->info == info) {
+			found = 1;
+			break;
+		}
+	}
+
+	if (found) {
+		goto out;
+	}
+
+	/* Allocate and insert the doorbell */
+	dbell = (struct dbell_cell*) kmalloc(sizeof(struct dbell_cell), GFP_KERNEL);
+	if (dbell == NULL)
+		goto out;
+	
+	dbell->info = info;
+	init_waitqueue_head(&dbell->waitq);
+
+	list_add_tail(&dbell->node, &dbell_list);
+out:
+	spin_unlock(&dbell_list_lock);
+
+	return dbell;
+}
+
+static int dbell_release(u16 info)
+{
+	struct dbell_cell *dbell;
+	int found = 0;
+	int res   = 0;
+
+	spin_lock(&dbell_list_lock);
+
+	/* Look for the corresponding waitqueue */
+	list_for_each_entry(dbell, &dbell_list, node) {
+		if (dbell->info == info) {
+			found = 1;
+			break;
+		}
+	}
+
+	if (!found) {
+		res = -EINVAL;
+		goto out;
+	}
+
+	/* Delete and free waitqueue from list */
+	list_del(&dbell->node);
+	kfree(dbell);
+out:
+	spin_unlock(&dbell_list_lock);
+
+	return res;
+}
+
+static int dbell_wait(struct rio_mport *mport, u16 info, u16 *src_id)
+{
+	struct dbell_cell *dbell;
+	unsigned long flags;
+	int res;
+
+	DECLARE_WAITQUEUE(wait, current);
+
+	dbell = dbell_lookup(info);
+	if (dbell == NULL)
+		return -ENOMEM;
+
+	/* Request a doorbell with our callback handler */
+	res = rio_request_inb_dbell(mport,
+				    (void *) dbell,
+				    info,
+				    info,
+				    dbell_callback);
+
+	if ((res != 0) && (res != -EBUSY)) {
+		pr_debug(DRV_PREFIX "cannot request such doorbell (info = %d)\n", info);
+		return res;
+	}
+
+	/* Schedule until handler is called */
+	spin_lock_irqsave(&dbell_i_lock, flags);
+	add_wait_queue(&dbell->waitq, &wait);
+	set_current_state(TASK_INTERRUPTIBLE);
+	spin_unlock_irqrestore(&dbell_i_lock, flags);
+
+ 	schedule();
+
+	spin_lock_irqsave(&dbell_i_lock, flags);
+	__set_current_state(TASK_RUNNING);
+	remove_wait_queue(&dbell->waitq, &wait);
+	spin_unlock_irqrestore(&dbell_i_lock, flags);
+
+	if (src_id)
+		*src_id = dbell->src_id;
+
+	/* Release the doorbell */
+	rio_release_inb_dbell(mport, info, info);
+	dbell_release(info);
+
+	if (signal_pending(current))
+		return -ERESTARTSYS;
+
+	pr_debug(DRV_PREFIX "receiving doorbell (info = %d)\n", info);
+
+	return info;
+}
+
+/*
+ * dbell_send() - Send a doorbell
+ * @data:	Driver private data
+ * @arg:	Dbell information
+ */
+static int dbell_receive(struct mport_dev *data, void __user *arg)
+{
+	struct rio_mport_dbell dbell;
+	int ret;
+
+	if (copy_from_user(&dbell, arg, sizeof(struct rio_mport_dbell)))
+		return -EFAULT;
+
+	pr_debug(DRV_PREFIX "Wait doorbell %d\n", dbell.num);
+
+	ret = dbell_wait(data->mport, dbell.num, &dbell.id);
+
+	if (copy_to_user(arg, &dbell, sizeof(struct rio_mport_dbell)))
+		ret = -EFAULT;
 
 	return ret;
 }
@@ -644,6 +814,9 @@ static long mport_cdev_ioctl(struct file *filp,
 	case RIO_MPORT_DBELL_SEND:
 		err = dbell_send(data, (void __user *)arg);
 		break;
+	case RIO_MPORT_DBELL_RECEIVE:
+		err = dbell_receive(data, (void __user *)arg);
+		break;
 	case RIO_MPORT_DIO_TRANSFER:
 		err = dio_transfer(data, (void __user *)arg);
 		break;
@@ -849,6 +1022,10 @@ static struct class_interface rio_mport_interface __refdata = {
 static int __init mport_init(void)
 {
 	int ret;
+
+	spin_lock_init(&dbell_i_lock);
+	spin_lock_init(&dbell_list_lock);
+	INIT_LIST_HEAD(&dbell_list);
 
 	/* Create device class needed by udev */
 	dev_class = class_create(THIS_MODULE, DRV_NAME);

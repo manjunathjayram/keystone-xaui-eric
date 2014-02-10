@@ -78,6 +78,7 @@ struct rio_mport_maint_transfer {
 #define RIO_MPORT_DIO_AND_DBELL_MAGIC   'd'
 
 #define RIO_MPORT_DBELL_SEND                    _IOR(RIO_MPORT_DIO_AND_DBELL_MAGIC, 1, struct rio_mport_dbell *)
+#define RIO_MPORT_DBELL_RECEIVE                 _IOR(RIO_MPORT_DIO_AND_DBELL_MAGIC, 2, struct rio_mport_dbell *)
 #define RIO_MPORT_DIO_TRANSFER                  _IOR(RIO_MPORT_DIO_AND_DBELL_MAGIC, 3, struct rio_mport_dio_transfer *)
 
 /* Maintenance IOCTLs */
