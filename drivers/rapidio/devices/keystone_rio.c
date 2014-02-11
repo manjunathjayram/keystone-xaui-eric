@@ -345,7 +345,7 @@ static u32 keystone_rio_dio_packet_type(int dio_mode)
 /*
  * DIO transfer using LSU directly 
  */
-static inline int keystone_rio_dio_raw_transfer(int index,
+static inline int keystone_rio_dio_raw_transfer(int port_id,
 						u16 dest_id,
 						dma_addr_t src_addr,
 						u32 tgt_addr,
@@ -411,7 +411,7 @@ retry_transfer:
 	 * ID size = 8 or 16 bit
 	 * Dest ID specified as arg
 	 * interrupt request = 1 */
-	__raw_writel(((index << 8)
+	__raw_writel(((port_id << 8)
 		      | (KEYSTONE_RIO_LSU_PRIO << 4)
 		      | (size ? (1 << 10) : 0)
 		      | ((u32) dest_id << 16) 
@@ -543,7 +543,7 @@ static int keystone_rio_dio_transfer(struct rio_mport *mport,
 
 		dma = dma_map_single(dev, (void *)s_addr, length, dir);
 
-		res = keystone_rio_dio_raw_transfer(index,
+		res = keystone_rio_dio_raw_transfer(mport->index,
 						    dest_id,
 						    dma,
 						    t_addr,
@@ -654,6 +654,7 @@ static int keystone_rio_dbell_send(struct rio_mport *mport,
 	unsigned int res    = 0;
 	/* Transform doorbell number into info field */
 	u16          info   = (num & 0xf) | (((num >> 4) & 0x3) << 5);
+	u8           port_id = mport->index;
 	u8           context;
 	u8           ltid;
 
@@ -696,7 +697,7 @@ static int keystone_rio_dbell_send(struct rio_mport *mport,
 	__raw_writel(0, &(krio_priv->regs->lsu_reg[0].dbell_val_byte_cnt));
 
 	/* LSU Reg 4 - */
-	__raw_writel(((index << 8)
+	__raw_writel(((port_id << 8)
 		      | (KEYSTONE_RIO_LSU_PRIO << 4)
 		      | ((mport->sys_size) ? (1 << 10) : 0)
 		      | ((u32) dest_id << 16)
@@ -772,8 +773,8 @@ out:
 
 /**
  * maint_request - Perform a maintenance request
- * @index: ID of the RapidIO interface
- * @destid: destination ID of target device
+ * @port_id: output port ID
+ * @dest_id: destination ID of target device
  * @hopcount: hopcount for this request
  * @offset: offset in the RapidIO configuration space
  * @buff: dma address of the data on the host
@@ -783,9 +784,9 @@ out:
  *
  * Returns %0 on success or %-EINVAL, %-EIO, %-EAGAIN or %-EBUSY on failure.
  */
-static inline int maint_request(int index, 
+static inline int maint_request(int port_id, 
 				u32 dest_id,
-				u8 hopcount,
+				u8  hopcount,
 				u32 offset,
 				dma_addr_t buff,
 				int buff_len,
@@ -833,20 +834,19 @@ static inline int maint_request(int index,
 	__raw_writel(buff, &(krio_priv->regs->lsu_reg[0].phys_addr));
 
 	/* LSU Reg 3 - byte count */
-	__raw_writel(buff_len,
-		&(krio_priv->regs->lsu_reg[0].dbell_val_byte_cnt));
+	__raw_writel(buff_len, &(krio_priv->regs->lsu_reg[0].dbell_val_byte_cnt));
 
 	/* LSU Reg 4 - */
-	__raw_writel(((index << 8)
-			| (KEYSTONE_RIO_LSU_PRIO << 4)
-			| (size ? (1 << 10) : 0)
-			| ((u32) dest_id << 16)),
-		&(krio_priv->regs->lsu_reg[0].destid));
+	__raw_writel(((port_id << 8)
+		      | (KEYSTONE_RIO_LSU_PRIO << 4)
+		      | (size ? (1 << 10) : 0)
+		      | ((u32) dest_id << 16)),
+		     &(krio_priv->regs->lsu_reg[0].destid));
 
 	/* LSU Reg 5 */
 	__raw_writel(((hopcount & 0xff) << 8) | (type & 0xff),
-		&(krio_priv->regs->lsu_reg[0].dbell_info_fttype));
-
+		     &(krio_priv->regs->lsu_reg[0].dbell_info_fttype));
+	
 	/* Retrieve our completion code */
 	count = 0;
 	res   = 0;
@@ -1402,7 +1402,7 @@ static void keystone_rio_start(struct keystone_rio_data *krio_priv)
 		     &krio_priv->regs->per_set_cntl);
 }
 
-static int keystone_rio_test_link(struct keystone_rio_data *krio_priv)
+static int keystone_rio_test_link(u8 port, struct keystone_rio_data *krio_priv)
 {
 	u32 *tbuf;
 	int res;
@@ -1417,7 +1417,7 @@ static int keystone_rio_test_link(struct keystone_rio_data *krio_priv)
 	dma = dma_map_single(dev, tbuf, 4, DMA_FROM_DEVICE);
 
 	/* Send a maint req to test the link */
-	res = maint_request(0, 0xff, 0, 0, dma, 4,
+	res = maint_request(port, 0xff, 0, 0, dma, 4,
 			    krio_priv->board_rio_cfg.size,
 			    KEYSTONE_RIO_PACKET_TYPE_MAINT_R,
 			    krio_priv);
@@ -1450,7 +1450,7 @@ static int keystone_rio_port_status(int port, struct keystone_rio_data *krio_pri
 	value = __raw_readl(&(krio_priv->serial_port_regs->sp[port].err_stat));
 
 	if ((value & RIO_PORT_N_ERR_STS_PORT_OK) != 0) {
-		res = keystone_rio_test_link(krio_priv);
+		res = keystone_rio_test_link(port, krio_priv);
 		if (0 != res) {
 			dev_err(krio_priv->dev,
 				"link test failed on port %d\n", port);
@@ -1657,7 +1657,7 @@ keystone_rio_config_read(struct rio_mport *mport, int index, u16 destid,
 
 	dma = dma_map_single(dev, tbuf, len, DMA_FROM_DEVICE);
 
-	res = maint_request(index, destid, hopcount, offset, dma, len,
+	res = maint_request(mport->index, destid, hopcount, offset, dma, len,
 			    mport->sys_size, KEYSTONE_RIO_PACKET_TYPE_MAINT_R,
 			    (struct keystone_rio_data *)(mport->priv));
 
@@ -1729,7 +1729,7 @@ keystone_rio_config_write(struct rio_mport *mport, int index, u16 destid,
 
 	dma = dma_map_single(dev, tbuf, len, DMA_TO_DEVICE);
 
-	res = maint_request(index, destid, hopcount, offset, dma, len,
+	res = maint_request(mport->index, destid, hopcount, offset, dma, len,
 			    mport->sys_size,
 			    KEYSTONE_RIO_PACKET_TYPE_MAINT_W,
 			    (struct keystone_rio_data *)(mport->priv));
@@ -2380,7 +2380,7 @@ static void keystone_rio_mp_outb_exit(struct keystone_rio_data *krio_priv)
 	return;
 }
 
-static int keystone_rio_mp_outb_init(struct keystone_rio_data *krio_priv)
+static int keystone_rio_mp_outb_init(u8 port_id, struct keystone_rio_data *krio_priv)
 {
 	struct dma_keystone_info config;
 	dma_cap_mask_t mask;
@@ -2411,6 +2411,12 @@ static int keystone_rio_mp_outb_init(struct keystone_rio_data *krio_priv)
 
 	dev_info(krio_priv->dev, "Opened tx channel: %p\n",
 		 krio_priv->tx_channel);
+
+	/*
+	 * For the time being we are using only the first transmit queue
+	 * In the future we may use queue 0 to 16 with multiple mbox support
+	 */
+	__raw_writel(port_id << 4, &(krio_priv->regs->tx_queue_sch_info[0]));
 
 	return 0;
 
@@ -2457,7 +2463,7 @@ static int keystone_rio_open_outb_mbox(struct rio_mport *mport,
 
 	/* Initialization of RapidIO outbound MP */
 	if (!(krio_priv->tx_channel)) {
-		res = keystone_rio_mp_outb_init(krio_priv);
+		res = keystone_rio_mp_outb_init(mport->index, krio_priv);
 		if (res)
 			return res;
 	}
@@ -2680,13 +2686,20 @@ struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 	ops->get_inb_message  = keystone_rio_hw_get_inb_message;
 
 	port = kzalloc(sizeof(struct rio_mport), GFP_KERNEL);
-	port->id    = port_id;
+
+	/* 
+	 * Set the sRIO port physical Id into the index field,
+	 * the id field will be set by rio_register_mport() to
+	 * the logical Id
+	 */
 	port->index = port_id;
 	port->priv  = krio_priv;
 	INIT_LIST_HEAD(&port->dbells);
 
-	/* Make a dummy per port region as ports are not
-	   really separated on KeyStone */
+	/* 
+	 * Make a dummy per port region as ports are not
+	 * really separated on KeyStone
+	 */
 	port->iores.start = krio_priv->board_rio_cfg.rio_regs_base +
 		(u32)(krio_priv->serial_port_regs) +
 		offsetof(struct keystone_rio_serial_port_regs,
