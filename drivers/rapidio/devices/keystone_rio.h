@@ -129,10 +129,13 @@
 #define KEYSTONE_RIO_BLK_NUM		9
 #define KEYSTONE_RIO_MAX_MBOX		4    /* 4 in multi-segment,
 						64 in single-seg */
-
+#define KEYSTONE_RIO_MAX_PKT_FW_ENTRIES 8    /* max of packet forwarding 
+						mapping entries */
 #define KEYSTONE_RIO_MAINT_BUF_SIZE	64
 #define KEYSTONE_RIO_MSG_SSIZE		0xe
 #define KEYSTONE_RIO_SGLIST_SIZE	3
+
+#define KEYSTONE_RIO_PKT_FW_BRR_NUM     0    /* BRR used for packet forwarding */
 
 /*
  * Dev Id and dev revision
@@ -196,6 +199,15 @@ struct keystone_serdes_config {
 };
 
 /*
+ * Routing configuration for packet forwarding
+ */
+struct keystone_routing_config {
+	u16 dev_id_low;
+	u16 dev_id_high;
+	u8  port;
+};
+
+/*
  * Per board RIO devices controller configuration
  */
 struct keystone_rio_board_controller_info {
@@ -218,11 +230,13 @@ struct keystone_rio_board_controller_info {
 	u16             serdes_config_num;
 	u32             serdes_baudrate;
 	u32             path_mode;
+	u32             pkt_forwarding;
 
 	int             rio_irq;
       	int             lsu_irq;
 
 	struct keystone_serdes_config serdes_config[4];
+	struct keystone_routing_config routing_config[8];
 };
 
 struct keystone_rio_data;
