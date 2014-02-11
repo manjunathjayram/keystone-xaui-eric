@@ -72,8 +72,8 @@ struct netcp_tx_pipe {
 	unsigned int			 dma_pause_threshold;
 	unsigned int			 dma_resume_threshold;
 	atomic_t			 dma_poll_count;
-	struct tasklet_struct		 dma_poll_tasklet;
 	enum netcp_tx_state		 dma_poll_state;
+	struct napi_struct		 dma_poll_napi;
 };
 
 #define ADDR_NEW	BIT(0)
@@ -96,27 +96,28 @@ struct netcp_addr {
 };
 
 struct netcp_priv {
-	spinlock_t			 lock;
+	/* Common stuff first */
 	struct netcp_device		*netcp_device;
-	struct platform_device		*pdev;
 	struct net_device		*ndev;
-	struct napi_struct		 napi;
-	struct device			*dev;
 	int				 cpsw_port;
+	/* Tx data path stuff */
+	struct netcp_hook_list		*txhook_list_array;
+	/* Rx data path stuff */
+	struct dma_chan			*rx_channel;
+	enum netcp_rx_state		 rx_state;
+	struct netcp_hook_list		*rxhook_list_array;
+	struct napi_struct		 napi;
+	/* Non data path stuff */
+	struct platform_device		*pdev;
+	struct device			*dev;
 	u32				 msg_enable;
+	spinlock_t			 lock;
 	struct net_device_stats		 stats;
 	int				 rx_packet_max;
-
-	struct dma_chan			*rx_channel;
 	const char			*rx_chan_name;
-
 	u32				 link_state;
-
-	enum netcp_rx_state		 rx_state;
 	struct list_head		 module_head;
 	struct list_head		 interface_list;
-	struct list_head		 txhook_list_head;
-	struct list_head		 rxhook_list_head;
 	struct list_head		 addr_list;
 
 	/* PktDMA configuration data */
@@ -127,20 +128,67 @@ struct netcp_priv {
 #define NETCP_SGLIST_SIZE	(MAX_SKB_FRAGS + 2)
 #define	NETCP_PSDATA_LEN	16
 struct netcp_packet {
-	struct scatterlist		 sg[NETCP_SGLIST_SIZE];
-	int				 sg_ents;
 	struct sk_buff			*skb;
-	u32				 epib[4];
-	u32				 psdata[NETCP_PSDATA_LEN];
-	unsigned int			 psdata_len;
 	struct netcp_priv		*netcp;
-	dma_cookie_t			 cookie;
 	struct netcp_tx_pipe		*tx_pipe;
+	dma_cookie_t			 cookie;
 	bool				 rxtstamp_complete;
 	void				*ts_context;
 	int				(*txtstamp_complete)(void *context,
-						struct netcp_packet *packet);
+						struct sk_buff *skb);
+	void				*primary_bufptr;
+	unsigned int			 primary_bufsiz;
+	int				 sg_ents;
+	struct scatterlist		 sg[NETCP_SGLIST_SIZE];
+	u32				 psdata[NETCP_PSDATA_LEN];
+	unsigned int			 psdata_len;
+	u32				 epib[4];
 };
+
+static inline u32 *netcp_push_psdata(struct netcp_packet *p_info, unsigned bytes)
+{
+	u32		*buf;
+	unsigned	 words;
+
+	if ((bytes & 0x03) != 0)
+		return NULL;
+	words = bytes >> 2;
+
+	if ((p_info->psdata_len + words) > NETCP_PSDATA_LEN)
+		return NULL;
+
+	p_info->psdata_len += words;
+	buf = &p_info->psdata[NETCP_PSDATA_LEN - p_info->psdata_len];
+
+	return buf;
+}
+
+static inline int netcp_align_psdata(struct netcp_packet *p_info, unsigned byte_align)
+{
+	int	padding;
+
+	switch (byte_align) {
+	case 0:
+		padding = -EINVAL;
+		break;
+	case 1:
+	case 2:
+	case 4:
+		padding = 0;
+		break;
+	case 8:
+		padding = (p_info->psdata_len << 2) % 8;
+		break;
+	case 16:
+		padding = (p_info->psdata_len << 2) % 16;
+		break;
+	default:
+		padding = (p_info->psdata_len << 2) % byte_align;
+		break;
+	}
+
+	return padding;
+}
 
 static inline int netcp_prepend_psdata(struct netcp_packet *p_info, u32 *data, unsigned len)
 {
@@ -209,9 +257,6 @@ int netcp_txpipe_close(struct netcp_tx_pipe *tx_pipe);
 struct dma_chan *netcp_get_rx_chan(struct netcp_priv *priv);
 struct dma_chan *netcp_get_tx_chan(struct netcp_priv *priv);
 
-u32 *netcp_push_psdata(struct netcp_packet *p_info, unsigned words);
-int netcp_align_psdata(struct netcp_packet *p_info, unsigned word_align);
-
 typedef int netcp_hook_rtn(int order, void *data, struct netcp_packet *packet);
 
 int netcp_register_txhook(struct netcp_priv *netcp_priv, int order,
@@ -225,6 +270,6 @@ int netcp_unregister_rxhook(struct netcp_priv *netcp_priv, int order,
 
 void *netcp_device_find_module(struct netcp_device *netcp_device,
 		const char *name);
-void xge_serdes_init_156p25Mhz(void);
+int xge_serdes_init_156p25Mhz(void);
 int keystone_pcsr_config(void __iomem *pcsr_ofs, int port, u32 interface);
 #endif

@@ -1735,6 +1735,39 @@
 			label = "dspmem";
 		};
 
+
+		uio_hyperlink0: hyperlink0 {
+			compatible = "ti,uio-module-drv";
+			mem  = <0x21400000 0x00000100
+				0x40000000 0x10000000
+				0x0231a000 0x00002000>;
+			clocks = <&clkhyperlink0>;
+			interrupts	= <0 387 0x101>;
+			label = "hyperlink0";
+		};
+
+		uio_hyperlink1: hyperlink1 {
+			compatible = "ti,uio-module-drv";
+			mem  = <0x21400100 0x00000100
+				0x28000000 0x08000000
+				0x0231c000 0x00002000>;
+			clocks = <&clkhyperlink1>;
+			interrupts	= <0 388 0x101>;
+			label = "hyperlink1";
+		};
+
+		uio_mpax: mpax {
+			compatible = "ti,uio-module-drv";
+			mem  = <0x00bc00000 0x00000a00>;
+			label = "mpax";
+		};
+
+		uio_edma3: edma3 {
+			compatible = "ti,uio-module-drv";
+			mem = <0x02700000 0x000C0000>;
+			label = "edma3";
+		};
+
 		hwqueue0: hwqueue@2a40000 {
 			compatible = "ti,keystone-hwqueue";
 			dma-coherent;
@@ -1780,11 +1813,11 @@
 				};
 				qpend-arm-hi {
 					values = <8704 32>;
-					interrupts = <0 48 0xf04 0 49 0xf04 0 50 0xf04 0 51 0xf04
+					interrupts = <0 48 0x104 0 49 0x204 0 50 0xf04 0 51 0xf04
 						      0 52 0xf04 0 53 0xf04 0 54 0xf04 0 55 0xf04
 						      0 56 0xf04 0 57 0xf04 0 58 0xf04 0 59 0xf04
-						      0 60 0xf04 0 61 0xf04 0 62 0xf04 0 63 0xf04
-						      0 64 0xf04 0 65 0xf04 0 66 0xf04 0 59 0xf04
+						      0 60 0x104 0 61 0x204 0 62 0x404 0 63 0x804
+						      0 64 0x404 0 65 0x804 0 66 0xf04 0 59 0xf04
 						      0 68 0xf04 0 69 0xf04 0 70 0xf04 0 71 0xf04
 						      0 72 0xf04 0 73 0xf04 0 74 0xf04 0 75 0xf04
 						      0 76 0xf04 0 77 0xf04 0 78 0xf04 0 79 0xf04>;
@@ -1873,23 +1906,23 @@
 				ranges;
 				region-12 {
 					id = <12>;
-					values	= <4096 128>;	/* num_desc desc_size */
+					values	= <14336 128>;	/* num_desc desc_size */
 					link-index = <0x4000>;
 				};
 				region-13 {
 					id = <13>;
 					values	= <2048 256>;	/* num_desc desc_size */
-					link-index = <0x5000>;
+					link-index = <0x7800>;
 				};
 				region-14 {
 					id = <14>;
 					values	= <2048 128>;	/* num_desc desc_size */
-					link-index = <0x5800>;
+					link-index = <0x8000>;
 				};
 			};
 			descriptors {
 				pool-net {
-					values = <2048 128>;	/* num_desc desc_size */
+					values = <12288 128>;	/* num_desc desc_size */
 					region-id = <12>;
 				};
 				pool-rio {
@@ -1897,7 +1930,7 @@
 					region-id = <12>;
 				};
 				pool-udma {
-					values = <1636 256>;	/* num_desc desc_size */
+					values = <1920 256>;	/* num_desc desc_size */
 					region-id = <13>;
 				};
 				pool-xge {
@@ -1983,6 +2016,26 @@
 					/* channel = <0>; */
 					/* priority = <1>; */
 				};
+				nettx2 {
+					transmit;
+					label		= "nettx2";
+					pool		= "pool-net";
+					submit-queue	= <648>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <0>; */
+					/* priority = <1>; */
+				};
+				nettx3 {
+					transmit;
+					label		= "nettx3";
+					pool		= "pool-net";
+					submit-queue	= <648>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <0>; */
+					/* priority = <1>; */
+				};
 				netrx0 {
 					receive;
 					label		= "netrx0";
@@ -2002,6 +2055,26 @@
 					/* debug; */
 					/* channel = <0>; */
 					flow		= <23>;
+				};
+				netrx2 {
+					receive;
+					label		= "netrx2";
+					pool		= "pool-net";
+					/* submit-queue   = <xx>; */
+					complete-queue = <8718>;
+					/* debug; */
+					/* channel = <0>; */
+					flow		= <24>;
+				};
+				netrx3 {
+					receive;
+					label		= "netrx3";
+					pool		= "pool-net";
+					/* submit-queue   = <xx>; */
+					complete-queue = <8719>;
+					/* debug; */
+					/* channel = <0>; */
+					flow		= <25>;
 				};
 				satx-0 {
 					transmit;
@@ -2045,12 +2118,32 @@
 					/* channel = <xx>; */
 					/* priority = <1>; */
 				};
+				patx-pdsp5-2 {
+					transmit;
+					label		= "patx-pdsp5-2";
+					pool		= "pool-net";
+					submit-queue	= <645>;
+					complete-queue = <8720>;
+					/* debug; */
+					/* channel = <xx>; */
+					/* priority = <1>; */
+				};
+				patx-pdsp5-3 {
+					transmit;
+					label		= "patx-pdsp5-3";
+					pool		= "pool-net";
+					submit-queue	= <645>;
+					complete-queue = <8721>;
+					/* debug; */
+					/* channel = <xx>; */
+					/* priority = <1>; */
+				};
 				qos-bypass-0 {
 					transmit;
 					label		= "qos-bypass-0";
 					pool		= "pool-net";
 					submit-queue	= <645>;
-					/* complete-queue = <xx>; */
+					complete-queue 	= <8716>;
 					/* debug; */
 					/* channel = <xx>; */
 					/* priority = <1>; */
@@ -2060,7 +2153,7 @@
 					label		= "qos-bypass-1";
 					pool		= "pool-net";
 					submit-queue	= <645>;
-					/* complete-queue = <xx>; */
+					complete-queue 	= <8717>;
 					/* debug; */
 					/* channel = <xx>; */
 					/* priority = <1>; */
@@ -2370,6 +2463,50 @@
 					priority	= <1>;
 					flowtag		= <11>;
 				};
+				udmatx12 {
+					transmit;
+					label		= "udmatx12";
+					pool		= "pool-udma";
+					submit-queue	= <812>;
+					/* complete-queue  = <12> */
+					/* debug; */
+					channel		= <12>;
+					priority	= <1>;
+					flowtag		= <12>;
+				};
+				udmatx13 {
+					transmit;
+					label		= "udmatx13";
+					pool		= "pool-udma";
+					submit-queue	= <813>;
+					/* complete-queue  = <13> */
+					/* debug; */
+					channel		= <13>;
+					priority	= <1>;
+					flowtag		= <13>;
+				};
+				udmatx14 {
+					transmit;
+					label		= "udmatx14";
+					pool		= "pool-udma";
+					submit-queue	= <814>;
+					/* complete-queue  = <14> */
+					/* debug; */
+					channel		= <14>;
+					priority	= <1>;
+					flowtag		= <14>;
+				};
+				udmatx15 {
+					transmit;
+					label		= "udmatx15";
+					pool		= "pool-udma";
+					submit-queue	= <815>;
+					/* complete-queue  = <15> */
+					/* debug; */
+					channel		= <15>;
+					priority	= <1>;
+					flowtag		= <15>;
+				};
 				udmarx0 {
 					receive;
 					label		= "udmarx0";
@@ -2490,6 +2627,46 @@
 					channel		= <11>;
 					flow		= <11>;
 				};
+				udmarx12 {
+					receive;
+					label		= "udmarx12";
+					pool		= "pool-udma";
+					/* submit-queue = <xx>; */
+					/* complete-queue  = <28> */
+					/* debug; */
+					channel		= <12>;
+					flow		= <12>;
+				};
+				udmarx13 {
+					receive;
+					label		= "udmarx13";
+					pool		= "pool-udma";
+					/* submit-queue = <xx>; */
+					/* complete-queue  = <29> */
+					/* debug; */
+					channel		= <13>;
+					flow		= <13>;
+				};
+				udmarx14 {
+					receive;
+					label		= "udmarx14";
+					pool		= "pool-udma";
+					/* submit-queue = <xx>; */
+					/* complete-queue  = <30> */
+					/* debug; */
+					channel		= <14>;
+					flow		= <14>;
+				};
+				udmarx15 {
+					receive;
+					label		= "udmarx15";
+					pool		= "pool-udma";
+					/* submit-queue = <xx>; */
+					/* complete-queue  = <31> */
+					/* debug; */
+					channel		= <15>;
+					flow		= <15>;
+				};
 			};
 		};
 
@@ -2506,17 +2683,31 @@
 			interfaces {
 				interface0: interface-0 {
 					rx-channel = "netrx0";
-					rx-queue-depth = <128 128 0 0>;
-					rx-buffer-size = <1500 4096 0 0>;
+					rx-queue-depth = <1024 128 0 0>;
+					rx-buffer-size = <1536 4096 0 0>;
 					efuse-mac = <1>;
 					/*local-mac-address = [02 18 31 7e 3e 6e]; */
 				};
 				interface1: interface-1 {
 					rx-channel = "netrx1";
-					rx-queue-depth = <128 128 0 0>;
-					rx-buffer-size = <1500 4096 0 0>;
+					rx-queue-depth = <1024 128 0 0>;
+					rx-buffer-size = <1536 4096 0 0>;
 					efuse-mac = <0>;
 					local-mac-address = [02 18 31 7e 3e 6f];
+				};
+				interface2: interface-2 {
+					rx-channel = "netrx2";
+					rx-queue-depth = <1024 128 0 0>;
+					rx-buffer-size = <1536 4096 0 0>;
+					efuse-mac = <0>;
+					/*local-mac-address = [02 18 31 7e 3e 7e]; */
+				};
+				interface3: interface-3 {
+					rx-channel = "netrx3";
+					rx-queue-depth = <1024 128 0 0>;
+					rx-buffer-size = <1536 4096 0 0>;
+					efuse-mac = <0>;
+					/*local-mac-address = [02 18 31 7e 3e 7f]; */
 				};
 			};
 
@@ -2527,25 +2718,31 @@
 				intf_tx_queues = <7>;
 
 				sgmii_module_ofs  = <0x100>;
+				sgmii_module34_ofs  = <0x400>;
 				switch_module_ofs = <0x800>;
 				host_port_reg_ofs = <0x834>;
 				slave_reg_ofs	  = <0x860>;
 				sliver_reg_ofs	  = <0x900>;
+				slave23_reg_ofs	  = <0xa00>;
 				hw_stats_reg_ofs  = <0xb00>;
 				cpts_reg_ofs	  = <0xd00>;
 				ale_reg_ofs	  = <0xe00>;
 
-				num_slaves  = <2>;
+				num_slaves  = <4>;
 				ale_ageout  = <30>;
 				ale_entries = <1024>;
-				ale_ports   = <3>;
+				ale_ports   = <5>;
 
 				cpts_rftclk_sel = <0>;
 				/*cpts_rftclk_freq = <399360000>;*/
 				cpts_ts_comp_length = <3>;
+				cpts_clock_mult = <5000>;
+				cpts_clock_shift = <10>;
+				cpts_clock_div = <3>;
+				/* force_no_hwtstamp; */
 
 				multi-interface;
-				num-interfaces = <2>;
+				num-interfaces = <4>;
 				slaves-per-interface = <1>;
 
 				interfaces {
@@ -2559,6 +2756,16 @@
 						tx-channel = "nettx1";
 						tx_queue_depth = <32>;
 					};
+					interface-2 {
+						slave_port = <2>;
+						tx-channel = "nettx2";
+						tx_queue_depth = <32>;
+					};
+					interface-3 {
+						slave_port = <3>;
+						tx-channel = "nettx3";
+						tx_queue_depth = <32>;
+					};
 				};
 
 				slaves {
@@ -2570,7 +2777,14 @@
 						label		= "slave1";
 						link-interface	= <4>;
 					};
-
+					slave2 {
+						label		= "slave2";
+						link-interface	= <2>;
+					};
+					slave3 {
+						label		= "slave3";
+						link-interface	= <2>;
+					};
 				};
 			};
 			pa: pa@2000000 {
@@ -2580,8 +2794,8 @@
 				txhook-softcsum		= <40>;
 				rxhook-order		= <10>;
 
-				tx_cmd_queue_depth	= <32>;
-				tx_data_queue_depth	= <32>;
+				tx_cmd_queue_depth	= <64>;
+				tx_data_queue_depth	= <1024>;
 				rx_pool_depth		= <64>;
 				rx_buffer_size		= <128>;
 				lut-ranges		= <0 43 56 63>;
@@ -2602,7 +2816,7 @@
 				interface-0 {
 					chan-0 {
 						tx-channel = "qos-bypass-0";
-						tx_queue_depth = <128>;
+						tx_queue_depth = <1024>;
 					};
 					chan-1 {
 						tx-channel = "qos0";
@@ -2632,7 +2846,7 @@
 				interface-1 {
 					chan-0 {
 						tx-channel = "qos-bypass-1";
-						tx_queue_depth = <128>;
+						tx_queue_depth = <1024>;
 					};
 					chan-1 {
 						tx-channel = "qos6";

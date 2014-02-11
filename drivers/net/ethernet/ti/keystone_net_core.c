@@ -58,16 +58,6 @@ static inline int emac_arch_get_mac_addr(char *x,
 	return 0;
 }
 
-static unsigned int sg_count(struct scatterlist *sg, unsigned int max_ents)
-{
-	unsigned int count;
-
-	for (count = 0; sg && (count < max_ents); count++, sg = sg_next(sg))
-		;
-
-	return count;
-}
-
 static const char *netcp_node_name(struct device_node *node)
 {
 	const char *name;
@@ -325,32 +315,63 @@ EXPORT_SYMBOL(netcp_unregister_module);
  *  Module TX and RX Hook management
  */
 struct netcp_hook_list {
-	struct list_head	 list;
 	netcp_hook_rtn		*hook_rtn;
 	void			*hook_data;
 	int			 order;
 };
 
-
 int netcp_register_txhook(struct netcp_priv *netcp_priv, int order,
 		netcp_hook_rtn *hook_rtn, void *hook_data)
 {
-	struct netcp_hook_list	*entry;
-	struct netcp_hook_list	*next;
+	struct netcp_hook_list *old_array;
+	struct netcp_hook_list *new_array;
+	struct netcp_hook_list *old_entry;
+	struct netcp_hook_list *new_entry;
+	int before = 0;
+	int after = 0;
 
-	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
-	if (!entry)
-		return -ENOMEM;
+	spin_lock(&netcp_priv->lock);
 
-	entry->hook_rtn  = hook_rtn;
-	entry->hook_data = hook_data;
-	entry->order     = order;
+	old_array = netcp_priv->txhook_list_array;
+	if (old_array != NULL) {
+		for (old_entry = old_array; old_entry->hook_rtn; ++old_entry) {
+			if (old_entry->order > order)
+				break;
+			++before;
+		}
 
-	list_for_each_entry(next, &netcp_priv->txhook_list_head, list) {
-		if (next->order > order)
-			break;
+		for (; old_entry->hook_rtn; ++old_entry)
+			++after;
 	}
-	__list_add(&entry->list, next->list.prev, &next->list);
+
+	new_array = kmalloc((sizeof(*new_entry) * (before + after + 1)) +
+			    sizeof(void *), GFP_ATOMIC);
+	if (new_array == NULL) {
+		spin_unlock(&netcp_priv->lock);
+		return -ENOMEM;
+	}
+
+	old_entry = old_array;
+	new_entry = new_array;
+	while (before--)
+		*new_entry++ = *old_entry++;
+
+	new_entry->hook_rtn  = hook_rtn;
+	new_entry->hook_data = hook_data;
+	new_entry->order     = order;
+	new_entry++;
+
+	while (after--)
+		*new_entry++ = *old_entry++;
+
+	new_entry->hook_rtn = NULL;
+
+	rcu_assign_pointer(netcp_priv->txhook_list_array, new_array);
+	spin_unlock(&netcp_priv->lock);
+	synchronize_rcu();
+
+	if (old_array != NULL)
+		kfree(old_array);
 
 	return 0;
 }
@@ -359,41 +380,122 @@ EXPORT_SYMBOL(netcp_register_txhook);
 int netcp_unregister_txhook(struct netcp_priv *netcp_priv, int order,
 		netcp_hook_rtn *hook_rtn, void *hook_data)
 {
-	struct netcp_hook_list	*next;
+	struct netcp_hook_list *old_array;
+	struct netcp_hook_list *new_array;
+	struct netcp_hook_list *old_entry;
+	struct netcp_hook_list *new_entry;
+	int before = 0;
+	int after = 0;
 
-	list_for_each_entry(next, &netcp_priv->txhook_list_head, list) {
-		if ((next->order     == order) &&
-		    (next->hook_rtn  == hook_rtn) &&
-		    (next->hook_data == hook_data)) {
-			list_del(&next->list);
-			kfree(next);
-			return 0;
+	spin_lock(&netcp_priv->lock);
+
+	old_array = netcp_priv->txhook_list_array;
+	if (old_array == NULL) {
+		spin_unlock(&netcp_priv->lock);
+		return -ENOENT;
+	}
+		
+	for (old_entry = old_array; old_entry->hook_rtn; ++old_entry) {
+		if ((old_entry->order     == order) &&
+		    (old_entry->hook_rtn  == hook_rtn) &&
+		    (old_entry->hook_data == hook_data))
+			break;
+		++before;
+	}
+	
+	if (old_entry->hook_rtn == NULL) {
+		spin_unlock(&netcp_priv->lock);
+		return -ENOENT;
+	}
+	old_entry++;
+
+	for (; old_entry->hook_rtn; ++old_entry)
+		++after;
+
+	if ((before + after) == 0) {
+		new_array = NULL;
+	} else {
+		new_array = kmalloc((sizeof(*new_entry) * (before + after)) +
+				    sizeof(void *), GFP_ATOMIC);
+		if (new_array == NULL) {
+			spin_unlock(&netcp_priv->lock);
+			return -ENOMEM;
 		}
+
+		old_entry = old_array;
+		new_entry = new_array;
+		while (before--)
+			*new_entry++ = *old_entry++;
+
+		old_entry++;
+
+		while (after--)
+			*new_entry++ = *old_entry++;
+
+		new_entry->hook_rtn = NULL;
 	}
 
-	return -ENOENT;
+	rcu_assign_pointer(netcp_priv->txhook_list_array, new_array);
+	spin_unlock(&netcp_priv->lock);
+	synchronize_rcu();
+
+	kfree(old_array);
+	return 0;
 }
 EXPORT_SYMBOL(netcp_unregister_txhook);
 
 int netcp_register_rxhook(struct netcp_priv *netcp_priv, int order,
 		netcp_hook_rtn *hook_rtn, void *hook_data)
 {
-	struct netcp_hook_list	*entry;
-	struct netcp_hook_list	*next;
+	struct netcp_hook_list *old_array;
+	struct netcp_hook_list *new_array;
+	struct netcp_hook_list *old_entry;
+	struct netcp_hook_list *new_entry;
+	int before = 0;
+	int after = 0;
 
-	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
-	if (!entry)
-		return -ENOMEM;
+	spin_lock(&netcp_priv->lock);
 
-	entry->hook_rtn  = hook_rtn;
-	entry->hook_data = hook_data;
-	entry->order     = order;
+	old_array = netcp_priv->rxhook_list_array;
+	if (old_array != NULL) {
+		for (old_entry = old_array; old_entry->hook_rtn; ++old_entry) {
+			if (old_entry->order > order)
+				break;
+			++before;
+		}
 
-	list_for_each_entry(next, &netcp_priv->rxhook_list_head, list) {
-		if (next->order > order)
-			break;
+		for (; old_entry->hook_rtn; ++old_entry)
+			++after;
 	}
-	__list_add(&entry->list, next->list.prev, &next->list);
+
+	new_array = kmalloc((sizeof(*new_entry) * (before + after + 1)) +
+			    sizeof(void *), GFP_ATOMIC);
+	if (new_array == NULL) {
+		spin_unlock(&netcp_priv->lock);
+		return -ENOMEM;
+	}
+
+	old_entry = old_array;
+	new_entry = new_array;
+	while (before--)
+		*new_entry++ = *old_entry++;
+
+	new_entry->hook_rtn  = hook_rtn;
+	new_entry->hook_data = hook_data;
+	new_entry->order     = order;
+	new_entry++;
+
+	while (after--)
+		*new_entry++ = *old_entry++;
+
+	new_entry->hook_rtn = NULL;
+
+	rcu_assign_pointer(netcp_priv->rxhook_list_array, new_array);
+	spin_unlock(&netcp_priv->lock);
+	synchronize_rcu();
+
+	if (old_array != NULL)
+		kfree(old_array);
 
 	return 0;
 }
@@ -402,70 +504,70 @@ EXPORT_SYMBOL(netcp_register_rxhook);
 int netcp_unregister_rxhook(struct netcp_priv *netcp_priv, int order,
 		netcp_hook_rtn *hook_rtn, void *hook_data)
 {
-	struct netcp_hook_list	*next;
+	struct netcp_hook_list *old_array;
+	struct netcp_hook_list *new_array;
+	struct netcp_hook_list *old_entry;
+	struct netcp_hook_list *new_entry;
+	int before = 0;
+	int after = 0;
 
-	list_for_each_entry(next, &netcp_priv->rxhook_list_head, list) {
-		if ((next->order     == order) &&
-		    (next->hook_rtn  == hook_rtn) &&
-		    (next->hook_data == hook_data)) {
-			list_del(&next->list);
-			kfree(next);
-			return 0;
+	spin_lock(&netcp_priv->lock);
+
+	old_array = netcp_priv->rxhook_list_array;
+	if (old_array == NULL) {
+		spin_unlock(&netcp_priv->lock);
+		return -ENOENT;
+	}
+		
+	for (old_entry = old_array; old_entry->hook_rtn; ++old_entry) {
+		if ((old_entry->order     == order) &&
+		    (old_entry->hook_rtn  == hook_rtn) &&
+		    (old_entry->hook_data == hook_data))
+			break;
+		++before;
+	}
+	
+	if (old_entry->hook_rtn == NULL) {
+		spin_unlock(&netcp_priv->lock);
+		return -ENOENT;
+	}
+	old_entry++;
+
+	for (; old_entry->hook_rtn; ++old_entry)
+		++after;
+
+	if ((before + after) == 0) {
+		new_array = NULL;
+	} else {
+		new_array = kmalloc((sizeof(*new_entry) * (before + after)) +
+				    sizeof(void *), GFP_ATOMIC);
+		if (new_array == NULL) {
+			spin_unlock(&netcp_priv->lock);
+			return -ENOMEM;
 		}
+
+		old_entry = old_array;
+		new_entry = new_array;
+		while (before--)
+			*new_entry++ = *old_entry++;
+
+		old_entry++;
+
+		while (after--)
+			*new_entry++ = *old_entry++;
+
+		new_entry->hook_rtn = NULL;
 	}
 
-	return -ENOENT;
+	rcu_assign_pointer(netcp_priv->rxhook_list_array, new_array);
+	spin_unlock(&netcp_priv->lock);
+	synchronize_rcu();
+
+	kfree(old_array);
+	return 0;
 }
 EXPORT_SYMBOL(netcp_unregister_rxhook);
 
-u32 *netcp_push_psdata(struct netcp_packet *p_info, unsigned bytes)
-{
-	u32		*buf;
-	unsigned	 words;
-
-	if ((bytes & 0x03) != 0)
-		return NULL;
-	words = bytes >> 2;
-
-	if ((p_info->psdata_len + words) > NETCP_PSDATA_LEN)
-		return NULL;
-
-	p_info->psdata_len += words;
-	buf = &p_info->psdata[NETCP_PSDATA_LEN - p_info->psdata_len];
-
-	memset(buf, 0, bytes);
-
-	return buf;
-}
-EXPORT_SYMBOL(netcp_push_psdata);
-
-int netcp_align_psdata(struct netcp_packet *p_info, unsigned byte_align)
-{
-	int	padding;
-
-	switch (byte_align) {
-	case 0:
-		padding = -EINVAL;
-		break;
-	case 1:
-	case 2:
-	case 4:
-		padding = 0;
-		break;
-	case 8:
-		padding = (p_info->psdata_len << 2) % 8;
-		break;
-	case 16:
-		padding = (p_info->psdata_len << 2) % 16;
-		break;
-	default:
-		padding = (p_info->psdata_len << 2) % byte_align;
-		break;
-	}
-
-	return padding;
-}
-EXPORT_SYMBOL(netcp_align_psdata);
 
 #define NETCP_DEBUG (NETIF_MSG_HW	| NETIF_MSG_WOL		|	\
 		    NETIF_MSG_DRV	| NETIF_MSG_LINK	|	\
@@ -476,8 +578,9 @@ EXPORT_SYMBOL(netcp_align_psdata);
 		    NETIF_MSG_PKTDATA	| NETIF_MSG_TX_QUEUED	|	\
 		    NETIF_MSG_RX_STATUS)
 
-#define NETCP_NAPI_WEIGHT	128
-#define NETCP_TX_TIMEOUT	40
+#define NETCP_NAPI_WEIGHT_RX	128
+#define NETCP_NAPI_WEIGHT_TX	64
+#define NETCP_TX_TIMEOUT	(5 * HZ)
 #define NETCP_MIN_PACKET_SIZE	ETH_ZLEN
 #define NETCP_MAX_PACKET_SIZE	(VLAN_ETH_FRAME_LEN + ETH_FCS_LEN)
 
@@ -541,11 +644,19 @@ static void netcp_dump_packet(struct netcp_packet *p_info, const char *cause)
 		tail[0x0c], tail[0x0d], tail[0x0e], tail[0x0f]);
 }
 
+static inline void netcp_frag_free(bool is_frag, void *ptr)
+{
+	if (is_frag)
+		put_page(virt_to_head_page(ptr));
+	else
+		kfree(ptr);
+}
+
 static void netcp_rx_complete(void *data)
 {
 	struct netcp_packet *p_info = data;
 	struct netcp_priv *netcp = p_info->netcp;
-	struct sk_buff *skb = p_info->skb;
+	struct sk_buff *skb;
 	struct scatterlist *sg;
 	enum dma_status status;
 	unsigned int frags;
@@ -559,29 +670,51 @@ static void netcp_rx_complete(void *data)
 		netcp->rx_state != RX_STATE_POLL	&&
 		netcp->rx_state != RX_STATE_TEARDOWN);
 
-	/* sg[2] describes the buffer already attached to the sk_buff. */
+	/* sg[2] describes the primary buffer */
+	/* Build a new sk_buff for this buffer */
+	dma_unmap_single(&netcp->pdev->dev, sg_dma_address(&p_info->sg[2]),
+			p_info->primary_bufsiz, DMA_FROM_DEVICE);
+	skb = build_skb(p_info->primary_bufptr, p_info->primary_bufsiz);
+	if (unlikely(!skb)) {
+		 /* Free the primary buffer */
+		netcp_frag_free((p_info->primary_bufsiz <= PAGE_SIZE), 
+				p_info->primary_bufptr);
+		 /* Free other buffers in the scatterlist */
+		for (frags = 0, sg = sg_next(&p_info->sg[2]);
+				frags < NETCP_SGLIST_SIZE-3 && sg;
+				++frags, sg = sg_next(sg)) {
+			dma_unmap_page(&netcp->pdev->dev, sg_dma_address(sg),
+					PAGE_SIZE, DMA_FROM_DEVICE);
+			__free_page(sg_page(sg));
+		}
+		return;
+	}
+	p_info->skb = skb;
+	skb->dev = netcp->ndev;
+
+	/* Update data, tail, and len */
+	skb_reserve(skb, NET_IP_ALIGN + NET_SKB_PAD);
 	len = sg_dma_len(&p_info->sg[2]);
-	if (sg_is_last(&p_info->sg[2]))
-		len -= 4;
-	skb_put(skb, len);
+	__skb_put(skb, len);
 
 	/* Fill in the page fragment list from sg[3] and later */
 	for (frags = 0, sg = sg_next(&p_info->sg[2]);
 			frags < NETCP_SGLIST_SIZE-3 && sg;
 			++frags, sg = sg_next(sg)) {
+		dma_unmap_page(&netcp->pdev->dev, sg_dma_address(sg),
+				PAGE_SIZE, DMA_FROM_DEVICE);
 		len = sg_dma_len(sg);
-		if (sg_is_last(sg))
-			len -= 4;
-		skb_add_rx_frag(skb, frags, sg_page(sg), sg->offset, len, len);
+		skb_add_rx_frag(skb, frags, sg_page(sg), sg->offset, len, PAGE_SIZE);
 	}
 
-	dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], frags+1, DMA_FROM_DEVICE);
+	/* Remove the FCS from the packet (last 4 bytes) */
+	__pskb_trim(skb, skb->len - ETH_FCS_LEN);
 
 	if (unlikely(netcp->rx_state == RX_STATE_TEARDOWN)) {
 		dev_dbg(netcp->dev,
 			"receive: reclaimed packet %p, status %d, state %s\n",
 			p_info, status, netcp_rx_state_str(netcp));
-		dev_kfree_skb_any(skb);
+		dev_kfree_skb(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
 		netcp->ndev->stats.rx_dropped++;
 		return;
@@ -591,7 +724,7 @@ static void netcp_rx_complete(void *data)
 		dev_warn(netcp->dev,
 			 "receive: reclaimed packet %p, status %d, state %s\n",
 			 p_info, status, netcp_rx_state_str(netcp));
-		dev_kfree_skb_any(skb);
+		dev_kfree_skb(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
 		netcp->ndev->stats.rx_errors++;
 		return;
@@ -599,7 +732,7 @@ static void netcp_rx_complete(void *data)
 
 	if (unlikely(!skb->len)) {
 		dev_warn(netcp->dev, "receive: zero length packet\n");
-		dev_kfree_skb_any(skb);
+		dev_kfree_skb(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
 		netcp->ndev->stats.rx_errors++;
 		return;
@@ -616,21 +749,29 @@ static void netcp_rx_complete(void *data)
 
 	/* Call each of the RX hooks */
 	p_info->rxtstamp_complete = false;
-	list_for_each_entry(rx_hook, &netcp->rxhook_list_head, list) {
-		int ret;
-		ret = rx_hook->hook_rtn(rx_hook->order, rx_hook->hook_data, p_info);
-		if (ret) {
-			dev_err(netcp->dev, "RX hook %d failed: %d\n", rx_hook->order, ret);
-			dev_kfree_skb_any(skb);
-			kmem_cache_free(netcp_pinfo_cache, p_info);
-			return;
+	rcu_read_lock();
+	rx_hook = rcu_dereference(netcp->rxhook_list_array);
+	if (rx_hook) {
+		for (; rx_hook->hook_rtn; ++rx_hook) {
+			int ret;
+			ret = rx_hook->hook_rtn(rx_hook->order,
+						rx_hook->hook_data,
+						p_info);
+			if (ret) {
+				rcu_read_unlock();
+				dev_err(netcp->dev, "RX hook %d failed: %d\n",
+					rx_hook->order, ret);
+				dev_kfree_skb(skb);
+				kmem_cache_free(netcp_pinfo_cache, p_info);
+				return;
+			}
 		}
 	}
+	rcu_read_unlock();
 
 	netcp->ndev->stats.rx_packets++;
 	netcp->ndev->stats.rx_bytes += skb->len;
 
-	p_info->skb = NULL;
 	kmem_cache_free(netcp_pinfo_cache, p_info);
 
 	/* push skb up the stack */
@@ -638,50 +779,58 @@ static void netcp_rx_complete(void *data)
 	netif_receive_skb(skb);
 }
 
+/*
+ *  Another ugly layering violation. We can only pass one
+ *  value describing a secondary buffer, but we need both
+ *  the page and dma addresses. -rrp
+ */
+#define	page_to_dma(dev,pg)	pfn_to_dma(dev, page_to_pfn(pg))
+
 /* Release a free receive buffer */
 static void netcp_rxpool_free(void *arg, unsigned q_num, unsigned bufsize,
 		struct dma_async_tx_descriptor *desc)
 {
 	struct netcp_priv *netcp = arg;
+	struct device *dev = &netcp->pdev->dev;
 
 	if (q_num == 0) {
 		struct netcp_packet *p_info = desc->callback_param;
-		struct sk_buff *skb = p_info->skb;
 
-		dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
-		dev_kfree_skb_any(skb);
+		dma_unmap_single(dev, sg_dma_address(&p_info->sg[2]),
+				p_info->primary_bufsiz, DMA_FROM_DEVICE);
+		netcp_frag_free((p_info->primary_bufsiz <= PAGE_SIZE), 
+				p_info->primary_bufptr);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
 	} else {
-		void *bufptr = desc->callback_param;
-		struct scatterlist sg[1];
-
-		sg_init_table(sg, 1);
-		sg_set_buf(&sg[0], bufptr, PAGE_SIZE);
-		sg_dma_address(&sg[0]) = virt_to_dma(&netcp->pdev->dev, bufptr);
-		dma_unmap_sg(&netcp->pdev->dev, sg, 1, DMA_FROM_DEVICE);
-		free_page((unsigned long)bufptr);
+		struct page *page = desc->callback_param;
+		dma_unmap_page(dev, page_to_dma(dev, page),
+				PAGE_SIZE, DMA_FROM_DEVICE);
+		__free_page(page);
 	}
 }
 
 static void netcp_rx_complete2nd(void *data)
 {
+	struct page *page = data;
+
 	WARN(1, "Attempt to complete secondary receive buffer!\n");
+	/* FIXME: We need to unmap the page, but don't have the info needed */
+	__free_page(page);
 }
 
 /* Allocate a free receive buffer */
 static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
-		unsigned q_num, unsigned bufsize)
+		unsigned q_num, unsigned size)
 {
 	struct netcp_priv *netcp = arg;
 	struct dma_async_tx_descriptor *desc;
-	struct dma_device *device;
-	u32 err = 0;
-
-	device = netcp->rx_channel->device;
+	int err = 0;
 
 	if (q_num == 0) {
 		struct netcp_packet *p_info;
-		struct sk_buff *skb;
+		void *bufptr;
+		unsigned char *data;
+		unsigned int bufsiz;
 
 		/* Allocate a primary receive queue entry */
 		p_info = kmem_cache_alloc(netcp_pinfo_cache, GFP_ATOMIC);
@@ -689,27 +838,38 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 			dev_err(netcp->dev, "packet alloc failed\n");
 			return NULL;
 		}
+		p_info->skb = NULL;
 		p_info->netcp = netcp;
 
-		skb = netdev_alloc_skb_ip_align(netcp->ndev, bufsize);
-		if (!skb) {
-			dev_err(netcp->dev, "skb alloc failed\n");
+		bufsiz = SKB_DATA_ALIGN(size + NET_IP_ALIGN + NET_SKB_PAD) +
+			 SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+		if (bufsiz <= PAGE_SIZE) {
+			bufptr = netdev_alloc_frag(bufsiz);
+			p_info->primary_bufsiz = bufsiz;
+		} else {
+			bufptr = kmalloc(bufsiz, GFP_ATOMIC | __GFP_COLD);
+			p_info->primary_bufsiz = 0;
+		}
+		if (!bufptr) {
+			dev_warn(netcp->dev, "Primary RX buffer allocation failed\n");
 			kmem_cache_free(netcp_pinfo_cache, p_info);
 			return NULL;
 		}
-		skb->dev = netcp->ndev;
-		p_info->skb = skb;
+		p_info->primary_bufptr = bufptr;
+		
+		/* Same as skb_reserve(skb, NET_IP_ALIGN + NET_SKB_PAD) */
+		data = bufptr + NET_IP_ALIGN + NET_SKB_PAD;
 
 		sg_init_table(p_info->sg, NETCP_SGLIST_SIZE);
 		sg_set_buf(&p_info->sg[0], p_info->epib, sizeof(p_info->epib));
 		sg_set_buf(&p_info->sg[1], p_info->psdata, sizeof(p_info->psdata));
-		sg_set_buf(&p_info->sg[2], skb_tail_pointer(skb), skb_tailroom(skb));
+		sg_set_buf(&p_info->sg[2], data, size);
 
 		p_info->sg_ents = 2 + dma_map_sg(&netcp->pdev->dev, &p_info->sg[2],
 						 1, DMA_FROM_DEVICE);
 		if (p_info->sg_ents != 3) {
 			dev_err(netcp->dev, "dma map failed\n");
-			dev_kfree_skb_any(skb);
+			netcp_frag_free((bufsiz <= PAGE_SIZE), bufptr);
 			kmem_cache_free(netcp_pinfo_cache, p_info);
 			return NULL;
 		}
@@ -719,7 +879,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 					       DMA_HAS_EPIB | DMA_HAS_PSINFO);
 		if (IS_ERR_OR_NULL(desc)) {
 			dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
-			dev_kfree_skb_any(skb);
+			netcp_frag_free((bufsiz <= PAGE_SIZE), bufptr);
 			kmem_cache_free(netcp_pinfo_cache, p_info);
 			err = PTR_ERR(desc);
 			if (err != -ENOMEM) {
@@ -734,24 +894,24 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		p_info->cookie = desc->cookie;
 
 	} else {
+		struct page *page;
 
 		/* Allocate a secondary receive queue entry */
 		struct scatterlist sg[1];
-		void *bufptr;
 
-		bufptr = (void *)__get_free_page(GFP_ATOMIC);
-		if (!bufptr) {
+		page = alloc_page(GFP_ATOMIC | GFP_DMA32 | __GFP_COLD);
+		if (!page) {
 			dev_warn(netcp->dev, "page alloc failed for pool %d\n", q_num);
 			return NULL;
 		}
 
 		sg_init_table(sg, 1);
-		sg_set_buf(&sg[0], bufptr, PAGE_SIZE);
+		sg_set_page(&sg[0], page, PAGE_SIZE, 0);
 
 		err = dma_map_sg(&netcp->pdev->dev, sg, 1, DMA_FROM_DEVICE);
 		if (err != 1) {
 			dev_warn(netcp->dev, "map error for pool %d\n", q_num);
-			free_page((unsigned long)bufptr);
+			__free_page(page);
 			return NULL;
 		}
 
@@ -760,7 +920,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 					       q_num << DMA_QNUM_SHIFT);
 		if (IS_ERR_OR_NULL(desc)) {
 			dma_unmap_sg(&netcp->pdev->dev, sg, 1, DMA_FROM_DEVICE);
-			free_page((unsigned long)bufptr);
+			__free_page(page);
 
 			err = PTR_ERR(desc);
 			if (err != -ENOMEM) {
@@ -770,10 +930,11 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 			return NULL;
 		}
 
-		desc->callback_param = bufptr;
+		desc->callback_param = page;
 		desc->callback = netcp_rx_complete2nd;
 	}
 
+	wmb();
 	return desc;
 }
 
@@ -781,15 +942,10 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 static int netcp_poll(struct napi_struct *napi, int budget)
 {
 	struct netcp_priv *netcp = container_of(napi, struct netcp_priv, napi);
-	unsigned long flags;
 	unsigned packets;
-
-	spin_lock_irqsave(&netcp->lock, flags);
 
 	BUG_ON(netcp->rx_state != RX_STATE_SCHEDULED);
 	netcp_set_rx_state(netcp, RX_STATE_POLL);
-
-	spin_unlock_irqrestore(&netcp->lock, flags);
 
 	packets = dma_poll(netcp->rx_channel, budget);
 
@@ -804,6 +960,16 @@ static int netcp_poll(struct napi_struct *napi, int budget)
 	dma_rxfree_refill(netcp->rx_channel);
 
 	return packets;
+}
+
+static void netcp_rx_notify(struct dma_chan *chan, void *arg)
+{
+	struct netcp_priv *netcp = arg;
+
+	BUG_ON(netcp->rx_state != RX_STATE_INTERRUPT);
+	dmaengine_pause(netcp->rx_channel);
+	netcp_set_rx_state(netcp, RX_STATE_SCHEDULED);
+	napi_schedule(&netcp->napi);
 }
 
 static const char *netcp_tx_state_str(enum netcp_tx_state tx_state)
@@ -833,67 +999,135 @@ static inline void netcp_set_txpipe_state(struct netcp_tx_pipe *tx_pipe,
 	cpu_relax();
 }
 
-static void netcp_tx_complete(void *data)
+static int netcp_tx_unmap_skb(struct device *dev, struct sk_buff *skb, int offset, int len)
 {
-	struct netcp_packet *p_info = data;
-	struct netcp_priv *netcp = p_info->netcp;
-	struct netcp_tx_pipe *tx_pipe = p_info->tx_pipe;
-	struct sk_buff *skb = p_info->skb;
-	enum dma_status status;
-	unsigned int sg_ents;
-	int poll_count;
+	int start = skb_headlen(skb);
+	int i, copy = start - offset;
+	struct sk_buff *frag_iter;
+	int elt = 0;
 
-	if (unlikely(p_info->cookie <= 0))
-		WARN(1, "invalid dma cookie == %d", p_info->cookie);
-	else {
-		status = dma_async_is_tx_complete(p_info->tx_pipe->dma_channel,
-						  p_info->cookie, NULL, NULL);
-		WARN((status != DMA_SUCCESS && status != DMA_ERROR),
-				"invalid dma status %d", status);
-		if (status != DMA_SUCCESS)
-			netcp->ndev->stats.tx_errors++;
+	if (copy > 0) {
+		if (copy > len)
+			copy = len;
+		dma_unmap_single(dev, virt_to_dma(dev, skb->data + offset),
+				copy, DMA_TO_DEVICE);
+		elt++;
+		if ((len -= copy) == 0)
+			return elt;
+		offset += copy;
 	}
 
-	sg_ents = sg_count(&p_info->sg[2], p_info->sg_ents);
-	dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], sg_ents, DMA_TO_DEVICE);
+	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
+		void *virt_addr;
+		int end;
 
+		WARN_ON(start > offset + len);
+
+		end = start + skb_frag_size(&skb_shinfo(skb)->frags[i]);
+		if ((copy = end - offset) > 0) {
+			skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+
+			if (copy > len)
+				copy = len;
+			virt_addr = skb_frag_address(frag) + offset - start;
+			dma_unmap_page(dev, virt_to_dma(dev, virt_addr),
+					copy, DMA_TO_DEVICE);
+			elt++;
+			if (!(len -= copy))
+				return elt;
+			offset += copy;
+		}
+		start = end;
+	}
+
+	skb_walk_frags(skb, frag_iter) {
+		int end;
+
+		WARN_ON(start > offset + len);
+
+		end = start + frag_iter->len;
+		if ((copy = end - offset) > 0) {
+			if (copy > len)
+				copy = len;
+			elt += netcp_tx_unmap_skb(dev, frag_iter,
+						offset - start, copy);
+			if ((len -= copy) == 0)
+				return elt;
+			offset += copy;
+		}
+		start = end;
+	}
+	BUG_ON(len);
+	return elt;
+}
+
+struct netcp_tx_cb {
+	struct netcp_tx_pipe	*tx_pipe;
+	void			*ts_context;
+	int			(*txtstamp_complete)(void *context,
+						struct sk_buff *skb);
+};
+
+static void netcp_tx_complete(void *data)
+{
+	struct sk_buff *skb = data;
+	struct netcp_priv *netcp = netdev_priv(skb->dev);
+	struct netcp_tx_cb *tx_cb = (struct netcp_tx_cb *)skb->cb;
+	struct netcp_tx_pipe *tx_pipe = tx_cb->tx_pipe;
+	unsigned int ents;
+	int poll_count;
+
+	ents = netcp_tx_unmap_skb(&netcp->pdev->dev, skb, 0, skb->len);
+
+#ifdef DEBUG
 	netcp_dump_packet(p_info, "txc");
+#endif
 
-	if (p_info->txtstamp_complete)
-		p_info->txtstamp_complete(p_info->ts_context, p_info);
+	if (tx_cb->txtstamp_complete)
+		tx_cb->txtstamp_complete(tx_cb->ts_context, skb);
 
-	poll_count = atomic_add_return(sg_ents, &tx_pipe->dma_poll_count);
+	poll_count = atomic_add_return(ents, &tx_pipe->dma_poll_count);
 	if ((poll_count >= tx_pipe->dma_resume_threshold) &&
 	    netif_subqueue_stopped(netcp->ndev, skb)) {
 		u16 subqueue = skb_get_queue_mapping(skb);
-		dev_dbg(netcp->dev, "waking subqueue %hu\n", subqueue);
+		dev_dbg(netcp->dev, "waking subqueue %hu, %s poll count %d\n",
+			subqueue, tx_pipe->dma_chan_name, poll_count);
 		netif_wake_subqueue(netcp->ndev, subqueue);
 	}
 
-	dev_kfree_skb_any(skb);
-	kfree(p_info);
+	dev_kfree_skb(skb);
 }
 
-static void netcp_tx_tasklet(unsigned long data)
+static int netcp_tx_poll(struct napi_struct *napi, int budget)
 {
-	struct netcp_tx_pipe *tx_pipe = (void *)data;
+	struct netcp_tx_pipe *tx_pipe =
+		container_of(napi, struct netcp_tx_pipe, dma_poll_napi);
 	int poll_count, packets;
 
 	if (unlikely(tx_pipe->dma_poll_state != TX_STATE_SCHEDULED)) {
-		WARN(1, "spurious tasklet activation, txpipe %s state %d",
+		WARN(1, "spurious netcp_tx_poll activation, txpipe %s state %d",
 			tx_pipe->dma_chan_name, tx_pipe->dma_poll_state);
-		return;
+		return 0;
 	}
 
-	packets = dma_poll(tx_pipe->dma_channel, -1);
+	netcp_set_txpipe_state(tx_pipe, TX_STATE_POLL);
 
+	packets = dma_poll(tx_pipe->dma_channel, budget);
 	poll_count = atomic_read(&tx_pipe->dma_poll_count);
-	netcp_set_txpipe_state(tx_pipe, TX_STATE_INTERRUPT);
-	dmaengine_resume(tx_pipe->dma_channel);
+
+	if (packets < budget) {
+		netcp_set_txpipe_state(tx_pipe, TX_STATE_INTERRUPT);
+		napi_complete(&tx_pipe->dma_poll_napi);
+		dmaengine_resume(tx_pipe->dma_channel);
+	} else {
+		netcp_set_txpipe_state(tx_pipe, TX_STATE_SCHEDULED);
+	}
 
 	dev_dbg(tx_pipe->netcp_priv->dev,
 		"txpipe %s poll count %d, packets %d\n",
 		tx_pipe->dma_chan_name, poll_count, packets);
+	
+	return packets;
 }
 
 static void netcp_tx_notify(struct dma_chan *chan, void *arg)
@@ -903,7 +1137,7 @@ static void netcp_tx_notify(struct dma_chan *chan, void *arg)
 	BUG_ON(tx_pipe->dma_poll_state != TX_STATE_INTERRUPT);
 	dmaengine_pause(tx_pipe->dma_channel);
 	netcp_set_txpipe_state(tx_pipe, TX_STATE_SCHEDULED);
-	tasklet_schedule(&tx_pipe->dma_poll_tasklet);
+	napi_schedule(&tx_pipe->dma_poll_napi);
 }
 
 /* Push an outcoming packet */
@@ -911,10 +1145,12 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
 	struct dma_async_tx_descriptor *desc;
-	struct netcp_tx_pipe *tx_pipe = NULL;
+	struct netcp_tx_pipe *tx_pipe;
 	struct netcp_hook_list *tx_hook;
-	struct netcp_packet *p_info;
+	struct netcp_tx_cb *tx_cb;
+	struct netcp_packet p_info;
 	int subqueue = skb_get_queue_mapping(skb);
+	dma_cookie_t cookie;
 	int real_sg_ents = 0;
 	int poll_count;
 	int ret = 0;
@@ -922,115 +1158,123 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	ndev->stats.tx_packets++;
 	ndev->stats.tx_bytes += skb->len;
 
-	p_info = kmalloc(sizeof(*p_info), GFP_ATOMIC);
-	if (!p_info) {
-		ndev->stats.tx_dropped++;
-		dev_kfree_skb_any(skb);
-		dev_warn(netcp->dev, "failed to alloc packet info\n");
-		return -ENOMEM;
-	}
-
-	p_info->netcp = netcp;
-	p_info->skb = skb;
-	p_info->tx_pipe = NULL;
-	p_info->psdata_len = 0;
-	p_info->ts_context = NULL;
-	p_info->txtstamp_complete = NULL;
-	memset(p_info->epib, 0, sizeof(p_info->epib));
+	p_info.netcp = netcp;
+	p_info.skb = skb;
+	p_info.tx_pipe = NULL;
+	p_info.psdata_len = 0;
+	p_info.ts_context = NULL;
+	p_info.txtstamp_complete = NULL;
+	memset(p_info.epib, 0, sizeof(p_info.epib));
 
 	/* Find out where to inject the packet for transmission */
-	list_for_each_entry(tx_hook, &netcp->txhook_list_head, list) {
-		ret = tx_hook->hook_rtn(tx_hook->order, tx_hook->hook_data,
-					p_info);
-		if (unlikely(ret != 0)) {
-			if (ret < 0) {
-				dev_err(netcp->dev, "TX hook %d "
-					"rejected the packet: %d\n",
-					tx_hook->order, ret);
+	rcu_read_lock();
+	tx_hook = rcu_dereference(netcp->txhook_list_array);
+	if (tx_hook) {
+		for (; tx_hook->hook_rtn; ++tx_hook) {
+			ret = tx_hook->hook_rtn(tx_hook->order,
+						tx_hook->hook_data,
+						&p_info);
+			if (unlikely(ret != 0)) {
+				if (ret < 0) {
+					dev_err(netcp->dev, "TX hook %d "
+						"rejected the packet: %d\n",
+						tx_hook->order, ret);
+				}
+				rcu_read_unlock();
+				dev_kfree_skb(skb);
+				return (ret < 0) ? ret : NETDEV_TX_OK;
 			}
-			dev_kfree_skb_any(skb);
-			kfree(p_info);
-			return (ret < 0) ? ret : NETDEV_TX_OK;
 		}
 	}
+	rcu_read_unlock();
 
 	/* Make sure some TX hook claimed the packet */
-	tx_pipe = p_info->tx_pipe;
+	tx_pipe = p_info.tx_pipe;
 	if (tx_pipe == NULL) {
 		dev_err(netcp->dev, "No TX hook claimed the packet!\n");
-		dev_kfree_skb_any(skb);
-		kfree(p_info);
-		return -ENXIO;
+		ret = -ENXIO;
+		goto drop;
 	}
 
 	if (unlikely(skb->len < NETCP_MIN_PACKET_SIZE)) {
 		ret = skb_padto(skb, NETCP_MIN_PACKET_SIZE);
 		if (ret < 0) {
+			/* If we get here, the skb has already been dropped */
 			dev_warn(netcp->dev, "padding failed (%d), "
 				 "packet dropped\n", ret);
-			kfree(p_info);
+			ndev->stats.tx_dropped++;
 			return ret;
 		}
 		skb->len = NETCP_MIN_PACKET_SIZE;
 	}
 
-	netcp_dump_packet(p_info, "txs");
+	netcp_dump_packet(&p_info, "txs");
 
 	skb_tx_timestamp(skb);
 
-	sg_init_table(p_info->sg, NETCP_SGLIST_SIZE);
-	sg_set_buf(&p_info->sg[0], p_info->epib, sizeof(p_info->epib));
-	sg_set_buf(&p_info->sg[1], &p_info->psdata[NETCP_PSDATA_LEN - p_info->psdata_len],
-			p_info->psdata_len * sizeof(u32));
+	sg_init_table(p_info.sg, NETCP_SGLIST_SIZE);
+	sg_set_buf(&p_info.sg[0], p_info.epib, sizeof(p_info.epib));
+	sg_set_buf(&p_info.sg[1], &p_info.psdata[NETCP_PSDATA_LEN - p_info.psdata_len],
+			p_info.psdata_len * sizeof(u32));
+	real_sg_ents = skb_to_sgvec(skb, &p_info.sg[2], 0, skb->len);
 
-	/* Map all the packet fragments	into the scatterlist */
-	real_sg_ents = skb_to_sgvec(skb, &p_info->sg[2], 0, skb->len);
-	p_info->sg_ents = 2 + dma_map_sg(&netcp->pdev->dev, &p_info->sg[2],
-					 real_sg_ents, DMA_TO_DEVICE);
-	if (p_info->sg_ents != (real_sg_ents + 2)) {
-		ndev->stats.tx_dropped++;
-		dev_kfree_skb_any(skb);
-		kfree(p_info);
-		real_sg_ents = 0;
-		dev_warn(netcp->dev, "failed to map transmit packet\n");
-		ret = -ENXIO;
-		goto out;
-	}
-
-	desc = dmaengine_prep_slave_sg(tx_pipe->dma_channel, p_info->sg,
-				       p_info->sg_ents, DMA_MEM_TO_DEV,
-				       (DMA_HAS_EPIB | DMA_HAS_PSINFO |
-					tx_pipe->dma_psflags));
-
-	if (IS_ERR_OR_NULL(desc)) {
-		ndev->stats.tx_dropped++;
-		dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], real_sg_ents,
-			     DMA_TO_DEVICE);
-		dev_kfree_skb_any(skb);
-		kfree(p_info);
-		real_sg_ents = 0;
-		dev_dbg(netcp->dev, "failed to prep slave dma\n");
-		ret = -ENOBUFS;
-		goto out;
-	}
-
-	desc->callback_param = p_info;
-	desc->callback = netcp_tx_complete;
-	spin_lock_bh(&netcp->lock);
-	p_info->cookie = dmaengine_submit(desc);
-	spin_unlock_bh(&netcp->lock);
-
-	ndev->trans_start = jiffies;
-
-	ret = NETDEV_TX_OK;
-
-out:
+	/* Reserve descriptors for this packet */
 	poll_count = atomic_sub_return(real_sg_ents, &tx_pipe->dma_poll_count);
 	if (poll_count < tx_pipe->dma_pause_threshold) {
 		dev_dbg(netcp->dev, "pausing subqueue %d, %s poll count %d\n",
 			subqueue, tx_pipe->dma_chan_name, poll_count);
 		netif_stop_subqueue(ndev, subqueue);
+		if (poll_count < 0) {
+			ret = -ENOBUFS;
+			goto drop;
+		}
 	}
+
+	/* Map all the packet fragments	into the scatterlist */
+	p_info.sg_ents = 2 + dma_map_sg(&netcp->pdev->dev, &p_info.sg[2],
+					 real_sg_ents, DMA_TO_DEVICE);
+	if (p_info.sg_ents != (real_sg_ents + 2)) {
+		dev_warn(netcp->dev, "failed to map transmit packet\n");
+		ret = -ENXIO;
+		goto drop;
+	}
+
+	desc = dmaengine_prep_slave_sg(tx_pipe->dma_channel, p_info.sg,
+				       p_info.sg_ents, DMA_MEM_TO_DEV,
+				       (DMA_HAS_EPIB | DMA_HAS_PSINFO |
+					tx_pipe->dma_psflags));
+
+	if (IS_ERR_OR_NULL(desc)) {
+		dma_unmap_sg(&netcp->pdev->dev, &p_info.sg[2], real_sg_ents,
+			     DMA_TO_DEVICE);
+		dev_warn(netcp->dev, "failed to prep slave dma\n");
+		ret = -ENOBUFS;
+		goto drop;
+	}
+
+	tx_cb = (struct netcp_tx_cb *)skb->cb;
+	tx_cb->tx_pipe = p_info.tx_pipe;
+	tx_cb->ts_context = p_info.ts_context;
+	tx_cb->txtstamp_complete = p_info.txtstamp_complete;
+
+	desc->callback_param = skb;
+	desc->callback = netcp_tx_complete;
+	wmb();
+
+	cookie = dmaengine_submit(desc);
+	if (dma_submit_error(cookie)) {
+		dev_warn(netcp->dev, "failed to submit packet for dma: %d\n",
+				cookie);
+		goto drop;
+	}
+
+	ndev->trans_start = jiffies;
+	return NETDEV_TX_OK;
+
+drop:
+	atomic_add(real_sg_ents, &tx_pipe->dma_poll_count);
+	ndev->stats.tx_dropped++;
+	dev_kfree_skb(skb);
 	return ret;
 }
 
@@ -1038,7 +1282,7 @@ out:
 int netcp_txpipe_close(struct netcp_tx_pipe *tx_pipe)
 {
 	if (tx_pipe->dma_channel) {
-		tasklet_disable(&tx_pipe->dma_poll_tasklet);
+		napi_disable(&tx_pipe->dma_poll_napi);
 		dmaengine_pause(tx_pipe->dma_channel);
 		dma_poll(tx_pipe->dma_channel, -1);
 		dma_release_channel(tx_pipe->dma_channel);
@@ -1084,12 +1328,11 @@ int netcp_txpipe_open(struct netcp_tx_pipe *tx_pipe)
 		return ret;
 	}
 
-	netcp_set_txpipe_state(tx_pipe, TX_STATE_INTERRUPT);
-	dma_set_notify(tx_pipe->dma_channel, netcp_tx_notify, tx_pipe);
-
 	tx_pipe->dma_queue = dma_get_tx_queue(tx_pipe->dma_channel);
 	atomic_set(&tx_pipe->dma_poll_count, tx_pipe->dma_queue_depth);
-	tasklet_enable(&tx_pipe->dma_poll_tasklet);
+	netcp_set_txpipe_state(tx_pipe, TX_STATE_INTERRUPT);
+	napi_enable(&tx_pipe->dma_poll_napi);
+	dma_set_notify(tx_pipe->dma_channel, netcp_tx_notify, tx_pipe);
 
 
 	dev_dbg(tx_pipe->netcp_priv->dev, "opened tx pipe %s\n",
@@ -1113,9 +1356,9 @@ int netcp_txpipe_init(struct netcp_tx_pipe *tx_pipe,
 					MAX_SKB_FRAGS : (queue_depth / 4);
 	tx_pipe->dma_resume_threshold = tx_pipe->dma_pause_threshold;
 
-	tasklet_init(&tx_pipe->dma_poll_tasklet, netcp_tx_tasklet, (unsigned long)tx_pipe);
-	tasklet_disable_nosync(&tx_pipe->dma_poll_tasklet);
 	netcp_set_txpipe_state(tx_pipe, TX_STATE_INVALID);
+	netif_napi_add(netcp_priv->ndev, &tx_pipe->dma_poll_napi,
+			netcp_tx_poll, NETCP_NAPI_WEIGHT_TX);
 
 	dev_dbg(tx_pipe->netcp_priv->dev, "initialized tx pipe %s, %d/%d\n",
 		tx_pipe->dma_chan_name, tx_pipe->dma_pause_threshold,
@@ -1279,16 +1522,6 @@ struct dma_chan *netcp_get_rx_chan(struct netcp_priv *netcp)
 }
 EXPORT_SYMBOL(netcp_get_rx_chan);
 
-static void netcp_rx_notify(struct dma_chan *chan, void *arg)
-{
-	struct netcp_priv *netcp = arg;
-
-	BUG_ON(netcp->rx_state != RX_STATE_INTERRUPT);
-	dmaengine_pause(netcp->rx_channel);
-	netcp_set_rx_state(netcp, RX_STATE_SCHEDULED);
-	napi_schedule(&netcp->napi);
-}
-
 /* Open the device */
 static int netcp_ndo_open(struct net_device *ndev)
 {
@@ -1338,12 +1571,7 @@ static int netcp_ndo_open(struct net_device *ndev)
 				err);
 		goto fail;
 	}
-
-	dma_set_notify(netcp->rx_channel, netcp_rx_notify, netcp);
-
 	dev_dbg(netcp->dev, "opened RX channel: %p\n", netcp->rx_channel);
-
-	netcp_set_rx_state(netcp, RX_STATE_INTERRUPT);
 
 	for_each_module(netcp, intf_modpriv) {
 		module = intf_modpriv->netcp_module;
@@ -1356,8 +1584,11 @@ static int netcp_ndo_open(struct net_device *ndev)
 		}
 	}
 
+	netcp_set_rx_state(netcp, RX_STATE_INTERRUPT);
 	dma_rxfree_refill(netcp->rx_channel);
 	napi_enable(&netcp->napi);
+	dma_set_notify(netcp->rx_channel, netcp_rx_notify, netcp);
+
 	netif_tx_wake_all_queues(ndev);
 
 	dev_info(netcp->dev, "netcp device %s opened\n", ndev->name);
@@ -1648,8 +1879,6 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 	netcp = netdev_priv(ndev);
 	spin_lock_init(&netcp->lock);
 	INIT_LIST_HEAD(&netcp->module_head);
-	INIT_LIST_HEAD(&netcp->txhook_list_head);
-	INIT_LIST_HEAD(&netcp->rxhook_list_head);
 	INIT_LIST_HEAD(&netcp->addr_list);
 	netcp->netcp_device = netcp_device;
 	netcp->pdev = netcp_device->platform_device;
@@ -1748,7 +1977,7 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 	}
 
 	/* NAPI register */
-	netif_napi_add(ndev, &netcp->napi, netcp_poll, NETCP_NAPI_WEIGHT);
+	netif_napi_add(ndev, &netcp->napi, netcp_poll, NETCP_NAPI_WEIGHT_RX);
 
 	/* Register the network device */
 	ndev->dev_id		= 0;
@@ -1866,10 +2095,8 @@ static int netcp_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, netcp_device);
 
 	/* Map the Streaming Switch */
-	if (of_property_read_u32_array(node, "streaming-regs",
+	if (!of_property_read_u32_array(node, "streaming-regs",
 					(u32 *)&(temp[0]), 2)) {
-		dev_err(&pdev->dev, "No streaming regs defined\n");
-	} else {
 		netcp_device->streaming_switch =
 			devm_ioremap_nocache(&pdev->dev, temp[0], temp[1]);
 		if (!netcp_device->streaming_switch) {
@@ -1971,7 +2198,7 @@ static int __init netcp_init(void)
 	/* Create a cache for these commonly-used structures */
 	netcp_pinfo_cache = kmem_cache_create("netcp_pinfo_cache",
 			sizeof(struct netcp_packet), sizeof(void *),
-			0, NULL);
+			SLAB_HWCACHE_ALIGN, NULL);
 	if (!netcp_pinfo_cache)
 		return -ENOMEM;
 

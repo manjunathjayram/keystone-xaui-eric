@@ -66,6 +66,16 @@ static inline bool pcie_pme_no_msi(void) { return false; }
 static inline void pcie_pme_interrupt_enable(struct pci_dev *dev, bool en) {}
 #endif /* !CONFIG_PCIE_PME */
 
+#ifdef CONFIG_PCIEAER
+extern bool pcie_aer_msi_disabled;
+static inline bool pcie_aer_no_msi(void)
+{
+	return pcie_aer_msi_disabled;
+}
+#else
+static inline bool pcie_aer_no_msi(void) { return false; }
+#endif
+
 #ifdef CONFIG_ACPI
 int pcie_port_acpi_setup(struct pci_dev *port, int *mask);
 

@@ -63,17 +63,20 @@
 #define MACSL_ENABLE				BIT(5)
 #define GMACSL_RET_WARN_RESET_INCOMPLETE	-2
 
-#define CPSW_NUM_PORTS		                3
+#define CPSW_NUM_PORTS		                5
 #define CPSW_CTL_P0_ENABLE			BIT(2)
 #define CPSW_CTL_VLAN_AWARE			BIT(1)
-#define CPSW_REG_VAL_STAT_ENABLE_ALL		0xf
+#define CPSW_REG_VAL_STAT_ENABLE_ALL		0xff
+#define CPSW_STATS_CD_SEL			BIT(28)
 
-#define CPSW_MASK_ALL_PORTS			7
-#define CPSW_MASK_PHYS_PORTS			6
+#define CPSW_MASK_ALL_PORTS			0x1f
+#define CPSW_MASK_PHYS_PORTS			0x1e
 #define CPSW_MASK_NO_PORTS			0
 
 #define CPSW_STATSA_MODULE			0
 #define CPSW_STATSB_MODULE			1
+#define CPSW_STATSC_MODULE			2
+#define CPSW_STATSD_MODULE			3
 
 #define MAX_SIZE_STREAM_BUFFER		        9504
 
@@ -148,6 +151,10 @@
 #define EVENT_MSG_BITS ((1<<0) | (1<<1) | (1<<2) | (1<<3))
 
 #define MAX_SLAVES			4
+
+/* s: 0-based slave_port */
+#define SGMII_BASE(s) \
+	(((s) < 2) ? cpsw_dev->sgmii_port_regs : cpsw_dev->sgmii_port34_regs)
 
 struct cpts_port_ts_ctl {
 	int	uni;
@@ -301,10 +308,12 @@ struct cpsw_priv {
 	u32				 ale_entries;
 	u32				 ale_ports;
 	u32				 sgmii_module_ofs;
+	u32				 sgmii_module34_ofs;
 	u32				 switch_module_ofs;
 	u32				 host_port_reg_ofs;
 	u32				 slave_reg_ofs;
 	u32				 sliver_reg_ofs;
+	u32				 slave23_reg_ofs;
 	u32				 hw_stats_reg_ofs;
 	u32				 ale_reg_ofs;
 	u32				 cpts_reg_ofs;
@@ -319,12 +328,13 @@ struct cpsw_priv {
 	struct cpsw_ale_regs __iomem	*ale_reg;
 
 	void __iomem			*sgmii_port_regs;
+	void __iomem			*sgmii_port34_regs;
 
 	struct cpsw_ale			*ale;
 	u32				 ale_refcnt;
 
-	u32				 link[5];
-	struct device_node		*phy_node[4];
+	u32				 link[MAX_SLAVES + 1];
+	struct device_node		*phy_node[MAX_SLAVES];
 
 	u32				 intf_tx_queues;
 
@@ -334,7 +344,7 @@ struct cpsw_priv {
 	struct device_node		*interfaces;
 	struct list_head		 cpsw_intf_head;
 
-	u64				 hw_stats[72];
+	u64				 hw_stats[MAX_SLAVES * 36];
 	int				 init_serdes_at_probe;
 	struct kobject			kobj;
 	struct kobject			tx_pri_kobj;
@@ -344,6 +354,7 @@ struct cpsw_priv {
 	spinlock_t			hw_stats_lock;
 	struct cpts			cpts;
 	int				cpts_registered;
+	int				force_no_hwtstamp;
 };
 
 struct cpsw_intf {
@@ -394,6 +405,12 @@ struct netcp_ethtool_stat {
 					FIELDINFO(struct cpsw_hw_stats,\
 						field)
 #define CPSW_STATSB_INFO(field) 	"CPSW_B:"#field, CPSW_STATSB_MODULE,\
+					FIELDINFO(struct cpsw_hw_stats,\
+						field)
+#define CPSW_STATSC_INFO(field)		"CPSW_C:"#field, CPSW_STATSC_MODULE,\
+					FIELDINFO(struct cpsw_hw_stats,\
+						field)
+#define CPSW_STATSD_INFO(field)		"CPSW_D:"#field, CPSW_STATSD_MODULE,\
 					FIELDINFO(struct cpsw_hw_stats,\
 						field)
 
@@ -468,6 +485,76 @@ static const struct netcp_ethtool_stat et_stats[] = {
 	{CPSW_STATSB_INFO(rx_sof_overruns)},
 	{CPSW_STATSB_INFO(rx_mof_overruns)},
 	{CPSW_STATSB_INFO(rx_dma_overruns)},
+	/* CPSW module C */
+	{CPSW_STATSC_INFO(rx_good_frames)},
+	{CPSW_STATSC_INFO(rx_broadcast_frames)},
+	{CPSW_STATSC_INFO(rx_multicast_frames)},
+	{CPSW_STATSC_INFO(rx_pause_frames)},
+	{CPSW_STATSC_INFO(rx_crc_errors)},
+	{CPSW_STATSC_INFO(rx_align_code_errors)},
+	{CPSW_STATSC_INFO(rx_oversized_frames)},
+	{CPSW_STATSC_INFO(rx_jabber_frames)},
+	{CPSW_STATSC_INFO(rx_undersized_frames)},
+	{CPSW_STATSC_INFO(rx_fragments)},
+	{CPSW_STATSC_INFO(rx_bytes)},
+	{CPSW_STATSC_INFO(tx_good_frames)},
+	{CPSW_STATSC_INFO(tx_broadcast_frames)},
+	{CPSW_STATSC_INFO(tx_multicast_frames)},
+	{CPSW_STATSC_INFO(tx_pause_frames)},
+	{CPSW_STATSC_INFO(tx_deferred_frames)},
+	{CPSW_STATSC_INFO(tx_collision_frames)},
+	{CPSW_STATSC_INFO(tx_single_coll_frames)},
+	{CPSW_STATSC_INFO(tx_mult_coll_frames)},
+	{CPSW_STATSC_INFO(tx_excessive_collisions)},
+	{CPSW_STATSC_INFO(tx_late_collisions)},
+	{CPSW_STATSC_INFO(tx_underrun)},
+	{CPSW_STATSC_INFO(tx_carrier_sense_errors)},
+	{CPSW_STATSC_INFO(tx_bytes)},
+	{CPSW_STATSC_INFO(tx_64byte_frames)},
+	{CPSW_STATSC_INFO(tx_65_to_127byte_frames)},
+	{CPSW_STATSC_INFO(tx_128_to_255byte_frames)},
+	{CPSW_STATSC_INFO(tx_256_to_511byte_frames)},
+	{CPSW_STATSC_INFO(tx_512_to_1023byte_frames)},
+	{CPSW_STATSC_INFO(tx_1024byte_frames)},
+	{CPSW_STATSC_INFO(net_bytes)},
+	{CPSW_STATSC_INFO(rx_sof_overruns)},
+	{CPSW_STATSC_INFO(rx_mof_overruns)},
+	{CPSW_STATSC_INFO(rx_dma_overruns)},
+	/* CPSW module D */
+	{CPSW_STATSD_INFO(rx_good_frames)},
+	{CPSW_STATSD_INFO(rx_broadcast_frames)},
+	{CPSW_STATSD_INFO(rx_multicast_frames)},
+	{CPSW_STATSD_INFO(rx_pause_frames)},
+	{CPSW_STATSD_INFO(rx_crc_errors)},
+	{CPSW_STATSD_INFO(rx_align_code_errors)},
+	{CPSW_STATSD_INFO(rx_oversized_frames)},
+	{CPSW_STATSD_INFO(rx_jabber_frames)},
+	{CPSW_STATSD_INFO(rx_undersized_frames)},
+	{CPSW_STATSD_INFO(rx_fragments)},
+	{CPSW_STATSD_INFO(rx_bytes)},
+	{CPSW_STATSD_INFO(tx_good_frames)},
+	{CPSW_STATSD_INFO(tx_broadcast_frames)},
+	{CPSW_STATSD_INFO(tx_multicast_frames)},
+	{CPSW_STATSD_INFO(tx_pause_frames)},
+	{CPSW_STATSD_INFO(tx_deferred_frames)},
+	{CPSW_STATSD_INFO(tx_collision_frames)},
+	{CPSW_STATSD_INFO(tx_single_coll_frames)},
+	{CPSW_STATSD_INFO(tx_mult_coll_frames)},
+	{CPSW_STATSD_INFO(tx_excessive_collisions)},
+	{CPSW_STATSD_INFO(tx_late_collisions)},
+	{CPSW_STATSD_INFO(tx_underrun)},
+	{CPSW_STATSD_INFO(tx_carrier_sense_errors)},
+	{CPSW_STATSD_INFO(tx_bytes)},
+	{CPSW_STATSD_INFO(tx_64byte_frames)},
+	{CPSW_STATSD_INFO(tx_65_to_127byte_frames)},
+	{CPSW_STATSD_INFO(tx_128_to_255byte_frames)},
+	{CPSW_STATSD_INFO(tx_256_to_511byte_frames)},
+	{CPSW_STATSD_INFO(tx_512_to_1023byte_frames)},
+	{CPSW_STATSD_INFO(tx_1024byte_frames)},
+	{CPSW_STATSD_INFO(net_bytes)},
+	{CPSW_STATSD_INFO(rx_sof_overruns)},
+	{CPSW_STATSD_INFO(rx_mof_overruns)},
+	{CPSW_STATSD_INFO(rx_dma_overruns)},
 };
 
 #define ETHTOOL_STATS_NUM ARRAY_SIZE(et_stats)
@@ -656,6 +743,16 @@ static const struct cpsw_mod_info cpsw_controls[] = {
 		.shift		= 5,
 		.bits		= 1,
 	},
+	{
+		.name		= "p3_pass_pri_tagged",
+		.shift		= 7,
+		.bits		= 1,
+	},
+	{
+		.name		= "p4_pass_pri_tagged",
+		.shift		= 8,
+		.bits		= 1,
+	},
 };
 
 static ssize_t cpsw_control_show(struct cpsw_priv *cpsw_dev,
@@ -714,6 +811,16 @@ static const struct cpsw_mod_info cpsw_ptypes[] = {
 		.shift		= 10,
 		.bits		= 1,
 	},
+	{
+		.name		= "port3_pri_type_escalate",
+		.shift		= 11,
+		.bits		= 1,
+	},
+	{
+		.name		= "port4_pri_type_escalate",
+		.shift		= 12,
+		.bits		= 1,
+	},
 };
 
 static ssize_t cpsw_pri_type_show(struct cpsw_priv *cpsw_dev,
@@ -768,6 +875,16 @@ static const struct cpsw_mod_info cpsw_flow_controls[] = {
 	{
 		.name		= "port2_flow_control_en",
 		.shift		= 2,
+		.bits		= 1,
+	},
+	{
+		.name		= "port3_flow_control_en",
+		.shift		= 3,
+		.bits		= 1,
+	},
+	{
+		.name		= "port4_flow_control_en",
+		.shift		= 4,
 		.bits		= 1,
 	},
 };
@@ -1430,10 +1547,67 @@ static ssize_t cpsw_port_ts_config_show(struct cpsw_priv *cpsw_dev,
 	return total_len;
 }
 
+static ssize_t cpsw_port_ts_config_store(struct cpsw_priv *cpsw_dev,
+			      struct cpsw_ts_attribute *attr,
+			      const char *buf, size_t count, void *context)
+{
+	struct cpsw_slave *slave;
+	unsigned long reg, val;
+	int len, port;
+	char tmp_str[4];
+	u8 reg_num = 0;
+	u32 __iomem *p;
+
+	port = (int)context;
+
+	slave = cpsw_port_num_get_slave(cpsw_dev, port);
+	if (!slave)
+		return 0;
+
+	len = strcspn(buf, " ");
+	if (len > 1)
+		return -ENOMEM;
+
+	strncpy(tmp_str, buf, len);
+	tmp_str[len] = '\0';
+	if (kstrtou8(tmp_str, 0, &reg_num))
+		return -EINVAL;
+
+	buf += (len + 1);
+	if (kstrtoul(buf, 0, &val))
+		return -EINVAL;
+
+	switch(reg_num) {
+		case 1:
+			p = &slave->regs->ts_ctl;
+		break;
+		case 2:
+			p = &slave->regs->ts_seq_ltype;
+		break;
+		case 3:
+			p = &slave->regs->ts_vlan;
+		break;
+		case 4:
+			p = &slave->regs->ts_ctl_ltype2;
+		break;
+		case 5:
+			p = &slave->regs->ts_ctl2;
+		break;
+		default:
+			return -EINVAL;
+	}
+
+	reg = readl(p);
+	if (reg != val)
+		writel(val, p);
+
+	return count;
+}
+
 static struct cpsw_ts_attribute cpsw_pts_config_attribute =
-	__CPSW_TS_ATTR(config, S_IRUGO,
+	__CPSW_TS_ATTR(config, S_IRUGO | S_IWUSR,
 			cpsw_port_ts_config_show,
-			NULL);
+			cpsw_port_ts_config_store);
 
 static struct attribute *cpsw_pts_n_default_attrs[] = {
 	&cpsw_pts_uni_attribute.attr,
@@ -1516,12 +1690,34 @@ static void cpsw_reset_mod_stats(struct cpsw_priv *cpsw_dev, int stat_mod)
 	struct cpsw_hw_stats __iomem *cpsw_statsb = cpsw_dev->hw_stats_regs[1];
 	void __iomem *base;
 	u32  __iomem *p;
+	u32 val;
 	int i;
 
-	if (stat_mod == CPSW_STATSA_MODULE)
+	val = readl(&cpsw_dev->regs->stat_port_en);
+
+	switch (stat_mod) {
+	case CPSW_STATSA_MODULE:
 		base = cpsw_statsa;
-	else
+		val &= ~CPSW_STATS_CD_SEL;
+		break;
+	case CPSW_STATSB_MODULE:
 		base = cpsw_statsb;
+		val &= ~CPSW_STATS_CD_SEL;
+		break;
+	case CPSW_STATSC_MODULE:
+		base = cpsw_statsa;
+		val |= CPSW_STATS_CD_SEL;
+		break;
+	case CPSW_STATSD_MODULE:
+		base = cpsw_statsb;
+		val |= CPSW_STATS_CD_SEL;
+		break;
+	default:
+		return;
+	}
+
+	/* make the stat modules visible */
+	writel(val, &cpsw_dev->regs->stat_port_en);
 
 	for (i = 0; i < ETHTOOL_STATS_NUM; i++) {
 		if (et_stats[i].type == stat_mod) {
@@ -1558,9 +1754,19 @@ static struct cpsw_attribute cpsw_stats_b_attribute =
 	__CPSW_ATTR_FULL(B, S_IWUSR, NULL, cpsw_stats_mod_store,
 			NULL, 0, (void *)CPSW_STATSB_MODULE);
 
+static struct cpsw_attribute cpsw_stats_c_attribute =
+	__CPSW_ATTR_FULL(C, S_IWUSR, NULL, cpsw_stats_mod_store,
+			NULL, 0, (void *)CPSW_STATSC_MODULE);
+
+static struct cpsw_attribute cpsw_stats_d_attribute =
+	__CPSW_ATTR_FULL(D, S_IWUSR, NULL, cpsw_stats_mod_store,
+			NULL, 0, (void *)CPSW_STATSD_MODULE);
+
 static struct attribute *cpsw_stats_default_attrs[] = {
 	&cpsw_stats_a_attribute.attr,
 	&cpsw_stats_b_attribute.attr,
+	&cpsw_stats_c_attribute.attr,
+	&cpsw_stats_d_attribute.attr,
 	NULL
 };
 
@@ -1679,27 +1885,44 @@ static void cpsw_update_stats(struct cpsw_priv *cpsw_dev, uint64_t *data)
 {
 	struct cpsw_hw_stats __iomem *cpsw_statsa = cpsw_dev->hw_stats_regs[0];
 	struct cpsw_hw_stats __iomem *cpsw_statsb = cpsw_dev->hw_stats_regs[1];
+	u64 *hw_stats = &cpsw_dev->hw_stats[0];
 	void __iomem *base = NULL;
 	u32  __iomem *p;
-	u32 tmp = 0;
-	int i;
+	u32 tmp = 0, val, pair_size = (ETHTOOL_STATS_NUM / 2);
+	int i, j, pair;
 
-	for (i = 0; i < ETHTOOL_STATS_NUM; i++) {
-		switch (et_stats[i].type) {
-		case CPSW_STATSA_MODULE:
-			base = cpsw_statsa;
-			break;
-		case CPSW_STATSB_MODULE:
-			base  = cpsw_statsb;
-			break;
+	for (pair = 0; pair < 2; pair++) {
+		val = readl(&cpsw_dev->regs->stat_port_en);
+
+		if (pair == 0)
+			val &= ~CPSW_STATS_CD_SEL;
+		else
+			val |= CPSW_STATS_CD_SEL;
+
+		/* make the stat modules visible */
+		writel(val, &cpsw_dev->regs->stat_port_en);
+
+		for (i = 0; i < pair_size; i++) {
+			j = pair * pair_size + i;
+			switch (et_stats[j].type) {
+			case CPSW_STATSA_MODULE:
+			case CPSW_STATSC_MODULE:
+				base = cpsw_statsa;
+				break;
+			case CPSW_STATSB_MODULE:
+			case CPSW_STATSD_MODULE:
+				base  = cpsw_statsb;
+				break;
+			}
+
+			p = base + et_stats[j].offset;
+			tmp = *p;
+			hw_stats[j] += tmp;
+			if (data)
+				data[j] = hw_stats[j];
+
+			*p = tmp;
 		}
-
-		p = base + et_stats[i].offset;
-		tmp = *p;
-		cpsw_dev->hw_stats[i] = cpsw_dev->hw_stats[i] + tmp;
-		if (data)
-			data[i] = cpsw_dev->hw_stats[i];
-		*p = tmp;
 	}
 
 	return;
@@ -1939,7 +2162,7 @@ static void cpsw_port_config(struct cpsw_slave *slave, int max_rx_len)
 		max_rx_len = MAX_SIZE_STREAM_BUFFER;
 
 	__raw_writel(max_rx_len, &slave->sliver->rx_maxlen);
-	
+
 	__raw_writel(MACSL_ENABLE | MACSL_RX_ENABLE_EXT_CTL |
 		     MACSL_RX_ENABLE_CSF, &slave->sliver->mac_control);
 }
@@ -1973,14 +2196,17 @@ static void cpsw_slave_open(struct cpsw_slave *slave,
 			    struct cpsw_intf *cpsw_intf)
 {
 	struct cpsw_priv *priv = cpsw_intf->cpsw_priv;
-	char name[32];		/* FIXME: Unused variable */
+	void __iomem *sgmii_port_regs;
 	u32 slave_port;
 
-	snprintf(name, sizeof(name), "slave-%d", slave->slave_num);
+	if (slave->slave_num < 2)
+		sgmii_port_regs = priv->sgmii_port_regs;
+	else
+		sgmii_port_regs = priv->sgmii_port34_regs;
 
-	keystone_sgmii_reset(priv->sgmii_port_regs, slave->slave_num);
+	keystone_sgmii_reset(sgmii_port_regs, slave->slave_num);
 
-	keystone_sgmii_config(priv->sgmii_port_regs, slave->slave_num,
+	keystone_sgmii_config(sgmii_port_regs, slave->slave_num,
 				slave->link_interface);
 
 	cpsw_port_reset(slave);
@@ -1992,8 +2218,10 @@ static void cpsw_slave_open(struct cpsw_slave *slave,
 	slave->mac_control = MACSL_ENABLE | MACSL_RX_ENABLE_EXT_CTL |
 				MACSL_RX_ENABLE_CSF;
 
+	/* this slave port here is 1 based */
 	slave_port = cpsw_get_slave_port(priv, slave->slave_num);
 
+	/* hence port num here is also 1 based */
 	slave->port_num = slave_port;
 	slave->ale = priv->ale;
 
@@ -2027,6 +2255,8 @@ static void cpsw_slave_open(struct cpsw_slave *slave,
 static void cpsw_init_host_port(struct cpsw_priv *priv,
 				struct cpsw_intf *cpsw_intf)
 {
+	int bypass_en = 1;
+
 	/* Max length register */
 	__raw_writel(MAX_SIZE_STREAM_BUFFER,
 		     &priv->host_port_regs->rx_maxlen);
@@ -2034,8 +2264,10 @@ static void cpsw_init_host_port(struct cpsw_priv *priv,
 	if (priv->ale_refcnt == 1)
 		cpsw_ale_start(priv->ale);
 
-	if (priv->multi_if)
-		cpsw_ale_control_set(priv->ale, 0, ALE_BYPASS, 1);
+	if (!priv->multi_if)
+		bypass_en = 0;
+
+	cpsw_ale_control_set(priv->ale, 0, ALE_BYPASS, bypass_en);
 
 	cpsw_ale_control_set(priv->ale, 0, ALE_NO_PORT_VLAN, 1);
 
@@ -2059,12 +2291,21 @@ static void cpsw_init_host_port(struct cpsw_priv *priv,
 			     CPSW_MASK_ALL_PORTS);
 }
 
+/* Sliver regs memmap are contiguous but slave port regs are not */
 static void cpsw_slave_init(struct cpsw_slave *slave, struct cpsw_priv *priv)
 {
 	void __iomem		*regs = priv->ss_regs;
 	int			slave_num = slave->slave_num;
+	int			slave_reg_num = slave_num;
+	u32			slave_reg_ofs;
 
-	slave->regs	= regs + priv->slave_reg_ofs + (0x30 * slave_num);
+	if (slave_num > 1) {
+		slave_reg_ofs = priv->slave23_reg_ofs;
+		slave_reg_num -= 2;
+	} else
+		slave_reg_ofs = priv->slave_reg_ofs;
+
+	slave->regs	= regs + slave_reg_ofs + (0x30 * slave_reg_num);
 	slave->sliver	= regs + priv->sliver_reg_ofs + (0x40 * slave_num);
 }
 
@@ -2277,7 +2518,7 @@ static void cpsw_hwtstamp(struct cpsw_intf *cpsw_intf)
 {
 	struct cpsw_priv *priv = cpsw_intf->cpsw_priv;
 	struct cpsw_slave *slave = cpsw_intf->slaves;
-	u32 ts_en, seq_id, ctl;
+	u32 ts_en, seq_id, ctl, i;
 
 	if (!priv->cpts.tx_enable && !priv->cpts.rx_enable) {
 		__raw_writel(0, &slave->regs->ts_ctl);
@@ -2297,9 +2538,11 @@ static void cpsw_hwtstamp(struct cpsw_intf *cpsw_intf)
 	if (priv->cpts.rx_enable)
 		ts_en |= (CPSW_TS_RX_ANX_ALL_EN | CPSW_TS_RX_VLAN_LT1_EN);
 
-	writel(ts_en, &slave->regs->ts_ctl);
-	writel(seq_id, &slave->regs->ts_seq_ltype);
-	writel(ctl, &slave->regs->ts_ctl_ltype2);
+	for (i = 0; i < cpsw_intf->num_slaves; i++, slave++) {
+		writel(ts_en, &slave->regs->ts_ctl);
+		writel(seq_id, &slave->regs->ts_seq_ltype);
+		writel(ctl, &slave->regs->ts_ctl_ltype2);
+	}
 }
 
 static int cpsw_hwtstamp_ioctl(struct cpsw_intf *cpsw_intf, struct ifreq *ifr)
@@ -2375,6 +2618,9 @@ int cpsw_ioctl(void *intf_priv, struct ifreq *req, int cmd)
 	struct phy_device *phy = slave->phy;
 	int ret = -EOPNOTSUPP;
 
+	if (cpsw_intf->cpsw_priv->force_no_hwtstamp)
+		return -EOPNOTSUPP;
+
 	if (phy)
 		ret = phy_mii_ioctl(phy, req, cmd);
 
@@ -2388,15 +2634,30 @@ static void cpsw_timer(unsigned long arg)
 {
 	struct cpsw_intf *cpsw_intf = (struct cpsw_intf *)arg;
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-	
+	u32 sp = cpsw_intf->slave_port;
+	u32 ns = cpsw_intf->num_slaves;
+	u32 sgmii_link;
+
 	if (cpsw_dev->multi_if)
-		cpsw_intf->sgmii_link =
-			keystone_sgmii_get_port_link(cpsw_dev->sgmii_port_regs,
-						     cpsw_intf->slave_port);
-	else
-		cpsw_intf->sgmii_link =
-			keystone_sgmii_link_status(cpsw_dev->sgmii_port_regs,
-						   cpsw_intf->num_slaves);
+		sgmii_link = keystone_sgmii_get_port_link(SGMII_BASE(sp), sp);
+	else {
+		/* Single interface mode. Link is up if any one slave
+		 * port is up.  It assumes slave port always starts from
+		 * 0 and is consecutive.
+		 */
+
+		/* slave port 2, 3 status */
+		sgmii_link = keystone_sgmii_link_status(SGMII_BASE(2),
+						   max_t(u32, ns, 2) - 2);
+
+		sgmii_link <<= 2;
+
+		/* slave port 0, 1 status */
+		sgmii_link |= keystone_sgmii_link_status(SGMII_BASE(0),
+						   min_t(u32, ns, 2));
+	}
+
+	cpsw_intf->sgmii_link = sgmii_link;
 
 	for_each_slave(cpsw_intf, cpsw_slave_link, cpsw_intf);
 
@@ -2405,19 +2666,10 @@ static void cpsw_timer(unsigned long arg)
 		/* link ON */
 		if (!netif_carrier_ok(cpsw_intf->ndev))
 			netif_carrier_on(cpsw_intf->ndev);
-		/*
-		 * reactivate the transmit queue if
-		 * it is stopped
-		 */
-		if (netif_running(cpsw_intf->ndev) &&
-		    netif_queue_stopped(cpsw_intf->ndev))
-			netif_wake_queue(cpsw_intf->ndev);
 	} else {
 		/* link OFF */
 		if (netif_carrier_ok(cpsw_intf->ndev))
 			netif_carrier_off(cpsw_intf->ndev);
-		if (!netif_queue_stopped(cpsw_intf->ndev))
-			netif_stop_queue(cpsw_intf->ndev);
 	}
 
 	spin_lock_bh(&cpsw_dev->hw_stats_lock);
@@ -2468,12 +2720,12 @@ static bool phy_ptp_tstamp(const struct netcp_packet *p_info, bool is_tx)
 	return false;
 }
 
-static int cpsw_txtstamp_complete(void *context, struct netcp_packet *p_info)
+static int cpsw_txtstamp_complete(void *context, struct sk_buff *skb)
 {
 	struct cpsw_intf *cpsw_intf = context;
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 
-	return cpts_tx_timestamp(&cpsw_dev->cpts, p_info->skb);
+	return cpts_tx_timestamp(&cpsw_dev->cpts, skb);
 }
 
 static bool cpsw_cpts_txtstamp(struct cpsw_intf *cpsw_intf,
@@ -2529,7 +2781,7 @@ static int cpsw_rxtstamp_complete(struct cpsw_intf *cpsw_intf,
 {
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 
-	if (p_info->rxtstamp_complete == true)
+	if (p_info->rxtstamp_complete)
 		return 0;
 
 	if (phy_ptp_tstamp(p_info, false)) {
@@ -2559,7 +2811,8 @@ static inline void cpsw_register_cpts(struct cpsw_priv *cpsw_dev)
 	cpsw_dev->cpts.filter_size = ARRAY_SIZE(cpsw_ptp_filter);
 
 	/* Let cpts calculate the mult and shift */
-	if (cpts_register(cpsw_dev->dev, &cpsw_dev->cpts, 0, 0))
+	if (cpts_register(cpsw_dev->dev, &cpsw_dev->cpts,
+			  cpsw_dev->cpts.cc.mult, cpsw_dev->cpts.cc.shift))
 		dev_err(cpsw_dev->dev, "error registering cpts device\n");
 
 done:
@@ -2622,6 +2875,7 @@ static int cpsw_rx_hook(int order, void *data, struct netcp_packet *p_info)
 }
 
 #define	CPSW_TXHOOK_ORDER	0
+#define	CPSW_RXHOOK_ORDER	0
 
 static int cpsw_open(void *intf_priv, struct net_device *ndev)
 {
@@ -2698,7 +2952,7 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 	/* Control register */
 	__raw_writel(CPSW_CTL_P0_ENABLE, &cpsw_dev->regs->control);
 
-	/* All statistics enabled by default */
+	/* All statistics enabled and STAT AB visible by default */
 	__raw_writel(CPSW_REG_VAL_STAT_ENABLE_ALL,
 		     &cpsw_dev->regs->stat_port_en);
 
@@ -2714,8 +2968,9 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 	netcp_register_txhook(netcp, CPSW_TXHOOK_ORDER,
 			      cpsw_tx_hook, cpsw_intf);
 
-	netcp_register_rxhook(netcp, CPSW_TXHOOK_ORDER,
-			      cpsw_rx_hook, cpsw_intf);
+	if(!cpsw_dev->force_no_hwtstamp)
+		netcp_register_rxhook(netcp, CPSW_RXHOOK_ORDER,
+				      cpsw_rx_hook, cpsw_intf);
 
 	/* Configure the streaming switch */
 #define	PSTREAM_ROUTE_DMA	6
@@ -2746,8 +3001,12 @@ static int cpsw_close(void *intf_priv, struct net_device *ndev)
 	cpsw_dev->ale_refcnt--;
 	if (!cpsw_dev->ale_refcnt)
 		cpsw_ale_stop(cpsw_dev->ale);
-	
+
 	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_dev);
+
+	if(!cpsw_dev->force_no_hwtstamp)
+		netcp_unregister_rxhook(netcp, CPSW_RXHOOK_ORDER,
+				      cpsw_rx_hook, cpsw_intf);
 
 	netcp_unregister_txhook(netcp, CPSW_TXHOOK_ORDER, cpsw_tx_hook,
 				cpsw_intf);
@@ -2899,6 +3158,16 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	int slave_num = 0;
 	int i, ret = 0;
 
+	if (!node) {
+		dev_err(dev, "device tree info unavailable\n");
+		return -ENODEV;
+	}
+
+	if (ptp_filter_init(phy_ptp_filter, ARRAY_SIZE(phy_ptp_filter))) {
+		dev_err(dev, "bad ptp filter\n");
+		return -EINVAL;
+	}
+
 	cpsw_dev = devm_kzalloc(dev, sizeof(struct cpsw_priv), GFP_KERNEL);
 	if (!cpsw_dev) {
 		dev_err(dev, "cpsw_dev memory allocation failed\n");
@@ -2907,15 +3176,9 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	*inst_priv = cpsw_dev;
 	dev_dbg(dev, "%s(): cpsw_priv = %p\n", __func__, cpsw_dev);
 
-	if (!node) {
-		dev_err(dev, "device tree info unavailable\n");
-		ret = -ENODEV;
-		goto exit;
-	}
-
 	cpsw_dev->dev = dev;
 	cpsw_dev->netcp_device = netcp_device;
-	
+
 	priv = cpsw_dev;	/* FIXME: Remove this!! */
 
 	regs = ioremap(TCI6614_SS_BASE, 0xf00);
@@ -2936,7 +3199,12 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 				   &cpsw_dev->sgmii_module_ofs);
 	if (ret < 0)
 		dev_err(dev, "missing sgmii module offset, err %d\n", ret);
-	
+
+	ret = of_property_read_u32(node, "sgmii_module34_ofs",
+				   &cpsw_dev->sgmii_module34_ofs);
+	if (ret < 0)
+		dev_err(dev, "missing sgmii module34 offset, err %d\n", ret);
+
 	ret = of_property_read_u32(node, "switch_module_ofs",
 				   &cpsw_dev->switch_module_ofs);
 	if (ret < 0)
@@ -2956,6 +3224,11 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 				   &cpsw_dev->sliver_reg_ofs);
 	if (ret < 0)
 		dev_err(dev, "missing sliver reg offset, err %d\n", ret);
+
+	ret = of_property_read_u32(node, "slave23_reg_ofs",
+				   &cpsw_dev->slave23_reg_ofs);
+	if (ret < 0)
+		dev_err(dev, "missing slave23 reg offset, err %d\n", ret);
 
 	ret = of_property_read_u32(node, "hw_stats_reg_ofs",
 				   &cpsw_dev->hw_stats_reg_ofs);
@@ -2982,7 +3255,7 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	ret = of_property_read_u32(node, "cpts_rftclk_freq",
 				   &cpsw_dev->cpts.rftclk_freq);
 	if (ret < 0) {
-		dev_err(dev, "cpts rftclk freq not defined\n");
+		dev_vdbg(dev, "cpts rftclk freq not defined\n");
 		cpsw_dev->cpts.rftclk_freq = 0;
 	}
 
@@ -2992,6 +3265,27 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 		dev_err(dev, "missing cpts ts_comp length, err %d\n", ret);
 		cpsw_dev->cpts.ts_comp_length = 1;
 	}
+
+	if (of_property_read_u32(node, "cpts_clock_mult",
+				&cpsw_dev->cpts.cc.mult)) {
+		pr_err("Missing cpts_clock_mult property in the DT.\n");
+		cpsw_dev->cpts.cc.mult = 0;
+	}
+
+	if (of_property_read_u32(node, "cpts_clock_shift",
+				&cpsw_dev->cpts.cc.shift)) {
+		pr_err("Missing cpts_clock_shift property in the DT.\n");
+		cpsw_dev->cpts.cc.shift = 0;
+	}
+
+	if (of_property_read_u32(node, "cpts_clock_div",
+				&cpsw_dev->cpts.cc_div)) {
+		pr_err("Missing cpts_clock_div property in the DT.\n");
+		cpsw_dev->cpts.cc_div = 1;
+	}
+
+	cpsw_dev->cpts.ignore_adjfreq =
+		of_property_read_bool(node, "cpts-ignore-adjfreq");
 
 	ret = of_property_read_u32(node, "num_slaves", &cpsw_dev->num_slaves);
 	if (ret < 0) {
@@ -3023,6 +3317,11 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 		cpsw_dev->intf_tx_queues = 1;
 	}
 
+	if (of_find_property(node, "force_no_hwtstamp", NULL)) {
+		cpsw_dev->force_no_hwtstamp = 1;
+		dev_warn(dev, "***** No CPSW or PHY timestamping *****\n");
+	}
+
 	if (of_find_property(node, "multi-interface", NULL))
 		cpsw_dev->multi_if = 1;
 
@@ -3046,6 +3345,7 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 
 	cpsw_dev->ss_regs = regs;
 	cpsw_dev->sgmii_port_regs	= regs + cpsw_dev->sgmii_module_ofs;
+	cpsw_dev->sgmii_port34_regs	= regs + cpsw_dev->sgmii_module34_ofs;
 	cpsw_dev->regs = regs + cpsw_dev->switch_module_ofs;
 	cpsw_dev->host_port_regs = regs + cpsw_dev->host_port_reg_ofs;
 	cpsw_dev->hw_stats_regs[0] = regs + cpsw_dev->hw_stats_reg_ofs;
