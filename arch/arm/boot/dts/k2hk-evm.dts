@@ -1919,6 +1919,11 @@
 					values	= <2048 128>;	/* num_desc desc_size */
 					link-index = <0x8000>;
 				};
+				region-15 {
+					id = <15>;
+					values	= <1024 128>;	/* num_desc desc_size */
+					link-index = <0x8800>;
+				};
 			};
 			descriptors {
 				pool-net {
@@ -1927,7 +1932,7 @@
 				};
 				pool-rio {
 					values = <1024 128>;
-					region-id = <12>;
+					region-id = <15>;
 				};
 				pool-udma {
 					values = <1920 256>;	/* num_desc desc_size */
@@ -2970,6 +2975,7 @@
 			baudrate  = <1>; /* 2.5Gbps */
 			path_mode = <4>; /* 1 port in 4x */
 			port-register-timeout = <30>; /* 30 seconds */
+			lsu       = <0 0>; /* DIO and maintenance LSUs */
 
 			tx_channel = "riotx";
 			tx_queue_depth = <256>;
