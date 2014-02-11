@@ -1437,17 +1437,19 @@ static int keystone_rio_test_link(u8 port, struct keystone_rio_data *krio_priv)
  */
 static int keystone_rio_port_status(int port, struct keystone_rio_data *krio_priv)
 {
-	unsigned int count, value, portok;
+	unsigned int count = 0, value;
 	int res = 0;
-
-	count  = 0;
-	portok = 0;
 
 	if (port >= KEYSTONE_RIO_MAX_PORT)
 		return -EINVAL;
 
 	/* Check port status */
-	value = __raw_readl(&(krio_priv->serial_port_regs->sp[port].err_stat));
+	for (count = 0; count < 100; count++) {
+		value = __raw_readl(&(krio_priv->serial_port_regs->sp[port].err_stat));
+		if ((value & RIO_PORT_N_ERR_STS_PORT_OK) != 0)
+			break;
+		udelay(10);
+	}
 
 	if ((value & RIO_PORT_N_ERR_STS_PORT_OK) != 0) {
 		res = keystone_rio_test_link(port, krio_priv);
@@ -2904,7 +2906,7 @@ static void keystone_rio_port_status_timer(unsigned long data)
 
 	if ((krio_priv->port_chk_cnt)++ >= port_chk_cnt_timeout) {
 		dev_info(krio_priv->dev,
-			 "RIO port register timeout, ports %08x not ready\n",
+			 "RIO port register timeout, ports %d not ready\n",
 			 ports);
 		return;
 	}
@@ -3067,12 +3069,13 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 	if (K2_SERDES(krio_priv)) {
 		int lanes = keystone_rio_get_lane_config(ports, path_mode);
 
-		if (lanes > 0)
+		if (lanes > 0) {
 			res = k2_rio_serdes_wait_lock(krio_priv ,(u32) lanes);
-		if (res < 0)
-			dev_info(&pdev->dev,
-				 "SerDes for lane mask 0x%x on %s Gbps not locked\n",
-				 lanes, str);
+			if (res < 0)
+			    dev_info(&pdev->dev,
+				     "SerDes for lane mask 0x%x on %s Gbps not locked\n",
+				     lanes, str);
+		}
 	}
 
 	/* Use and check ports status (but only the requested ones) */
