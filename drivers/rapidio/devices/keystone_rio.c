@@ -174,7 +174,7 @@ static void special_interrupt_handler(int ics, struct keystone_rio_data *krio_pr
 
 #if (0)
 		/* acknowledge error on this port */
-		__raw_writel(error & ~KEYSTONE_RIO_PORT_ERROR_MASK, 
+		__raw_writel(error & ~KEYSTONE_RIO_PORT_ERROR_MASK,
 			     &(krio_priv->serial_port_regs->sp[port].err_stat));
 #endif
 		break;
@@ -196,7 +196,7 @@ static irqreturn_t rio_interrupt_handler(int irq, void *data)
 
 	/* Handle special interrupts (error, reset, special event) */
 	while (pending_err_rst_evnt_int) {
-		u32 ics = __ffs(pending_err_rst_evnt_int); 
+		u32 ics = __ffs(pending_err_rst_evnt_int);
 		pending_err_rst_evnt_int &= ~(1 << ics);
 		special_interrupt_handler(ics, krio_priv);
 	}
@@ -233,7 +233,7 @@ static void keystone_rio_interrupt_map(u32 __iomem *reg, u32 mask, u32 rio_int)
  * Setup RIO interrupts
  */
 static void keystone_rio_interrupt_setup(struct keystone_rio_data *krio_priv)
-{	
+{
 	int i, res;
 
 	/* Clear all pending interrupts */
@@ -345,7 +345,7 @@ static u32 keystone_rio_dio_packet_type(int dio_mode)
 }
 
 /*
- * DIO transfer using LSU directly 
+ * DIO transfer using LSU directly
  */
 static inline int keystone_rio_dio_raw_transfer(int port_id,
 						u16 dest_id,
@@ -407,7 +407,7 @@ retry_transfer:
 	__raw_writel(size_bytes,
 		     &(krio_priv->regs->lsu_reg[lsu].dbell_val_byte_cnt));
 
-	/* LSU Reg 4 - 
+	/* LSU Reg 4 -
 	 * out port ID = rio.port
          * priority = LSU_PRIO
 	 * XAM = 0
@@ -417,7 +417,7 @@ retry_transfer:
 	__raw_writel(((port_id << 8)
 		      | (KEYSTONE_RIO_LSU_PRIO << 4)
 		      | (size ? (1 << 10) : 0)
-		      | ((u32) dest_id << 16) 
+		      | ((u32) dest_id << 16)
 		      | 1),
 		     &(krio_priv->regs->lsu_reg[lsu].destid));
 
@@ -454,7 +454,7 @@ retry_transfer:
 		}
 		ndelay(1000);
 	}
-out:		
+out:
 	mutex_unlock(&krio_priv->lsu_lock);
 
 	if (res) {
@@ -499,7 +499,7 @@ out:
  * to device ID's global address.
  * @mport: RapidIO master port info
  * @index: ID of the RapidIO interface
- * @dest_id: destination device id 
+ * @dest_id: destination device id
  * @src_addr: source (host) address
  * @tgt_addr: target global address
  * @size_bytes: size in bytes
@@ -541,7 +541,7 @@ static int keystone_rio_dio_transfer(struct rio_mport *mport,
 
 	/* Transfer packet by packet */
 	while(count) {
-		length = (count <= KEYSTONE_RIO_MAX_DIO_PKT_SIZE) ? 
+		length = (count <= KEYSTONE_RIO_MAX_DIO_PKT_SIZE) ?
 			count : KEYSTONE_RIO_MAX_DIO_PKT_SIZE;
 
 		dma = dma_map_single(dev, (void *)s_addr, length, dir);
@@ -576,7 +576,7 @@ static inline int dbell_get(u32* pending)
 		int n = __ffs(*pending);
 		*pending &= ~(1 << n);
 		return n;
-	} else 
+	} else
 		return -1;
 }
 
@@ -647,8 +647,8 @@ static void dbell_handler(struct keystone_rio_data *krio_priv)
  * %-EINVAL, %-EIO, %-EBUSY or %-EAGAIN on failure.
  */
 static int keystone_rio_dbell_send(struct rio_mport *mport,
-				   int index, 
-				   u16 dest_id, 
+				   int index,
+				   u16 dest_id,
 				   u16 num)
 {
 	struct keystone_rio_data *krio_priv = mport->priv;
@@ -709,7 +709,7 @@ static int keystone_rio_dbell_send(struct rio_mport *mport,
 		      | 1),
 		     &(krio_priv->regs->lsu_reg[lsu].destid));
 
-	/* LSU Reg 5 
+	/* LSU Reg 5
 	 * doorbell info = info
 	 * hop count = 0
 	 * Packet type = 0xa0 ftype = 10, ttype = 0 */
@@ -742,7 +742,7 @@ static int keystone_rio_dbell_send(struct rio_mport *mport,
 		}
 		ndelay(KEYSTONE_RIO_TIMEOUT_NSEC);
 	}
-out:		
+out:
 	mutex_unlock(&krio_priv->lsu_lock);
 
 	if (res) {
@@ -789,7 +789,7 @@ out:
  *
  * Returns %0 on success or %-EINVAL, %-EIO, %-EAGAIN or %-EBUSY on failure.
  */
-static inline int keystone_rio_maint_request(int port_id, 
+static inline int keystone_rio_maint_request(int port_id,
 					     u32 dest_id,
 					     u8  hopcount,
 					     u32 offset,
@@ -852,7 +852,7 @@ static inline int keystone_rio_maint_request(int port_id,
 	/* LSU Reg 5 */
 	__raw_writel(((hopcount & 0xff) << 8) | (type & 0xff),
 		     &(krio_priv->regs->lsu_reg[lsu].dbell_info_fttype));
-	
+
 	/* Retrieve our completion code */
 	count = 0;
 	res   = 0;
@@ -1570,8 +1570,8 @@ static int keystone_rio_port_error_recovery(int port, struct keystone_rio_data *
 		/* Clear valid bit in maintenance response register */
 		__raw_readl(&(krio_priv->serial_port_regs->sp[port].link_maint_resp));
 
-		/* 
-		 * Send both link request and PNA control symbols 
+		/*
+		 * Send both link request and PNA control symbols
 		 * (this will clear error states)
 		 */
 		__raw_writel(0x2003f044, &krio_priv->phy_regs->phy_sp[port].long_cs_tx1);
@@ -1581,7 +1581,7 @@ static int keystone_rio_port_error_recovery(int port, struct keystone_rio_data *
 			ndelay(KEYSTONE_RIO_TIMEOUT_NSEC);
 			lm_resp = __raw_readl(&(krio_priv->serial_port_regs->sp[port].link_maint_resp));
 		} while (0 == (lm_resp & RIO_PORT_N_MNT_RSP_RVAL));
-		
+
 		/*
 		 * Set outbound ackID to the value expected by link partner sent in
 		 * link maintenance response. Clear outstanding ackID if outstanding
@@ -1590,23 +1590,23 @@ static int keystone_rio_port_error_recovery(int port, struct keystone_rio_data *
 		ackid = (lm_resp & 0x03e0) >> 5;
 		__raw_writel(ackid | BIT(31),
 			     &(krio_priv->serial_port_regs->sp[port].ackid_stat));
-		
-		/* 
+
+		/*
 		 * Set link partner inbound ackID to outbound ackID + 1
 		 * Set link partner outbound ackID to inbound ackID
 		 */
 		ackid_stat = __raw_readl(&(krio_priv->serial_port_regs->sp[port].ackid_stat));
-		
+
 		/*
-		 * Reread outbound ackID as it may have changed as a result of 
-		 * outstanding unacknowledged packets retransmission. 
+		 * Reread outbound ackID as it may have changed as a result of
+		 * outstanding unacknowledged packets retransmission.
 		 * This may be ommited if clearing of outstanding ackID is
 		 * performed earlier.
 		 */
 		ackid = (((ackid + 1) & 0x1f) << 24)
 			| ((ackid_stat & 0x1f000000) >> 24);
 
-		res = keystone_rio_maint_write(krio_priv, port, 0xff, 
+		res = keystone_rio_maint_write(krio_priv, port, 0xff,
 					       krio_priv->board_rio_cfg.size,
 					       0, 0x100 + RIO_PORT_N_ACK_STS_CSR(0),
 					       4, ackid);
@@ -1697,13 +1697,13 @@ static int keystone_rio_port_init(u32 port, u32 path_mode, struct keystone_rio_d
 	return 0;
 }
 
-/** 
+/**
  * keystone_rio_port_set_routing - Configure routing for a RapidIO port
  * @port: index of the port to configure
  */
 static void keystone_rio_port_set_routing(u32 port, struct keystone_rio_data *krio_priv)
 {
-	u32 base_dev_id = krio_priv->board_rio_cfg.size ? 
+	u32 base_dev_id = krio_priv->board_rio_cfg.size ?
 		__raw_readl(&krio_priv->car_csr_regs->base_dev_id) & 0xffff :
 		(__raw_readl(&krio_priv->car_csr_regs->base_dev_id) >> 16) & 0xff;
 
@@ -1713,7 +1713,7 @@ static void keystone_rio_port_set_routing(u32 port, struct keystone_rio_data *kr
 	__raw_writel(0x84000000,
 		     &(krio_priv->transport_regs->transport_sp[port].base_route[brr].ctl));
 
-	/* 
+	/*
 	 * Configure the Base Routing Register (BRR) to ensure that all packets
 	 * matching our DevId are admitted.
 	 */
@@ -1730,14 +1730,14 @@ static void keystone_rio_port_set_routing(u32 port, struct keystone_rio_data *kr
 	__raw_writel(0x84000000,
 		     &(krio_priv->transport_regs->transport_sp[port].base_route[brr].ctl));
 
-	/* 
-	 * Configure the Base Routing Register (BRR) to ensure that all broadcast 
+	/*
+	 * Configure the Base Routing Register (BRR) to ensure that all broadcast
 	 * packets are admitted as well.
 	 */
 	__raw_writel((0xffff << 16) |
 		     (krio_priv->board_rio_cfg.size ? 0xffff : 0xff),
 		     &(krio_priv->transport_regs->transport_sp[port].base_route[brr].pattern_match));
-	
+
 	dev_dbg(krio_priv->dev, "pattern_match = 0x%x for BRR %d\n",
 		__raw_readl(&krio_priv->transport_regs->transport_sp[port].base_route[brr].pattern_match),
 		brr);
@@ -1908,10 +1908,10 @@ static void keystone_rio_pw_dpc(struct work_struct *work)
 	 * Process port-write messages
 	 */
 	spin_lock_irqsave(&krio_priv->pw_fifo_lock, flags);
-	while (kfifo_out(&krio_priv->pw_fifo, 
+	while (kfifo_out(&krio_priv->pw_fifo,
 			 (unsigned char *) msg_buffer,
 			 RIO_PW_MSG_SIZE)) {
-		
+
 		/* Process one message */
 		spin_unlock_irqrestore(&krio_priv->pw_fifo_lock, flags);
 
@@ -2046,7 +2046,7 @@ static inline u32 keystone_rio_mbox_to_strmid(int mbox,
 	return (u32) krx_chan->stream_id;
 }
 
-/* 
+/*
  * Release a free receive buffer
  */
 static void keystone_rio_rxpool_free(void *arg, unsigned q_num, unsigned bufsize,
@@ -2232,7 +2232,7 @@ static int keystone_rio_map_mbox(int mbox,
 		/* Map the multi-segment mailbox to the corresponding Rx queue for type 11 */
 		mapping_entry_low = ((mbox & 0x1f) << 16)
 			| (0x3f000000); /* Given mailbox, all letters, srcid = 0 */
-		
+
 		/* multi-segment messaging and promiscuous (don't care about src/dst id) */
 		mapping_entry_high = KEYSTONE_RIO_MAP_FLAG_SEGMENT
 			| KEYSTONE_RIO_MAP_FLAG_SRC_PROMISC
@@ -2297,7 +2297,7 @@ static int keystone_rio_map_mbox(int mbox,
 		 */
 		mapping_entry_high &= ~KEYSTONE_RIO_MAP_FLAG_SEGMENT;
 
-		i = keystone_rio_get_rxu_map(krio_priv);	
+		i = keystone_rio_get_rxu_map(krio_priv);
 		if (i < 0)
 			return -ENOMEM;
 
@@ -2727,7 +2727,7 @@ end:
  * Adds the @buffer message to the KeyStone outbound message queue. Returns
  * %0 on success or %-EBUSY on failure.
  */
-static int keystone_rio_hw_add_outb_message(struct rio_mport *mport, 
+static int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 					    struct rio_dev *rdev,
 					    int mbox,
 					    void *buffer,
@@ -2756,7 +2756,7 @@ static int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 		dev_warn(krio_priv->dev, "failed to alloc send buffer\n");
 		return -ENOMEM;
 	}
-	
+
 	memcpy(send_buffer, buffer, plen);
 #endif
 
@@ -2773,7 +2773,7 @@ static int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 	/* Word 1: source id and dest id (common to packet 11 and packet 9) */
 	p_info->psdata[0] = (rdev->destid & 0xffff) | (mport->host_deviceid << 16);
 
-	/* 
+	/*
 	 * Warning - Undocumented HW requirement:
 	 *      For type9, packet type MUST be set to 30 in
 	 *	keystone_hw_desc.desc_info[29:25] bits.
@@ -2887,7 +2887,7 @@ struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 
 	port = kzalloc(sizeof(struct rio_mport), GFP_KERNEL);
 
-	/* 
+	/*
 	 * Set the sRIO port physical Id into the index field,
 	 * the id field will be set by rio_register_mport() to
 	 * the logical Id
@@ -2897,7 +2897,7 @@ struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 	port->dev.parent = krio_priv->dev;
 	INIT_LIST_HEAD(&port->dbells);
 
-	/* 
+	/*
 	 * Make a dummy per port region as ports are not
 	 * really separated on KeyStone
 	 */
@@ -2918,12 +2918,12 @@ struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 	rio_init_mbox_res(&port->riores[RIO_OUTB_MBOX_RESOURCE], 0, KEYSTONE_RIO_MAX_MBOX);
 
 	sprintf(port->name, "RIO%d mport", port_id);
-	
+
 	port->ops      = ops;
 	port->sys_size = size;
 	port->phy_type = RIO_PHY_SERIAL;
 
-	/* 
+	/*
 	 * Hard coded here because in rio_disc_mport(), it is used in
 	 * rio_enum_complete() before it is retrieved in
 	 * rio_disc_peer() => rio_setup_device()
@@ -2939,7 +2939,7 @@ struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 
 #ifdef CONFIG_RAPIDIO_ENUM_BASIC
 	/*
-	 * We may have a very late mport registration 
+	 * We may have a very late mport registration
 	 * so perform explicitely the basic attachement (and
 	 * eventually scanning here).
 	 */
@@ -2987,19 +2987,19 @@ static int keystone_rio_get_mbox_defaults(int mbox,
 		krx_chan->queue_depths[0] = 128;
 	}
 
-	if (of_property_read_u32_array(node, "rx_buffer_size", 
-				       krx_chan->buffer_sizes, 
+	if (of_property_read_u32_array(node, "rx_buffer_size",
+				       krx_chan->buffer_sizes,
 				       KEYSTONE_QUEUES_PER_CHAN) < 0) {
 		dev_err(krio_priv->dev,
 			"missing \"rx_buffer_size\" parameter\n");
 		krx_chan->buffer_sizes[0] = 4096;
 	}
 
-	/* 
+	/*
 	 * If stream_id is defined, this mbox is mapped to the corresponding
 	 * streamid and the channel is for type 9 packets.
 	 */
-	if (of_property_read_u32(node, "stream_id", 
+	if (of_property_read_u32(node, "stream_id",
 				 &krx_chan->stream_id) < 0) {
 		krx_chan->packet_type = RIO_PACKET_TYPE_MESSAGE;
 		krx_chan->stream_id = -1;
@@ -3072,13 +3072,13 @@ static void keystone_rio_get_controller_defaults(struct device_node *node,
 			c->serdes_baudrate = KEYSTONE_RIO_BAUD_5_000;
 		}
 	}
-	
+
 	/* Path mode config (mapping of SerDes lanes to port widths) */
 	if (of_property_read_u32(node, "path_mode", &c->path_mode)) {
 		dev_err(krio_priv->dev,
 			"Missing \"path_mode\" parameter\n");
 	}
-	
+
        /* Max possible ports configurations per path_mode */
 	if ((c->path_mode == 0 &&
 	     c->ports & ~KEYSTONE_MAX_PORTS_PATH_MODE_0) ||
@@ -3144,13 +3144,13 @@ static void keystone_rio_get_controller_defaults(struct device_node *node,
 	for (mbox = 0; mbox < krio_priv->num_mboxes; mbox++) {
 		(void) keystone_rio_get_mbox_defaults(mbox, node, krio_priv);
 	}
-	
+
 	/* Interrupt config */
 	c->rio_irq = irq_of_parse_and_map(node, 0);
 	if (c->rio_irq < 0) {
 		dev_err(krio_priv->dev, "missing \"rio_irq\" parameter\n");
 	}
-	
+
 	c->lsu_irq = irq_of_parse_and_map(node, 1);
 	if (c->lsu_irq < 0) {
 		dev_err(krio_priv->dev, "missing \"lsu_irq\" parameter\n");
@@ -3458,11 +3458,11 @@ static int __init keystone_rio_probe(struct platform_device *pdev)
 		ndelay(100);
 		clk_prepare_enable(krio_priv->clk);
 	}
-	
+
 	dev_info(&pdev->dev, "KeyStone RapidIO driver %s\n", DRIVER_VER);
 
 #ifdef CONFIG_RAPIDIO_DEV
-	/* Register userspace interface */ 
+	/* Register userspace interface */
 	res = rio_dev_init();
 	if (res < 0)
 		dev_err(krio_priv->dev, "rio_dev_init failed!\n");
@@ -3472,7 +3472,7 @@ static int __init keystone_rio_probe(struct platform_device *pdev)
 	res = keystone_rio_setup_controller(pdev, krio_priv);
 	if (res < 0)
 		return res;
-	
+
 	return 0;
 }
 
