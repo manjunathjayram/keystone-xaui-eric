@@ -61,6 +61,7 @@ struct keystone_rio_data {
 	struct work_struct	port_chk_task;
 	struct timer_list	timer;
 	struct tasklet_struct	task;
+
 	unsigned long		rxu_map_bitmap[2];
 #ifdef CONFIG_RIONET
 	u32			rionet_started;
@@ -2800,6 +2801,12 @@ static void keystone_rio_get_controller_defaults(struct device_node *node,
 			"Missing \"path_mode\" parameter\n");
 	}
 
+	/* Port register timeout */
+	if (of_property_read_u32(node, "port-register-timeout",
+				 (u32 *)&(c->port_register_timeout))) {
+		c->port_register_timeout = 30;
+	}
+
 	/* DMA tx chan config */
 	if (of_property_read_string(node, "tx_channel",
 				    &krio_priv->tx_chan_name) < 0){
@@ -2879,8 +2886,10 @@ static void keystone_rio_port_status_timer(unsigned long data)
 {
 	struct keystone_rio_data *krio_priv = (struct keystone_rio_data *)data;
 	u32 ports = krio_priv->ports_registering;
+	u32 port_chk_cnt_timeout = krio_priv->board_rio_cfg.port_register_timeout /
+		(KEYSTONE_RIO_REGISTER_DELAY / HZ);
 
-	if ((krio_priv->port_chk_cnt)++ >= 10) {
+	if ((krio_priv->port_chk_cnt)++ >= port_chk_cnt_timeout) {
 		dev_info(krio_priv->dev,
 			 "RIO port register timeout, ports %08x not ready\n",
 			 ports);
