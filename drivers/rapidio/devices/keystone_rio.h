@@ -1,10 +1,12 @@
 /*
- * Copyright (C) 2010, 2011, 2012, 2013 Texas Instruments Incorporated
- * Author: Aurelien Jacquiot <a-jacquiot@ti.com>
+ * Copyright (C) 2010, 2011, 2012, 2013, 2014 Texas Instruments Incorporated
+ * Authors: Aurelien Jacquiot <a-jacquiot@ti.com>
+ * - Main driver implementation.
+ * - Updated for support on TI KeyStone 2 platform.
  *
  * Copyright (C) 2012, 2013 Texas Instruments Incorporated
  * WingMan Kwok <w-kwok2@ti.com>
- * - Updated for support on TI KeyStone platform.
+ * - Updated for support on TI KeyStone 1 platform.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -289,6 +291,8 @@ struct keystone_rio_rx_chan_info {
 	int			  chan_num;    /* idx in rx_channels[] */
 	int			  queue_num;   /* rx complete queue */
 	int			  flow_num;
+	u32                       packet_type;
+	int                       stream_id; /* stream id if using type 9 packet */
 };
 
 struct port_write_msg {
