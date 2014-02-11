@@ -85,7 +85,7 @@
 #define KEYSTONE_MAX_PORTS_PATH_MODE_0  0xf /* 4 ports */
 #define KEYSTONE_MAX_PORTS_PATH_MODE_1  0x7 /* 3 ports */
 #define KEYSTONE_MAX_PORTS_PATH_MODE_2  0x7 /* 3 ports */
-#define KEYSTONE_MAX_PORTS_PATH_MODE_3  0x3 /* 2 ports */ 
+#define KEYSTONE_MAX_PORTS_PATH_MODE_3  0x3 /* 2 ports */
 #define KEYSTONE_MAX_PORTS_PATH_MODE_4  0x1 /* 1 ports */
 
 #define SERDES_LANE(lane_num)	                (0x01 << lane_num)
@@ -146,7 +146,7 @@
 #define KEYSTONE_RIO_BLK_NUM		9
 #define KEYSTONE_RIO_MAX_MBOX		4    /* 4 in multi-segment,
 						64 in single-seg */
-#define KEYSTONE_RIO_MAX_PKT_FW_ENTRIES 8    /* max of packet forwarding 
+#define KEYSTONE_RIO_MAX_PKT_FW_ENTRIES 8    /* max of packet forwarding
 						mapping entries */
 #define KEYSTONE_RIO_MAINT_BUF_SIZE	64
 #define KEYSTONE_RIO_MSG_SSIZE		0xe
