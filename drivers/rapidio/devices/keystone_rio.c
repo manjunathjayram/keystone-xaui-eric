@@ -1,10 +1,12 @@
 /*
- * Copyright (C) 2010, 2011, 2012, 2013 Texas Instruments Incorporated
+ * Copyright (C) 2010, 2011, 2012, 2013, 2014 Texas Instruments Incorporated
  * Authors: Aurelien Jacquiot <a-jacquiot@ti.com>
+ * - Main driver implementation.
+ * - Updated for support on TI KeyStone 2 platform.
  *
  * Copyright (C) 2012, 2013 Texas Instruments Incorporated
  * WingMan Kwok <w-kwok2@ti.com>
- * - Updated for support on TI KeyStone platform.
+ * - Updated for support on TI KeyStone 1 platform.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -70,7 +72,7 @@ struct keystone_rio_data {
 	struct dma_chan	       *tx_channel;
 	const char	       *tx_chan_name;
 	u32			tx_queue_depth;
-	u32                     tx_packet_type;
+	u32                     num_mboxes;
 
 	struct keystone_rio_mbox_info  tx_mbox[KEYSTONE_RIO_MAX_MBOX];
 	struct keystone_rio_mbox_info  rx_mbox[KEYSTONE_RIO_MAX_MBOX];
@@ -1992,14 +1994,39 @@ static int keystone_rio_port_write_init(struct keystone_rio_data *krio_priv)
 /*------------------------- Message passing management  ----------------------*/
 
 /*
- * This macro defines the mapping from Linux RIO mailbox to stream id for type 9 packet
- * Let use an one-to-one mapping for the time being, may be adjusted here if needed.
+ * Retrieve MP receive code completion
  */
-#define mbox_to_strmid(mbox) ((mbox) & 0xffff)
+static inline u32 keystone_rio_mp_get_cc(u32 psdata1, u32 packet_type)
+{
+	return (packet_type == RIO_PACKET_TYPE_MESSAGE ?
+		psdata1 >> 15 : psdata1 >> 8) & 0x3;
+}
 
-#define mbox_to_pool(mbox)   (mbox)
+/*
+ * This function retrieves the packet type for a given mbox
+ */
+static inline u32 keystone_rio_mp_get_type(int mbox,
+					   struct keystone_rio_data *krio_priv)
+{
+	struct keystone_rio_rx_chan_info *krx_chan = &(krio_priv->rx_channels[mbox]);
+	return (u32) ((krx_chan->packet_type != RIO_PACKET_TYPE_STREAM) &&
+ 		      (krx_chan->packet_type != RIO_PACKET_TYPE_MESSAGE)) ?
+		RIO_PACKET_TYPE_MESSAGE : krx_chan->packet_type;
+}
 
-/* Release a free receive buffer */
+/*
+ * This function retrieves the mapping from Linux RIO mailbox to stream id for type 9 packets
+ */
+static inline u32 keystone_rio_mbox_to_strmid(int mbox,
+					      struct keystone_rio_data *krio_priv)
+{
+	struct keystone_rio_rx_chan_info *krx_chan = &(krio_priv->rx_channels[mbox]);
+	return (u32) krx_chan->stream_id;
+}
+
+/* 
+ * Release a free receive buffer
+ */
 static void keystone_rio_rxpool_free(void *arg, unsigned q_num, unsigned bufsize,
                                     struct dma_async_tx_descriptor *desc)
 {
@@ -2117,9 +2144,9 @@ static int keystone_rio_mp_inb_init(int mbox, struct keystone_rio_data *krio_pri
 	krx_chan->queue_num = dma_get_rx_queue(krx_chan->dma_channel);
 
 	dev_info(krio_priv->dev,
-		 "Opened rx channel: %p (mbox=%d, flow=%d, rx_q=%d)\n",
+		 "Opened rx channel: %p (mbox=%d, flow=%d, rx_q=%d, pkt_type=%d)\n",
 		 krx_chan->dma_channel, mbox, krx_chan->flow_num,
-		 krx_chan->queue_num);
+		 krx_chan->queue_num, krx_chan->packet_type);
 
 	return 0;
 
@@ -2162,26 +2189,33 @@ static int keystone_rio_map_mbox(int mbox,
 				 struct keystone_rio_data *krio_priv)
 {
 	struct keystone_rio_mbox_info *rx_mbox = &krio_priv->rx_mbox[mbox];
-	u32 mapping_entry_low;
-	u32 mapping_entry_high;
+	u32 mapping_entry_low = 0;
+	u32 mapping_entry_high = 0;
 	u32 mapping_entry_qid;
 	u32 mapping_t9_reg[3];
+	u32 pkt_type;
 	int i;
 
-	/* Map the multi-segment mailbox to the corresponding Rx queue for type 11 */
-	mapping_entry_low = ((mbox & 0x1f) << 16)
-		| (0x3f000000); /* Given mailbox, all letters, srcid = 0 */
+	/* Retrieve the packet type */
+	pkt_type = keystone_rio_mp_get_type(mbox, krio_priv);
 
-	/* multi-segment messaging and promiscuous (don't care about src/dst id) */
-	mapping_entry_high = KEYSTONE_RIO_MAP_FLAG_SEGMENT
-		| KEYSTONE_RIO_MAP_FLAG_SRC_PROMISC
-		| KEYSTONE_RIO_MAP_FLAG_DST_PROMISC;
-
-	/* Map the multi-segment mailbox for type 9 as well */
-	mapping_t9_reg[0] = 0; /* accept all COS and srcid = 0 */
-	mapping_t9_reg[1] = KEYSTONE_RIO_MAP_FLAG_SRC_PROMISC
-		| KEYSTONE_RIO_MAP_FLAG_DST_PROMISC; /* promiscuous (don't care about src/dst id) */
-	mapping_t9_reg[2] = (0xffff << 16) | (mbox_to_strmid(mbox)); /* given stream id */
+	if (pkt_type == RIO_PACKET_TYPE_MESSAGE) {
+		/* Map the multi-segment mailbox to the corresponding Rx queue for type 11 */
+		mapping_entry_low = ((mbox & 0x1f) << 16)
+			| (0x3f000000); /* Given mailbox, all letters, srcid = 0 */
+		
+		/* multi-segment messaging and promiscuous (don't care about src/dst id) */
+		mapping_entry_high = KEYSTONE_RIO_MAP_FLAG_SEGMENT
+			| KEYSTONE_RIO_MAP_FLAG_SRC_PROMISC
+			| KEYSTONE_RIO_MAP_FLAG_DST_PROMISC;
+	} else {
+		/* Map the multi-segment mailbox for type 9 */
+		mapping_t9_reg[0] = 0; /* accept all COS and srcid = 0 */
+		mapping_t9_reg[1] = KEYSTONE_RIO_MAP_FLAG_SRC_PROMISC
+			| KEYSTONE_RIO_MAP_FLAG_DST_PROMISC; /* promiscuous (don't care about src/dst id) */
+		mapping_t9_reg[2] = (0xffff << 16)
+			| (keystone_rio_mbox_to_strmid(mbox, krio_priv));
+	}
 
 	/* Set TT flag */
 	if (size) {
@@ -2189,7 +2223,7 @@ static int keystone_rio_map_mbox(int mbox,
 		mapping_t9_reg[1]  |= KEYSTONE_RIO_MAP_FLAG_TT_16;
 	}
 
-	/* QMSS/PktDMA mapping */
+	/* QMSS/PktDMA mapping (generic for both type 9 and 11) */
 	mapping_entry_qid = (queue & 0x3fff) | (flowid << 16);
 
 	i = keystone_rio_get_rxu_map(krio_priv);
@@ -2199,52 +2233,58 @@ static int keystone_rio_map_mbox(int mbox,
 	rx_mbox->rxu_map_id[0] = i;
 	dev_dbg(krio_priv->dev,
 		"Using RXU map %d @ 0x%08x: mbox = %d,"
-		" flowid = %d, queue = %d\n",
-		i, (u32)&(krio_priv->regs->rxu_map[i]), mbox, flowid, queue);
+		" flowid = %d, queue = %d pkt_type = %d\n",
+		i, (u32)&(krio_priv->regs->rxu_map[i]), mbox,
+	       flowid, queue, pkt_type);
 
-	/* Set packet type 11 rx mapping */
-	__raw_writel(mapping_entry_low,
-		     &(krio_priv->regs->rxu_map[i].ltr_mbox_src));
-
-	__raw_writel(mapping_entry_high,
-		     &(krio_priv->regs->rxu_map[i].dest_prom_seg));
-
-	__raw_writel(mapping_entry_qid,
-		     &(krio_priv->regs->rxu_map[i].flow_qid));
-
-	/* Set packet type 9 rx mapping */
-	__raw_writel(mapping_t9_reg[0],
-		     &(krio_priv->regs->rxu_type9_map[i].cos_src));
-
-	__raw_writel(mapping_t9_reg[1],
-		     &(krio_priv->regs->rxu_type9_map[i].dest_prom));
-
-	__raw_writel(mapping_t9_reg[2],
-		     &(krio_priv->regs->rxu_type9_map[i].stream));
-
-	/*
-	 *  The RapidIO peripheral looks at the incoming RapidIO msgs
-	 *  and if there is only one segment (the whole msg fits into one
-	 *  RapidIO msg), the peripheral uses the single segment mapping
-	 *  table. Therefore we need to map the single-segment mailbox too.
-	 *  The same Rx CPPI Queue is used (as for the multi-segment
-	 *  mailbox).
-	 */
-	mapping_entry_high &= ~KEYSTONE_RIO_MAP_FLAG_SEGMENT;
-
-	i = keystone_rio_get_rxu_map(krio_priv);	
-	if (i < 0)
-		return -ENOMEM;
-
-	rx_mbox->rxu_map_id[1] = i;
-	__raw_writel(mapping_entry_low,
-		     &(krio_priv->regs->rxu_map[i].ltr_mbox_src));
-
-	__raw_writel(mapping_entry_high,
-		     &(krio_priv->regs->rxu_map[i].dest_prom_seg));
+	if (pkt_type == RIO_PACKET_TYPE_MESSAGE) {
+		/* Set packet type 11 rx mapping */
+		__raw_writel(mapping_entry_low,
+			     &(krio_priv->regs->rxu_map[i].ltr_mbox_src));
+		__raw_writel(mapping_entry_high,
+			     &(krio_priv->regs->rxu_map[i].dest_prom_seg));
+	} else {
+		/* Set packet type 9 rx mapping */
+		__raw_writel(mapping_t9_reg[0],
+			     &(krio_priv->regs->rxu_type9_map[i].cos_src));
+      		__raw_writel(mapping_t9_reg[1],
+			     &(krio_priv->regs->rxu_type9_map[i].dest_prom));
+		__raw_writel(mapping_t9_reg[2],
+			     &(krio_priv->regs->rxu_type9_map[i].stream));
+	}
 
 	__raw_writel(mapping_entry_qid,
 		     &(krio_priv->regs->rxu_map[i].flow_qid));
+
+	if (pkt_type == RIO_PACKET_TYPE_MESSAGE) {
+		/*
+		 *  The RapidIO peripheral looks at the incoming RapidIO msgs
+		 *  and if there is only one segment (the whole msg fits into one
+		 *  RapidIO msg), the peripheral uses the single segment mapping
+		 *  table. Therefore we need to map the single-segment mailbox too.
+		 *  The same Rx CPPI Queue is used (as for the multi-segment
+		 *  mailbox).
+		 */
+		mapping_entry_high &= ~KEYSTONE_RIO_MAP_FLAG_SEGMENT;
+
+		i = keystone_rio_get_rxu_map(krio_priv);	
+		if (i < 0)
+			return -ENOMEM;
+
+		rx_mbox->rxu_map_id[1] = i;
+	        dev_dbg(krio_priv->dev,
+		       "Using RXU map %d @ 0x%08x: mbox = %d,"
+		       " flowid = %d, queue = %d pkt_type = %d\n",
+		       i, (u32)&(krio_priv->regs->rxu_map[i]), mbox,
+		       flowid, queue, pkt_type);
+
+		__raw_writel(mapping_entry_low,
+			     &(krio_priv->regs->rxu_map[i].ltr_mbox_src));
+		__raw_writel(mapping_entry_high,
+			     &(krio_priv->regs->rxu_map[i].dest_prom_seg));
+		__raw_writel(mapping_entry_qid,
+			     &(krio_priv->regs->rxu_map[i].flow_qid));
+	}
 
 	return 0;
 }
@@ -2303,7 +2343,8 @@ static int keystone_rio_open_inb_mbox(struct rio_mport *mport,
 	res = keystone_rio_map_mbox(mbox,
 				    krx_chan->queue_num,
 				    krx_chan->flow_num,
-				    mport->sys_size, krio_priv);
+				    mport->sys_size,
+				    krio_priv);
 
 	dmaengine_resume(krx_chan->dma_channel);
 
@@ -2371,8 +2412,7 @@ static int keystone_rio_hw_add_inb_buffer(struct rio_mport *mport,
 	sg_init_table(p_info->sg, KEYSTONE_RIO_SGLIST_SIZE);
 	sg_set_buf(&p_info->sg[0], p_info->epib, sizeof(p_info->epib));
 	sg_set_buf(&p_info->sg[1], p_info->psdata, sizeof(p_info->psdata));
-	sg_set_buf(&p_info->sg[2], p_info->buff,
-		   krx_chan->buffer_sizes[mbox_to_pool(mbox)]);
+	sg_set_buf(&p_info->sg[2], p_info->buff, krx_chan->buffer_sizes[0]);
 	
 	p_info->sg_ents = 2 + dma_map_sg(krio_priv->dev, &p_info->sg[2],
 					 1, DMA_FROM_DEVICE);
@@ -2405,7 +2445,7 @@ static int keystone_rio_hw_add_inb_buffer(struct rio_mport *mport,
 	desc->callback_param = p_info;
 	p_info->cookie = desc->cookie;
 
-	return dma_rxfree_refill_one(krx_chan->dma_channel, mbox_to_pool(mbox), desc);
+	return dma_rxfree_refill_one(krx_chan->dma_channel, 0, desc);
 }
 
 /**
@@ -2423,6 +2463,7 @@ static void *keystone_rio_hw_get_inb_message(struct rio_mport *mport, int mbox)
 	struct keystone_rio_rx_chan_info *krx_chan = &(krio_priv->rx_channels[mbox]);
 	struct keystone_rio_packet *p_info = NULL;
 	void *buff = NULL;
+	u32   cc;
 
 	p_info = (void *) dma_get_one(krx_chan->dma_channel);
 	if (!p_info)
@@ -2432,6 +2473,11 @@ static void *keystone_rio_hw_get_inb_message(struct rio_mport *mport, int mbox)
 
 	dma_unmap_sg(krio_priv->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
 
+	/* Check CC from PS descriptor word 1 */
+	cc = keystone_rio_mp_get_cc(p_info->psdata[1], krx_chan->packet_type);
+	if (cc)
+		dev_warn(krio_priv->dev,
+			 "MP receive completion code is non zero (0x%x)\n", cc);
 end:
 	dmaengine_resume(krx_chan->dma_channel);
 
@@ -2704,7 +2750,7 @@ static int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 	 *	For type 11, setting packet type to 31 in
 	 *	those bits is optional.
 	 */
-	if (krio_priv->tx_packet_type == RIO_PACKET_TYPE_MESSAGE) {
+	if (keystone_rio_mp_get_type(mbox, krio_priv) == RIO_PACKET_TYPE_MESSAGE) {
 		/* Packet 11 case (Message) */
 		packet_type = 31;
 
@@ -2715,8 +2761,8 @@ static int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 		/* Packet 9 case (Data Streaming) */
 		packet_type = 30;
 
-		/* Word 2: COS = 0, stream id based on mbox */
-		p_info->psdata[1] = (mbox_to_strmid(mbox) << 16);
+		/* Word 2: COS = 0, stream id */
+		p_info->psdata[1] = keystone_rio_mbox_to_strmid(mbox, krio_priv) << 16;
 	}
 
 	if (rdev->net->hport->sys_size)
@@ -2724,7 +2770,8 @@ static int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 
 	dev_dbg(krio_priv->dev,
 		"packet type %d: psdata[0] = %08x, psdata[1] = %08x\n",
-		krio_priv->tx_packet_type, p_info->psdata[0], p_info->psdata[1]);
+		keystone_rio_mp_get_type(mbox, krio_priv),
+		p_info->psdata[0], p_info->psdata[1]);
 
 	dev_dbg(krio_priv->dev, "buf(len=%d, plen=%d)\n", len, plen);
 
@@ -2828,8 +2875,8 @@ struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 	port->iores.flags = IORESOURCE_MEM;
 
 	rio_init_dbell_res(&port->riores[RIO_DOORBELL_RESOURCE], 0, 0xffff);
-	rio_init_mbox_res(&port->riores[RIO_INB_MBOX_RESOURCE], 0, 0);
-	rio_init_mbox_res(&port->riores[RIO_OUTB_MBOX_RESOURCE], 0, 0);
+	rio_init_mbox_res(&port->riores[RIO_INB_MBOX_RESOURCE], 0, KEYSTONE_RIO_MAX_MBOX);
+	rio_init_mbox_res(&port->riores[RIO_OUTB_MBOX_RESOURCE], 0, KEYSTONE_RIO_MAX_MBOX);
 
 	sprintf(port->name, "RIO%d mport", port_id);
 
@@ -2861,13 +2908,72 @@ struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 }
 
 
+static int keystone_rio_get_mbox_defaults(int mbox,
+					  struct device_node *node_rio,
+					  struct keystone_rio_data *krio_priv)
+{
+	struct keystone_rio_rx_chan_info *krx_chan = &(krio_priv->rx_channels[mbox]);
+	struct device_node *node;
+	char node_name[24];
+
+	snprintf(node_name, sizeof(node_name), "mbox-%d", mbox);
+	node = of_get_child_by_name(node_rio, node_name);
+	if (!node) {
+		dev_err(krio_priv->dev, "could not find %s\n", node_name);
+		of_node_put(node);
+		return -ENODEV;
+	}
+
+	dev_dbg(krio_priv->dev, "using node \"%s\"\n", node_name);
+
+	/* DMA rx chan config */
+	if (of_property_read_string(node, "rx_channel", &krx_chan->name) < 0) {
+		char name[8];
+		dev_err(krio_priv->dev,
+			"missing \"rx_channel\" parameter\n");
+		snprintf(name, sizeof(name), "riorx-%d", mbox);
+		krx_chan->name = name;
+	}
+
+	if (of_property_read_u32_array(node, "rx_queue_depth",
+				       krx_chan->queue_depths,
+				       KEYSTONE_QUEUES_PER_CHAN) < 0) {
+		dev_err(krio_priv->dev,
+			"missing \"rx_queue_depth\" parameter\n");
+		krx_chan->queue_depths[0] = 128;
+	}
+
+	if (of_property_read_u32_array(node, "rx_buffer_size", 
+				       krx_chan->buffer_sizes, 
+				       KEYSTONE_QUEUES_PER_CHAN) < 0) {
+		dev_err(krio_priv->dev,
+			"missing \"rx_buffer_size\" parameter\n");
+		krx_chan->buffer_sizes[0] = 4096;
+	}
+
+	/* 
+	 * If stream_id is defined, this mbox is mapped to the corresponding
+	 * streamid and the channel is for type 9 packets.
+	 */
+	if (of_property_read_u32(node, "stream_id", 
+				 &krx_chan->stream_id) < 0) {
+		krx_chan->packet_type = RIO_PACKET_TYPE_MESSAGE;
+		krx_chan->stream_id = -1;
+	} else {
+		krx_chan->packet_type = RIO_PACKET_TYPE_STREAM;
+	}
+	of_node_put(node);
+
+	return 0;
+}
+
 static void keystone_rio_get_controller_defaults(struct device_node *node,
 						 struct keystone_rio_data *krio_priv)
 {
 	struct keystone_rio_board_controller_info *c = &krio_priv->board_rio_cfg;
-	struct keystone_rio_rx_chan_info *krx_chan;
 	u32 temp[24];
 	int i;
+	int mbox;
 
 	if (of_property_read_u32_array(node, "reg", &temp[0], 6)) {
 		dev_err(krio_priv->dev, "Could not get default reg\n");
@@ -2965,44 +3071,25 @@ static void keystone_rio_get_controller_defaults(struct device_node *node,
 		krio_priv->tx_queue_depth = 128;
 	}
 
-	if (of_property_read_u32(node, "tx_packet_type",
-				 &krio_priv->tx_packet_type) < 0) {
+	/* Mailboxes configuration */
+	if (of_property_read_u32(node, "num-mboxes",
+				 &krio_priv->num_mboxes) < 0) {
 		dev_err(krio_priv->dev,
-			"missing \"tx_packet_type\" parameter\n");
-		krio_priv->tx_packet_type = RIO_PACKET_TYPE_MESSAGE;
+			"missing \"num-mboxes\" parameter\n");
+		krio_priv->num_mboxes = 1;
 	}
 
-	if ((krio_priv->tx_packet_type != RIO_PACKET_TYPE_MESSAGE) &&
-	    (krio_priv->tx_packet_type != RIO_PACKET_TYPE_STREAM)) {
+	if (krio_priv->num_mboxes > KEYSTONE_RIO_MAX_MBOX) {
 		dev_err(krio_priv->dev,
-			"incorrect \"tx_packet_type\" parameter value\n");
-		krio_priv->tx_packet_type = RIO_PACKET_TYPE_MESSAGE;
+			"wrong \"num_mboxes\" parameter value %d, set to %d\n",
+			krio_priv->num_mboxes, KEYSTONE_RIO_MAX_MBOX);
+			krio_priv->num_mboxes = KEYSTONE_RIO_MAX_MBOX;
 	}
 
-	/* DMA rx chan config */
-	krx_chan = &(krio_priv->rx_channels[0]);
-	if (of_property_read_string(node, "rx_channel", &krx_chan->name) < 0) {
-		dev_err(krio_priv->dev,
-			"missing \"rx_channel\" parameter\n");
-		krx_chan->name = "riorx";
+	for (mbox = 0; mbox < krio_priv->num_mboxes; mbox++) {
+		(void) keystone_rio_get_mbox_defaults(mbox, node, krio_priv);
 	}
-
-	if (of_property_read_u32_array(node, "rx_queue_depth",
-				       krx_chan->queue_depths,
-				       KEYSTONE_QUEUES_PER_CHAN) < 0) {
-		dev_err(krio_priv->dev,
-			"missing \"rx_queue_depth\" parameter\n");
-		krx_chan->queue_depths[0] = 128;
-	}
-
-	if (of_property_read_u32_array(node, "rx_buffer_size", 
-				       krx_chan->buffer_sizes, 
-				       KEYSTONE_QUEUES_PER_CHAN) < 0) {
-		dev_err(krio_priv->dev,
-			"missing \"rx_buffer_size\" parameter\n");
-		krx_chan->buffer_sizes[0] = 4096;
-	}
-
+	
 	/* Interrupt config */
 	c->rio_irq = irq_of_parse_and_map(node, 0);
 	if (c->rio_irq < 0) {
