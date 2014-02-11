@@ -99,6 +99,19 @@ struct keystone_rio_data {
 static void dbell_handler(struct keystone_rio_data *krio_priv);
 static void keystone_rio_port_write_handler(struct keystone_rio_data *krio_priv);
 
+struct keystone_lane_config {
+	int start; /* lane start number of the port */
+	int end;   /* lane end number of the port */
+};
+
+static struct keystone_lane_config keystone_lane_configs[5][KEYSTONE_RIO_MAX_PORT] = {
+	{ {0, 1}, {1, 2}, {2, 3}, {3, 4} },       /* path mode 0: 4 ports in 1x    */
+	{ {0, 1}, {1, 2}, {2, 4}, {-1, -1} },     /* path mode 1: 3 ports in 1x/2x */
+	{ {0, 2}, {2, 3}, {3, 4}, {-1, -1} },     /* path mode 2: 3 ports in 2x/1x */
+	{ {0, 2}, {2, 4}, {-1, -1}, {-1, -1} },   /* path mode 3: 2 ports in 2x    */
+	{ {0, 4}, {-1, -1}, {-1, -1}, {-1, -1} }, /* path mode 4: 1 ports in 4x    */
+};
+
 /*----------------------- Interrupt management -------------------------*/
 
 static irqreturn_t lsu_interrupt_handler(int irq, void *data)
@@ -883,6 +896,28 @@ out:
 
 /*------------------------- RapidIO hw controller setup ---------------------*/
 
+/* Retrieve the corresponding lanes bitmask from ports bitmask and path_mode */
+static int keystone_rio_get_lane_config(u32 ports, u32 path_mode)
+{
+	u32 lanes = 0;
+
+	while (ports) {
+		u32 lane;
+		u32 port = __ffs(ports);
+		ports &= ~(1 << port);
+
+		if (keystone_lane_configs[path_mode][port].start == -1)
+			return -1;
+
+		for (lane = keystone_lane_configs[path_mode][port].start;
+		     lane < keystone_lane_configs[path_mode][port].end;
+		     lane ++) {
+			lanes |= (1 << lane);
+		}
+	}
+	return (int) lanes;
+}
+
 static void k2_rio_serdes_init_3g(struct keystone_rio_data *krio_priv)
 {
 	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
@@ -1058,7 +1093,6 @@ static int k2_rio_serdes_config(u32 lanes, u32 baud, struct keystone_rio_data *k
 	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
 	u32 rate;
 	u32 val;
-	u32 i;
 
 	/* Disable pll before configuring the SerDes registers */
 	__raw_writel(0x00000000, regs + 0x1ff4);
@@ -1085,10 +1119,18 @@ static int k2_rio_serdes_config(u32 lanes, u32 baud, struct keystone_rio_data *k
 		return -EINVAL;
 	}
 
-	for (i = 0; i < lanes; i++)
-		k2_rio_serdes_lane_enable(i, rate, krio_priv);
+	/* Enable serdes for requested lanes */
+	while(lanes) {
+		u32 lane = __ffs(lanes);
+		lanes &= ~(1 << lane);
 
-	/* Enable pll via the pll_ctrl 0x0014 */
+		if (lane >= KEYSTONE_RIO_MAX_PORT)
+			return -EINVAL;
+
+		k2_rio_serdes_lane_enable(lane, rate, krio_priv);
+	}
+
+	/* Enable pll via the pll_ctrl */
 	__raw_writel(0xe0000000, regs + 0x1ff4);
 
 	/* Wait until CMU_OK bit is set */
@@ -1096,6 +1138,29 @@ static int k2_rio_serdes_config(u32 lanes, u32 baud, struct keystone_rio_data *k
 		val = __raw_readl(regs + 0xbf8);
 	} while (!(val & BIT(16)));
 
+	return 0;
+}
+
+static int k2_rio_serdes_wait_lock(struct keystone_rio_data *krio_priv, u32 lanes)
+{
+	u32 val;
+	unsigned long timeout;
+	volatile void *regs = (volatile void*) krio_priv->serdes_regs;
+	u32 val_mask;
+
+	val_mask = lanes | (lanes << 8);
+
+	/* Wait for the SerDes PLL lock */
+	timeout = jiffies + msecs_to_jiffies(K2_PLL_LOCK_TIMEOUT);
+	while (1) {
+		/* read PLL_CTRL */
+		val = __raw_readl(regs + 0x1ff4);
+		if ((val & val_mask) == val_mask)
+			break;
+		if (time_after(jiffies, timeout))
+			return -1;
+		udelay(10);
+	}
 	return 0;
 }
 
@@ -1149,7 +1214,7 @@ static int keystone_rio_hw_init(u32 mode, u32 baud, struct keystone_rio_data *kr
 	__raw_writel(0x00053800, &krio_priv->regs->per_set_cntl);
 
 	if (!K2_SERDES(krio_priv)) {
-		/* Serdes main configuration */
+		/* K1 SerDes main configuration */
 		__raw_writel(serdes_config->serdes_cfg_pll,
 			     &krio_priv->serdes_regs->pll);
 
@@ -1166,13 +1231,19 @@ static int keystone_rio_hw_init(u32 mode, u32 baud, struct keystone_rio_data *kr
 			val = __raw_readl(krio_priv->serdes_sts_reg);
 		} while ((val & 0x1) != 0x1);
 	} else {
-		/* Configure the SerDes for the 4 lanes */
-		res = k2_rio_serdes_config(KEYSTONE_RIO_MAX_PORT, baud, krio_priv);
+		u32 path_mode = krio_priv->board_rio_cfg.path_mode;
+		u32 ports     = krio_priv->board_rio_cfg.ports;
+
+		/* K2 SerDes main configuration */
+		res = keystone_rio_get_lane_config(ports, path_mode);
+		if (res > 0) {
+			u32 lanes = (u32) res;
+			res = k2_rio_serdes_config(lanes, baud, krio_priv);
+		}
 	}
 
 	if (res < 0) {
-		dev_err(krio_priv->dev,
-			"initialization of SerDes failed\n");
+		dev_err(krio_priv->dev, "initialization of SerDes failed\n");
 		return res;
 	}
 
@@ -1381,16 +1452,26 @@ static int keystone_rio_port_status(int port, struct keystone_rio_data *krio_pri
 		res = keystone_rio_test_link(krio_priv);
 		if (0 != res) {
 			dev_err(krio_priv->dev,
-				"Link test failed on port %d\n", port);
+				"link test failed on port %d\n", port);
 			return -EIO;
 		} else
 			return 0; /* port must be solid OK */
 	} else {
 		dev_err(krio_priv->dev,
-			"Port %d is not initialized - PORT_OK not set\n",
+			"port %d is not initialized - PORT_OK not set\n",
 			port);
 		return -EIO;
 	}
+}
+
+/**
+ * keystone_rio_port_disable - Disable a RapidIO port
+ * @port: index of the port to configure
+ */
+static void keystone_rio_port_disable(u32 port, struct keystone_rio_data *krio_priv)
+{
+	/* Disable port */
+	__raw_writel(0x800000, &(krio_priv->serial_port_regs->sp[port].ctl));
 }
 
 /**
@@ -1476,10 +1557,6 @@ static int keystone_rio_port_activate(u32 port, struct keystone_rio_data *krio_p
 	__raw_writel(KEYSTONE_RIO_PORT_ERROR_MASK,
 		     &(krio_priv->serial_port_regs->sp[port].err_stat));
 	__raw_writel(0, &(krio_priv->err_mgmt_regs->sp_err[port].det));
-
-	/* If packet forwarding is enabled, configure port routing */
-	if (krio_priv->board_rio_cfg.pkt_forwarding)
-		keystone_rio_port_set_routing(port, krio_priv);
 
 	/* Set multicast and packet forwarding mode otherwise unicast mode */
 	val = krio_priv->board_rio_cfg.pkt_forwarding ? 0x00209000 : 0x00109000;
@@ -2886,8 +2963,6 @@ static void keystone_rio_port_chk_task(struct work_struct *work)
 static int keystone_rio_setup_controller(struct platform_device *pdev,
 					 struct keystone_rio_data *krio_priv)
 {
-	void __iomem *regs = (void __iomem *)krio_priv->serdes_regs;
-	u32 val;
 	u32 ports;
 	u32 p;
 	u32 mode;
@@ -2899,7 +2974,6 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 	int has_port_ready = 0;
 #endif
 	struct rio_mport *mport;
-	unsigned long timeout;
 	char str[8];
 
 	size      = krio_priv->board_rio_cfg.size;
@@ -2941,8 +3015,9 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 		goto out;
 	}
 
-	dev_info(&pdev->dev, "initializing %s Gbps interface with SerDes"
-		 " lane configuration %d\n", str, path_mode);
+	dev_info(&pdev->dev,
+		 "initializing %s Gbps interface with port configuration %d\n",
+		 str, path_mode);
 
 	/* Hardware set up of the controller */
 	res = keystone_rio_hw_init(mode, baud, krio_priv);
@@ -2957,18 +3032,9 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 	if (res)
 		return res;
 
-	/*
-	 * Configure all ports even if we do not use all of them.
-	 * This is needed for 2x and 4x modes.
-	 */
-	for (p = 0; p < KEYSTONE_RIO_MAX_PORT; p++) {			
-		res = keystone_rio_port_init(p, path_mode, krio_priv);
-		if (res < 0) {
-			dev_err(&pdev->dev,
-				"initialization of port %d failed\n", p);
-			return res;
-		}
-	}
+	/* Disable all ports */
+	for (p = 0; p < KEYSTONE_RIO_MAX_PORT; p++)
+		keystone_rio_port_disable(p, krio_priv);
 
 	/* Initialize interrupts */
 	keystone_rio_interrupt_setup(krio_priv);
@@ -2977,24 +3043,15 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 	keystone_rio_start(krio_priv);
 
 	if (K2_SERDES(krio_priv)) {
-		/* Wait for the SerDes PLL lock */
-		timeout = jiffies + msecs_to_jiffies(K2_PLL_LOCK_TIMEOUT);
-		while (1) {
-			val = __raw_readl(regs + 0x1ff4);
-			if ((val & 0xf0f) == 0xf0f)
-				break;
+		int lanes = keystone_rio_get_lane_config(ports, path_mode);
 
-			if (time_after(jiffies, timeout)) {
-				dev_err(&pdev->dev,
-					"failed to train the lanes on %s Gbps\n", str);
-				break;
-			}
-			udelay(10);
-		}
+		if (lanes > 0)
+			res = k2_rio_serdes_wait_lock(krio_priv ,(u32) lanes);
+		if (res < 0)
+			dev_info(&pdev->dev,
+				 "SerDes for lane mask 0x%x on %s Gbps not locked\n",
+				 lanes, str);
 	}
-
-	dev_info(&pdev->dev, "Hardware interface successfully initialized "
-		 "on %s Gbps\n", str);
 
 	/* Use and check ports status (but only the requested ones) */
 	krio_priv->ports_registering = 0;
@@ -3002,6 +3059,13 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 		int status;
 		u32 port = __ffs(ports);
 		ports &= ~(1 << port);
+
+		res = keystone_rio_port_init(port, path_mode, krio_priv);
+		if (res < 0) {
+			dev_err(&pdev->dev,
+				"initialization of port %d failed\n", port);
+			return res;
+		}
 
 		/* Start the port */
 		keystone_rio_port_activate(port, krio_priv);
@@ -3015,8 +3079,7 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 		status = keystone_rio_port_status(port, krio_priv);
 		if (status == 0) {
 			/* Register this port  */
-			mport = keystone_rio_register_mport(port, size,
-							    krio_priv);
+			mport = keystone_rio_register_mport(port, size, krio_priv);
 			if (!mport)
 				goto out;
 
