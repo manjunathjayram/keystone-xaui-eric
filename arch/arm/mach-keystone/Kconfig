@@ -2,19 +2,13 @@ if ARCH_KEYSTONE
 
 config TI_KEYSTONE
 	bool
+	select HAS_RAPIDIO
 
 menu "TI KeyStone Implementations"
 
 config KEYSTONE2_DMA_COHERENT
 	bool "MPAX based coherency support"
 	default n
-
-config RAPIDIO
-        bool "RapidIO support"
-	default y
-        help
-          If you say Y here, the kernel will include drivers and
-          infrastructure code to support RapidIO interconnect devices.
 
 endmenu
 
