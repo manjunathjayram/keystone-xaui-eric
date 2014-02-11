@@ -1103,7 +1103,6 @@ static int k2_rio_serdes_config(u32 lanes, u32 baud, struct keystone_rio_data *k
  * keystone_rio_hw_init - Configure a RapidIO controller
  * @mode: serdes configuration
  * @baud: serdes baudrate
- * @hostid: device id of the host
  *
  * Returns %0 on success or %-EINVAL or %-EIO on failure.
  */
@@ -1113,6 +1112,7 @@ static int keystone_rio_hw_init(u32 mode, u32 baud, struct keystone_rio_data *kr
 	u32 block;
 	u32 port;
 	int res = 0;
+	int i;
 	struct keystone_serdes_config *serdes_config
 		= &(krio_priv->board_rio_cfg.serdes_config[mode]);
 
@@ -1145,7 +1145,7 @@ static int keystone_rio_hw_init(u32 mode, u32 baud, struct keystone_rio_data *kr
 	/* Set control register 1 configuration */
 	__raw_writel(0x00000000, &krio_priv->regs->per_set_cntl1);
 
-	/* Set Control register */
+	/* Set Control register (disable promiscuous) */
 	__raw_writel(0x00053800, &krio_priv->regs->per_set_cntl);
 
 	if (!K2_SERDES(krio_priv)) {
@@ -1258,6 +1258,7 @@ static int keystone_rio_hw_init(u32 mode, u32 baud, struct keystone_rio_data *kr
 	/* Set error detection mode */
 	/* clear all errors */
 	__raw_writel(0x00000000, &krio_priv->err_mgmt_regs->err_det);
+
 	/* enable all error detection */
 	__raw_writel(0x00000000, &krio_priv->err_mgmt_regs->err_en);
 
@@ -1266,19 +1267,45 @@ static int keystone_rio_hw_init(u32 mode, u32 baud, struct keystone_rio_data *kr
 	       KEYSTONE_RIO_ERR_EXT_FEAT_ID);
 	__raw_writel(val, &krio_priv->err_mgmt_regs->err_report_blk_hdr);
 
-	/* clear msb of err catptured addr reg */
+	/* clear msb of err captured addr reg */
 	__raw_writel(0x00000000, &krio_priv->err_mgmt_regs->h_addr_capt);
 
-	/* clear lsb of err catptured addr reg */
+	/* clear lsb of err captured addr reg */
 	__raw_writel(0x00000000, &krio_priv->err_mgmt_regs->addr_capt);
 
-	/* clear err catptured source and dest devID reg */
+	/* clear err captured source and dest DevID reg */
 	__raw_writel(0x00000000, &krio_priv->err_mgmt_regs->id_capt);
 
-	/* clear err catptured packet info */
+	/* clear err captured packet info */
 	__raw_writel(0x00000000, &krio_priv->err_mgmt_regs->ctrl_capt);
 
 	__raw_writel(0x41004141, &krio_priv->phy_regs->phy_sp[0].__rsvd[3]);
+
+	/* Set packet forwarding */
+	for (i = 0; i < KEYSTONE_RIO_MAX_PKT_FW_ENTRIES; i++) {
+		if ((krio_priv->board_rio_cfg.pkt_forwarding) && (i < 8)) {
+			struct keystone_routing_config *routing = krio_priv->board_rio_cfg.routing_config;
+
+			/* Enable packet forwarding DevId and port defined in DTS */
+			__raw_writel(routing[i].dev_id_low
+				     | (routing[i].dev_id_high << 16),
+				     &(krio_priv->regs->pkt_fwd_cntl[i].pf_16b));
+			__raw_writel((routing[i].dev_id_low & 0xff)
+				     | ((routing[i].dev_id_high & 0xff ) << 8)
+				     | (routing[i].port << 16),
+				     &(krio_priv->regs->pkt_fwd_cntl[i].pf_8b));
+
+			dev_info(krio_priv->dev,
+				 "enabling packet forwarding to port %d for DestID 0x%04x - 0x%04x\n",
+				 routing[i].port, routing[i].dev_id_low, routing[i].dev_id_high);
+		} else {
+			/* Disable packet forwarding */
+			__raw_writel(0xffffffff, &(krio_priv->regs->pkt_fwd_cntl[i].pf_16b));
+			__raw_writel(0x0003ffff, &(krio_priv->regs->pkt_fwd_cntl[i].pf_8b));
+		}
+	}
+	if (!krio_priv->board_rio_cfg.pkt_forwarding)
+		dev_info(krio_priv->dev, "packet forwarding disabled\n");
 
 	/* Force all writes to finish */
 	val = __raw_readl(&krio_priv->err_mgmt_regs->ctrl_capt);
@@ -1381,10 +1408,6 @@ static int keystone_rio_port_init(u32 port, u32 path_mode, struct keystone_rio_d
 	__raw_writel(0x2003f044,
 		     &krio_priv->phy_regs->phy_sp[port].long_cs_tx1);
 
-	/* Disable packet forwarding */
-	__raw_writel(0xffffffff, &(krio_priv->regs->pkt_fwd_cntl[port].pf_16b));
-	__raw_writel(0x0003ffff, &(krio_priv->regs->pkt_fwd_cntl[port].pf_8b));
-
 	/* Silence and discovery timers */
 	__raw_writel(0x20000000,
 		     &(krio_priv->phy_regs->phy_sp[port].silence_timer));
@@ -1398,6 +1421,33 @@ static int keystone_rio_port_init(u32 port, u32 path_mode, struct keystone_rio_d
 	__raw_writel(path_mode, &(krio_priv->phy_regs->phy_sp[port].path_ctl));
 
 	return 0;
+}
+
+/** 
+ * keystone_rio_port_set_routing - Configure routing for a RapidIO port
+ * @port: index of the port to configure
+ */
+static void keystone_rio_port_set_routing(u32 port, struct keystone_rio_data *krio_priv)
+{
+	u32 base_dev_id = krio_priv->board_rio_cfg.size ? 
+		__raw_readl(&krio_priv->car_csr_regs->base_dev_id) & 0xffff :
+		(__raw_readl(&krio_priv->car_csr_regs->base_dev_id) >> 16) & 0xff;
+
+	/* Enable routing to LLM for this port */
+	__raw_writel(0x84000000,
+		     &(krio_priv->transport_regs->transport_sp[port].base_route[KEYSTONE_RIO_PKT_FW_BRR_NUM].ctl));
+
+	/* 
+	 * Configure the Base Routing Register (BRR) to ensure that all packets
+	 * matching our DevId are admitted.
+	 */
+	__raw_writel((base_dev_id << 16) |
+		     (krio_priv->board_rio_cfg.size ? 0xffff : 0xff),
+		     &(krio_priv->transport_regs->transport_sp[port].base_route[KEYSTONE_RIO_PKT_FW_BRR_NUM].pattern_match));
+
+	dev_dbg(krio_priv->dev, "pattern_match = 0x%x for BRR %d\n",
+		__raw_readl(&krio_priv->transport_regs->transport_sp[port].base_route[KEYSTONE_RIO_PKT_FW_BRR_NUM].pattern_match),
+		KEYSTONE_RIO_PKT_FW_BRR_NUM);
 }
 
 /**
@@ -1427,9 +1477,13 @@ static int keystone_rio_port_activate(u32 port, struct keystone_rio_data *krio_p
 		     &(krio_priv->serial_port_regs->sp[port].err_stat));
 	__raw_writel(0, &(krio_priv->err_mgmt_regs->sp_err[port].det));
 
-	/* Enable promiscuous */
-	__raw_writel(0x00309000,
-		     &(krio_priv->transport_regs->transport_sp[port].control));
+	/* If packet forwarding is enabled, configure port routing */
+	if (krio_priv->board_rio_cfg.pkt_forwarding)
+		keystone_rio_port_set_routing(port, krio_priv);
+
+	/* Set multicast and packet forwarding mode otherwise unicast mode */
+	val = krio_priv->board_rio_cfg.pkt_forwarding ? 0x00209000 : 0x00109000;
+	__raw_writel(val, &(krio_priv->transport_regs->transport_sp[port].control));
 
 	/* Enable Port-write reception capture */
 	__raw_writel(0, &(krio_priv->port_write_regs->port_wr_rx_capt[port]));
@@ -2604,7 +2658,7 @@ static void keystone_rio_get_controller_defaults(struct device_node *node,
 {
 	struct keystone_rio_board_controller_info *c = &krio_priv->board_rio_cfg;
 	struct keystone_rio_rx_chan_info *krx_chan;
-	u32 temp[15];
+	u32 temp[24];
 	int i;
 
 	if (of_property_read_u32_array(node, "reg", (u32 *)&(temp[0]), 6)) {
@@ -2730,6 +2784,18 @@ static void keystone_rio_get_controller_defaults(struct device_node *node,
 	if (c->lsu_irq < 0) {
 		dev_err(krio_priv->dev, "missing \"lsu_irq\" parameter\n");
 	}
+
+	/* Packet forwarding */
+	if (of_property_read_u32_array(node, "pkt-forward", (u32 *)&(temp[0]), 24)) {
+		c->pkt_forwarding = 0;
+	} else {
+		c->pkt_forwarding = 1;
+		for (i = 0; i < 8; i++) {
+			c->routing_config[i].dev_id_low  = (u16) temp[(i * 3)];
+			c->routing_config[i].dev_id_high = (u16) temp[(i * 3) + 1];
+			c->routing_config[i].port        = (u8)  temp[(i * 3) + 2];
+		}
+	}
 }
 
 static void keystone_rio_port_status_timer(unsigned long data)
@@ -2784,9 +2850,13 @@ static void keystone_rio_port_chk_task(struct work_struct *work)
 			has_port_ready = 1;
 #endif
 
+			/* update routing after discovery/enumeration with new dev id */
+			if (krio_priv->board_rio_cfg.pkt_forwarding)
+				keystone_rio_port_set_routing(port, krio_priv);
+
 			dev_info(krio_priv->dev,
 				 "port RIO%d host_deviceid %d registered\n",
-				port, mport->host_deviceid);
+				 port, mport->host_deviceid);
 		} else {
 			krio_priv->ports_registering |= (1 << port);
 
@@ -2953,6 +3023,10 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 #ifdef CONFIG_RIONET
 			has_port_ready = 1;
 #endif
+
+			/* update routing after discovery/enumeration with new dev id */
+			if (krio_priv->board_rio_cfg.pkt_forwarding)
+				keystone_rio_port_set_routing(port, krio_priv);
 
 			dev_info(&pdev->dev,
 				 "port RIO%d host_deviceid %d registered\n",
