@@ -1458,9 +1458,16 @@ static int pa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 		     !(skb_shinfo(skb)->tx_flags & SKBTX_IN_PROGRESS))) {
 		pend = kzalloc(sizeof(*pend), GFP_ATOMIC);
 		if (pend) {
+			void *saved_sp;
 			if (!atomic_inc_not_zero(&sk->sk_refcnt))
 				return -ENODEV;
-			pend->skb = skb_clone(p_info->skb, GFP_ATOMIC);
+
+			/* The SA module may have reused skb->sp */
+			saved_sp = skb->sp;
+			skb->sp = NULL;
+			pend->skb = skb_clone(skb, GFP_ATOMIC);
+			skb->sp = saved_sp;
+
 			if (!pend->skb) {
 				sock_put(sk);
 				kfree(pend);
