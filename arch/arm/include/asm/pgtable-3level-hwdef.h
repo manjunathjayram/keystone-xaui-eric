@@ -68,7 +68,11 @@
 #define PTE_TYPE_PAGE		(_AT(pteval_t, 3) << 0)
 #define PTE_BUFFERABLE		(_AT(pteval_t, 1) << 2)		/* AttrIndx[0] */
 #define PTE_CACHEABLE		(_AT(pteval_t, 1) << 3)		/* AttrIndx[1] */
+#ifdef CONFIG_KEYSTONE2_DMA_COHERENT
+#define PTE_EXT_SHARED		(_AT(pteval_t, 2) << 8)		/* SH[1:0], inner shareable */
+#else
 #define PTE_EXT_SHARED		(_AT(pteval_t, 3) << 8)		/* SH[1:0], inner shareable */
+#endif
 #define PTE_EXT_AF		(_AT(pteval_t, 1) << 10)	/* Access Flag */
 #define PTE_EXT_NG		(_AT(pteval_t, 1) << 11)	/* nG */
 #define PTE_EXT_XN		(_AT(pteval_t, 1) << 54)	/* XN */
