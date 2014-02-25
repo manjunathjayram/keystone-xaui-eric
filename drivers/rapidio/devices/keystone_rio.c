@@ -110,10 +110,10 @@ struct keystone_lane_config {
 };
 
 static struct keystone_lane_config keystone_lane_configs[5][KEYSTONE_RIO_MAX_PORT] = {
-	{ {0, 1}, {1, 2}, {2, 3}, {3, 4} },       /* path mode 0: 4 ports in 1x    */
-	{ {0, 1}, {1, 2}, {2, 4}, {-1, -1} },     /* path mode 1: 3 ports in 1x/2x */
-	{ {0, 2}, {2, 3}, {3, 4}, {-1, -1} },     /* path mode 2: 3 ports in 2x/1x */
-	{ {0, 2}, {2, 4}, {-1, -1}, {-1, -1} },   /* path mode 3: 2 ports in 2x    */
+	{ {0, 1}, {1, 2},   {2, 3},   {3, 4}   }, /* path mode 0: 4 ports in 1x    */
+	{ {0, 2}, {-1, -1}, {2, 3},   {3, 4}   }, /* path mode 1: 3 ports in 2x/1x */
+	{ {0, 1}, {1, 2},   {2, 4},   {-1, -1} }, /* path mode 2: 3 ports in 1x/2x */
+	{ {0, 2}, {-1, -1}, {2, 4},   {-1, -1} }, /* path mode 3: 2 ports in 2x    */
 	{ {0, 4}, {-1, -1}, {-1, -1}, {-1, -1} }, /* path mode 4: 1 ports in 4x    */
 };
 
@@ -1607,7 +1607,7 @@ static int keystone_rio_port_error_recovery(int port, struct keystone_rio_data *
 		ackid = (((ackid + 1) & 0x1f) << 24)
 			| ((ackid_stat & 0x1f000000) >> 24);
 
-		res = keystone_rio_maint_write(krio_priv, port, 0xff,
+		res = keystone_rio_maint_write(krio_priv, port, 0xffff,
 					       krio_priv->board_rio_cfg.size,
 					       0, 0x100 + RIO_PORT_N_ACK_STS_CSR(0),
 					       4, ackid);
@@ -1648,7 +1648,7 @@ static int keystone_rio_port_status(int port, struct keystone_rio_data *krio_pri
 		}
 
 		res = keystone_rio_test_link(port, krio_priv);
-		if (0 != res) {
+		if (res != 0) {
 			dev_err(krio_priv->dev,
 				"link test failed on port %d\n", port);
 			return -EIO;
@@ -1684,10 +1684,12 @@ static int keystone_rio_port_init(u32 port, u32 path_mode, struct keystone_rio_d
 		return -EINVAL;
 
 	/* Silence and discovery timers */
-	__raw_writel(0x20000000,
-		     &(krio_priv->phy_regs->phy_sp[port].silence_timer));
-	__raw_writel(0x20000000,
-		     &(krio_priv->phy_regs->phy_sp[port].discovery_timer));
+	if ((port == 0)|| (port == 2)) {
+		__raw_writel(0x20000000,
+			     &(krio_priv->phy_regs->phy_sp[port].silence_timer));
+		__raw_writel(0x20000000,
+			     &(krio_priv->phy_regs->phy_sp[port].discovery_timer));
+	}
 
 	/* Enable port in input and output */
 	__raw_writel(0x600000, &(krio_priv->serial_port_regs->sp[port].ctl));
@@ -3173,7 +3175,7 @@ static void keystone_rio_port_status_timer(unsigned long data)
 
 	if ((krio_priv->port_chk_cnt)++ >= port_chk_cnt_timeout) {
 		dev_info(krio_priv->dev,
-			 "RIO port register timeout, ports %d not ready\n",
+			 "RIO port register timeout, port mask 0x%x not ready\n",
 			 ports);
 		return;
 	}
@@ -3185,7 +3187,6 @@ static void keystone_rio_port_chk_task(struct work_struct *work)
 {
 	struct keystone_rio_data *krio_priv =
 		container_of(work, struct keystone_rio_data, port_chk_task);
-
 	u32 ports = krio_priv->ports_registering;
 	u32 size  = krio_priv->board_rio_cfg.size;
 	struct rio_mport *mport;
