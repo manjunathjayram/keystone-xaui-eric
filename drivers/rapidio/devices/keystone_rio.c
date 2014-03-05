@@ -1202,7 +1202,7 @@ static void k2_rio_serdes_lane_enable(u32 lane, u32 rate, struct keystone_rio_da
 	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
 	u32 val;
 
-	/* Bit 28 Toggled. Bring it out of Reset TX PLL for all lanes */
+	/* Bring this lane out of reset by clearing override bit 29 */
 	val = __raw_readl(regs + 0x200 * (lane + 1) + 0x28);
 	val &= ~BIT(29);
 	__raw_writel(val, regs + 0x200 * (lane + 1) + 0x28);
@@ -1221,6 +1221,16 @@ static void k2_rio_serdes_lane_enable(u32 lane, u32 rate, struct keystone_rio_da
 	default:
 		return;
 	}
+}
+
+static void k2_rio_serdes_lane_disable(u32 lane, struct keystone_rio_data *krio_priv)
+{
+	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
+	u32 val;
+
+	val = __raw_readl(regs + 0x1fe0 + 4 * lane);
+	val &= ~(BIT(29) | BIT(30) | BIT(13) | BIT(14));
+	__raw_writel(val, regs + 0x1fe0 + 4 * lane);
 }
 
 static int k2_rio_serdes_config(u32 lanes, u32 baud, struct keystone_rio_data *krio_priv)
@@ -1299,6 +1309,33 @@ static int k2_rio_serdes_wait_lock(struct keystone_rio_data *krio_priv, u32 lane
 	return 0;
 }
 
+static int k2_rio_serdes_shutdown(struct keystone_rio_data *krio_priv, u32 lanes)
+{
+	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
+	u32 val;
+
+	while(lanes) {
+		u32 lane = __ffs(lanes);
+		lanes &= ~(1 << lane);
+
+		if (lane >= KEYSTONE_RIO_MAX_PORT)
+			return -EINVAL;
+
+		/* Disable SerDes for this lane */
+		k2_rio_serdes_lane_disable(lane, krio_priv);
+	}
+
+	/* Disable pll */
+	__raw_writel(0x00000000, regs + 0x1ff4);
+
+       /* Reset CMU PLL for all lanes */
+       val = __raw_readl(regs + 0x10);
+       val |= BIT(28);
+       __raw_writel(val, regs + 0x10);
+
+	return 0;
+}
+
 /**
  * keystone_rio_hw_init - Configure a RapidIO controller
  * @mode: serdes configuration
@@ -1324,7 +1361,8 @@ static int keystone_rio_hw_init(u32 mode, u32 baud, struct keystone_rio_data *kr
 	ndelay(1000);
 
 	/* Set sRIO out of reset */
-	__raw_writel(0x00000011, &krio_priv->regs->pcr);
+	__raw_writel((KEYSTONE_RIO_PER_RESTORE | KEYSTONE_RIO_PER_FREE),
+		     &krio_priv->regs->pcr);
 
 	/* Disable blocks */
 	__raw_writel(0, &krio_priv->regs->gbl_en);
@@ -1534,6 +1572,19 @@ static void keystone_rio_start(struct keystone_rio_data *krio_priv)
 	val = __raw_readl(&krio_priv->regs->per_set_cntl);
 	__raw_writel(val | KEYSTONE_RIO_BOOT_COMPLETE,
 		     &krio_priv->regs->per_set_cntl);
+}
+
+/**
+ * keystone_rio_stop - Stop RapidIO controller
+ */
+static void keystone_rio_stop(struct keystone_rio_data *krio_priv)
+{
+	u32 val;
+
+	/* Disable PEREN bit to stop all new logical layer transactions */
+	val = __raw_readl(&krio_priv->regs->pcr);
+	val &= ~KEYSTONE_RIO_PER_EN;
+	__raw_writel(val, &krio_priv->regs->pcr);
 }
 
 static int keystone_rio_test_link(u8 port, struct keystone_rio_data *krio_priv)
@@ -2118,6 +2169,7 @@ static void keystone_rio_mp_inb_exit(int mbox, struct keystone_rio_data *krio_pr
 	dmaengine_pause(krx_chan->dma_channel);
 	dma_release_channel(krx_chan->dma_channel);
 	krx_chan->dma_channel = NULL;
+
 	return;
 }
 
@@ -2530,6 +2582,7 @@ static void keystone_rio_mp_outb_exit(struct keystone_rio_data *krio_priv)
 	dmaengine_pause(krio_priv->tx_channel);
 	dma_release_channel(krio_priv->tx_channel);
 	krio_priv->tx_channel = NULL;
+
 	return;
 }
 
@@ -3505,6 +3558,8 @@ static void keystone_rio_shutdown(struct platform_device *pdev)
 {
 	struct keystone_rio_data *krio_priv = platform_get_drvdata(pdev);
 	int i;
+	u32 lanes = keystone_rio_get_lane_config(krio_priv->board_rio_cfg.ports,
+						 krio_priv->board_rio_cfg.path_mode);
 
 #ifdef CONFIG_RIONET
 	if (krio_priv->rionet_started)
@@ -3517,12 +3572,18 @@ static void keystone_rio_shutdown(struct platform_device *pdev)
 	for (i = 0; i < KEYSTONE_RIO_MAX_MBOX; i++)
 		keystone_rio_mp_inb_exit(i, krio_priv);
 
-	mdelay(1000);
+	keystone_rio_stop(krio_priv);
 
-	/* disable blocks */
+	/* wait current DMA transfers to finish */
+	mdelay(10);
+
+	/* Disable blocks */
 	__raw_writel(0, &krio_priv->regs->gbl_en);
 	for (i = 0; i <= KEYSTONE_RIO_BLK_NUM; i++)
 		__raw_writel(0, &(krio_priv->regs->blk[i].enable));
+
+	/* Shutdown associated SerDes */
+	k2_rio_serdes_shutdown(krio_priv, lanes);
 
 	if (krio_priv->clk) {
 		clk_disable_unprepare(krio_priv->clk);
