@@ -1660,7 +1660,7 @@ static int keystone_rio_port_error_recovery(int port, struct keystone_rio_data *
 
 		res = keystone_rio_maint_write(krio_priv, port, 0xffff,
 					       krio_priv->board_rio_cfg.size,
-					       0, 0x100 + RIO_PORT_N_ACK_STS_CSR(0),
+					       0, 0x100 + RIO_PORT_N_ACK_STS_CSR(port),
 					       4, ackid);
 		if (res < 0) {
 			dev_err(krio_priv->dev,	"failed to align ackIDs with link partner\n");
