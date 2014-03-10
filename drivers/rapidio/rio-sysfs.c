@@ -321,3 +321,32 @@ struct bus_attribute rio_bus_attrs[] = {
 	__ATTR(scan, (S_IWUSR|S_IWGRP), NULL, bus_scan_store),
 	__ATTR_NULL
 };
+
+static ssize_t
+port_destid_show(struct device *dev, struct device_attribute *attr,
+		 char *buf)
+{
+	struct rio_mport *mport = to_rio_mport(dev);
+
+	if (mport)
+		return sprintf(buf, "0x%04x\n", mport->host_deviceid);
+	else
+		return -ENODEV;
+}
+
+static ssize_t sys_size_show(struct device *dev, struct device_attribute *attr,
+			   char *buf)
+{
+	struct rio_mport *mport = to_rio_mport(dev);
+
+	if (mport)
+		return sprintf(buf, "%u\n", mport->sys_size);
+	else
+		return -ENODEV;
+}
+
+struct device_attribute rio_mport_attrs[] = {
+	__ATTR(port_destid, S_IRUGO, port_destid_show, NULL),
+	__ATTR(sys_size, S_IRUGO, sys_size_show, NULL),
+	__ATTR_NULL,
+};
