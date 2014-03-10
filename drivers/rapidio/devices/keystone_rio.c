@@ -2894,6 +2894,7 @@ struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 	 */
 	port->index = port_id;
 	port->priv  = krio_priv;
+	port->dev.parent = krio_priv->dev;
 	INIT_LIST_HEAD(&port->dbells);
 
 	/*
