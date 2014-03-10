@@ -77,6 +77,14 @@ config RAPIDIO_ENUM_BASIC
 
 endchoice
 
+config RAPIDIO_CHMAN
+	tristate "RapidIO messaging channel manager"
+	depends on RAPIDIO
+	help
+	  This option includes RapidIO messaging channel manager driver which
+	  provides socket-like interface to allow sharing of single RapidIO
+	  messaging mailbox between multiple kernel mode drivers.
+
 menu "RapidIO Switch drivers"
 	depends on RAPIDIO
 
