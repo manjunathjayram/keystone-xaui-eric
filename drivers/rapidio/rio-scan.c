@@ -480,11 +480,6 @@ static struct rio_dev *rio_setup_device(struct rio_net *net,
 	if (ret)
 		goto cleanup;
 
-#ifdef CONFIG_RAPIDIO_DEV
-	if (!rio_is_switch(rdev))
-		rio_dev_add(rdev);
-#endif
-
 	return rdev;
 
 cleanup:
