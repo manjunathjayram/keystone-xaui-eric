@@ -1914,6 +1914,11 @@ int rio_register_mport(struct rio_mport *port)
 
 	port->id = next_portid++;
 	port->host_deviceid = rio_get_hdid(port->id);
+
+	/* If host deviceId is defined, already set it into CSR */
+	if (port->host_deviceid >= 0)
+		rio_local_set_device_id(port, port->host_deviceid);
+
 	port->nscan = NULL;
 
 	dev_set_name(&port->dev, "rapidio-%d", port->id);
@@ -1940,10 +1945,6 @@ int rio_register_mport(struct rio_mport *port)
 		}
 	}
 	mutex_unlock(&rio_mport_list_lock);
-
-	/* If host deviceId is defined, already set it into CSR */
-	if (port->host_deviceid >= 0)
-		rio_local_set_device_id(port, port->host_deviceid);
 
 	pr_debug("RIO: %s %s id=%d\n", __func__, port->name, port->id);
 	return 0;
