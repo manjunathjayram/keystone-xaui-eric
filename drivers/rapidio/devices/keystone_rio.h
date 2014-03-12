@@ -713,11 +713,6 @@ struct keystone_rio_fabric_regs {
 	u32	sp_fabric_status[4];	/* 1be40 - 1be4c */
 };
 
-#ifdef CONFIG_RIONET
-/* built-in rionet */
-extern int  rionet_init(void);
-extern void rionet_exit(void);
-#endif
 extern int rio_basic_attach(void);
 
 #endif /* KEYSTONE_RIO_H */
