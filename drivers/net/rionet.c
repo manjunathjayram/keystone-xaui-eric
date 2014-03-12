@@ -660,19 +660,6 @@ static struct subsys_interface rionet_interface = {
 	.remove_dev	= rionet_remove_dev,
 };
 
-#ifdef CONFIG_RIONET
-int rionet_init(void)
-{
-	return rio_register_driver(&rionet_driver);
-}
-EXPORT_SYMBOL_GPL(rionet_init);
-
-void rionet_exit(void)
-{
-	rio_unregister_driver(&rionet_driver);
-}
-EXPORT_SYMBOL_GPL(rionet_exit);
-#else
 static int __init rionet_init(void)
 {
 	return subsys_interface_register(&rionet_interface);
@@ -711,4 +698,3 @@ static void __exit rionet_exit(void)
 
 late_initcall(rionet_init);
 module_exit(rionet_exit);
-#endif
