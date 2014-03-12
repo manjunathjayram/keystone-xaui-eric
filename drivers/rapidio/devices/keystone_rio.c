@@ -3507,13 +3507,6 @@ static int __init keystone_rio_probe(struct platform_device *pdev)
 
 	dev_info(&pdev->dev, "KeyStone RapidIO driver %s\n", DRIVER_VER);
 
-#ifdef CONFIG_RAPIDIO_DEV
-	/* Register userspace interface */
-	res = rio_dev_init();
-	if (res < 0)
-		dev_err(krio_priv->dev, "rio_dev_init failed!\n");
-#endif
-
 	/* Setup the sRIO controller */
 	res = keystone_rio_setup_controller(pdev, krio_priv);
 	if (res < 0)
