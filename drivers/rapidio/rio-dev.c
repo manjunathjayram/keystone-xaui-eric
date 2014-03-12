@@ -567,14 +567,16 @@ static struct class rio_dev_class = {
  * Called when adding a site, this will create the corresponding char device
  * with udev/mdev
  */
-int rio_dev_add(struct rio_dev *rdev)
+static int rio_dev_add(struct device *dev, struct subsys_interface *sif)
 {
+	struct rio_dev *rdev = to_rio_dev(dev);
 	struct rio_mport *port = rdev->net->hport;
 	int status;
 	unsigned long minor;
 
-	if (!init_done)
-		return -ENODEV;
+	/* Check if the remote device is a switch */
+	if (rdev->pef & RIO_PEF_SWITCH)
+		return 0;
 
 	/*
 	 * If we can allocate a minor number, hook up this device.
@@ -613,8 +615,9 @@ int rio_dev_add(struct rio_dev *rdev)
 	return status;
 }
 
-int rio_dev_remove(struct rio_dev *rdev, struct rio_mport *port)
+static int rio_dev_remove(struct device *dev, struct subsys_interface *sif)
 {
+	struct rio_dev *rdev = to_rio_dev(dev);
 	mutex_lock(&device_list_lock);
 	device_destroy(&rio_dev_class, rdev->dev.devt);
 	clear_bit(MINOR(rdev->dev.devt), minors);
@@ -623,7 +626,14 @@ int rio_dev_remove(struct rio_dev *rdev, struct rio_mport *port)
 	return 0;
 }
 
-int rio_dev_init(void)
+static struct subsys_interface rio_dev_interface = {
+	.name		= "riodev",
+	.subsys		= &rio_bus_type,
+	.add_dev	= rio_dev_add,
+	.remove_dev	= rio_dev_remove,
+};
+
+static int __init rio_dev_init(void)
 {
 	int status;
 
@@ -647,19 +657,25 @@ int rio_dev_init(void)
 		return status;
 	}
 
+	status = subsys_interface_register(&rio_dev_interface);
+	if (status) {
+		class_unregister(&rio_dev_class);
+		unregister_chrdev(RIO_DEV_MAJOR, RIO_DEV_NAME);
+		return status;
+	}
+
 	init_done = 1;
 
 	return 0;
 }
 
-void rio_dev_exit(void)
+static void __exit rio_dev_exit(void)
 {
+	subsys_interface_unregister(&rio_dev_interface);
 	class_unregister(&rio_dev_class);
 	unregister_chrdev(RIO_DEV_MAJOR, RIO_DEV_NAME);
 	init_done = 0;
 }
 
-EXPORT_SYMBOL_GPL(rio_dev_init);
-EXPORT_SYMBOL_GPL(rio_dev_exit);
-EXPORT_SYMBOL_GPL(rio_dev_add);
-EXPORT_SYMBOL_GPL(rio_dev_remove);
+late_initcall(rio_dev_init);
+module_exit(rio_dev_exit);
