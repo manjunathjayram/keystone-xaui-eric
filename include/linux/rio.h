@@ -497,10 +497,6 @@ struct rio_scan {
 #define RIO_DBELL_TX         _IOR('R', 4, int) /* Sent a doorbell */
 #define RIO_DBELL_RX         _IOR('R', 5, int) /* Receive a doorbell */
 
-extern int rio_dev_init(void);
-extern void rio_dev_exit(void);
-extern int rio_dev_add(struct rio_dev *rdev);
-
 #endif /* CONFIG_RAPIDIO_DEV */
 
 /**
