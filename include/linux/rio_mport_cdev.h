@@ -77,5 +77,6 @@ struct rio_mport_maint_transfer {
 
 #define RIO_MPORT_MAINT_HDID_SET                _IOR(RIO_MPORT_MAINT_MAGIC, 5, uint16_t *)
 #define RIO_MPORT_MAINT_COMPTAG_SET             _IOR(RIO_MPORT_MAINT_MAGIC, 7, uint32_t *)
+#define RIO_MPORT_MAINT_PORT_IDX_GET            _IOR(RIO_MPORT_MAINT_MAGIC, 8, uint32_t *)
 
 #endif /* _RIO_MPORT_CDEV_H_ */
