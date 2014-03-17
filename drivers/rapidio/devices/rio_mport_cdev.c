@@ -514,6 +514,23 @@ static int maint_comptag_set(struct mport_dev *data, void __user *arg)
 }
 
 /*
+ * maint_port_idx_get() - Get the port index of the mport instance
+ * @data:	Driver private data
+ * @arg:	Port index
+ */
+static int maint_port_idx_get(struct mport_dev *data, void __user *arg)
+{
+	uint32_t port_idx = data->mport->index;
+
+	pr_debug(DRV_PREFIX "Get port index %d\n", port_idx);
+
+	if (copy_to_user(arg, &port_idx, sizeof(port_idx)))
+		return -EFAULT;
+
+	return 0;
+}
+
+/*
  * Mport cdev management
  */
 
@@ -594,6 +611,9 @@ static long mport_cdev_ioctl(struct file *filp,
 		break;
 	case RIO_MPORT_MAINT_COMPTAG_SET:
 		err = maint_comptag_set(data, (void __user *)arg);
+		break;
+	case RIO_MPORT_MAINT_PORT_IDX_GET:
+		err = maint_port_idx_get(data, (void __user *)arg);
 		break;
 	default:
 		err = -EINVAL;
