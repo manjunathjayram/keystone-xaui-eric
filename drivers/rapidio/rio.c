@@ -1942,6 +1942,10 @@ int rio_register_mport(struct rio_mport *port)
 	port->host_deviceid = rio_get_hdid(port->id);
 	port->nscan = NULL;
 
+	/* If host deviceId is defined, already set it into CSR */
+	if (port->host_deviceid >= 0)
+		rio_local_set_device_id(port, port->host_deviceid);
+
 	dev_set_name(&port->dev, "rapidio%d", port->id);
 	port->dev.class = &rio_mport_class;
 
