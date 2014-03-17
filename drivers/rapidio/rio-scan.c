@@ -50,6 +50,10 @@ static int rio_mport_phys_table[] = {
 	-1,
 };
 
+static bool static_enum;
+module_param(static_enum, bool, 0);
+MODULE_PARM_DESC(scan, "Perform RapidIO network static enumeration "
+                       "(default = 0)");
 
 /**
  * rio_destid_alloc - Allocate next available destID for given network
@@ -606,7 +610,7 @@ static int rio_enum_peer(struct rio_net *net, struct rio_mport *port,
 
 	/* Setup new RIO device */
 	rdev = rio_setup_device(net, port, RIO_ANY_DESTID(port->sys_size),
-					hopcount, 1);
+					hopcount, static_enum ? 0 : 1);
 	if (rdev) {
 		/* Add device to the global and bus/net specific list. */
 		list_add_tail(&rdev->net_list, &net->devices);
