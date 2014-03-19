@@ -28,14 +28,23 @@
 #include <linux/ptp_clock_kernel.h>
 #include <linux/skbuff.h>
 
+#define PTP_CLASS_VLAN_IPV4  0x50 /* event in a VLAN tagged IPV4 packet */
+#define PTP_CLASS_VLAN_IPV6  0x60 /* event in a VLAN tagged IPV6 packet */
+
+#define PTP_CLASS_V1_VLAN_IPV4 (PTP_CLASS_V1 | PTP_CLASS_VLAN_IPV4)
+#define PTP_CLASS_V1_VLAN_IPV6 (PTP_CLASS_V1 | PTP_CLASS_VLAN_IPV6)
+#define PTP_CLASS_V2_VLAN_IPV4 (PTP_CLASS_V2 | PTP_CLASS_VLAN_IPV4)
+#define PTP_CLASS_V2_VLAN_IPV6 (PTP_CLASS_V2 | PTP_CLASS_VLAN_IPV6)
+
 struct cpsw_cpts {
 	u32 idver;                /* Identification and version */
 	u32 control;              /* Time sync control */
-	u32 res1;
+	u32 rfclk_sel;            /* Ref Clock Select (v1.5 only) */
 	u32 ts_push;              /* Time stamp event push */
 	u32 ts_load_val;          /* Time stamp load value */
 	u32 ts_load_en;           /* Time stamp load enable */
-	u32 res2[2];
+	u32 ts_comp_val;          /* Time stamp comparison value, v1.5 & up */
+	u32 ts_comp_length;       /* Time stamp comp assert len, v1.5 & up */
 	u32 intstat_raw;          /* Time sync interrupt status raw */
 	u32 intstat_masked;       /* Time sync interrupt status masked */
 	u32 int_enable;           /* Time sync interrupt enable */
@@ -43,6 +52,7 @@ struct cpsw_cpts {
 	u32 event_pop;            /* Event interrupt pop */
 	u32 event_low;            /* 32 Bit Event Time Stamp */
 	u32 event_high;           /* Event Type Fields */
+	u32 event_high2;          /* Domain number in Ptp message v1.5 & up */
 };
 
 /* Bit definitions for the IDVER register */
@@ -91,10 +101,17 @@ enum {
 	CPTS_EV_HW,   /* Hardware Time Stamp Push Event */
 	CPTS_EV_RX,   /* Ethernet Receive Event */
 	CPTS_EV_TX,   /* Ethernet Transmit Event */
+	CPTS_EV_COMP, /* Time Stamp Compare Event */
 };
 
-/* This covers any input clock up to about 500 MHz. */
-#define CPTS_OVERFLOW_PERIOD (HZ * 8)
+/*
+   This covers any input clock up to about 500 MHz.
+   It also take care of misalignments that might occur
+   around counter half roll over.
+*/
+#define CPTS_OVERFLOW_PERIOD	(HZ / 5)
+#define CPTS_COMP_TMO		(CPTS_OVERFLOW_PERIOD * 2)
+#define CPTS_TMO		2
 
 #define CPTS_FIFO_DEPTH 16
 #define CPTS_MAX_EVENTS 32
@@ -102,11 +119,13 @@ enum {
 struct cpts_event {
 	struct list_head list;
 	unsigned long tmo;
+	u32 high2;
 	u32 high;
 	u32 low;
 };
 
 struct cpts {
+	struct device *dev;
 	struct cpsw_cpts __iomem *reg;
 	int tx_enable;
 	int rx_enable;
@@ -123,18 +142,35 @@ struct cpts {
 	struct list_head events;
 	struct list_head pool;
 	struct cpts_event pool_data[CPTS_MAX_EVENTS];
+	struct sock_filter *filter;
+	int filter_size;
+	int rftclk_sel;
+	u32 rftclk_freq;
+	int pps_enable;
+	u32 pps_one_sec; /* counter val equivalent of 1 sec */
+	u32 ts_comp_length;
+	u64 ts_comp_last;
+	u32 cc_div;
+	u64 cc_total;
+	u64 tc_base;
+	u64 max_cycles;
+	u64 max_nsec;
+	s32 ppb;
+	bool ignore_adjfreq;
 #endif
 };
 
 #ifdef CONFIG_TI_CPTS
-void cpts_rx_timestamp(struct cpts *cpts, struct sk_buff *skb);
-void cpts_tx_timestamp(struct cpts *cpts, struct sk_buff *skb);
+int cpts_rx_timestamp(struct cpts *cpts, struct sk_buff *skb);
+int cpts_tx_timestamp(struct cpts *cpts, struct sk_buff *skb);
 #else
-static inline void cpts_rx_timestamp(struct cpts *cpts, struct sk_buff *skb)
+static inline int cpts_rx_timestamp(struct cpts *cpts, struct sk_buff *skb)
 {
+	return 0;
 }
-static inline void cpts_tx_timestamp(struct cpts *cpts, struct sk_buff *skb)
+static inline int cpts_tx_timestamp(struct cpts *cpts, struct sk_buff *skb)
 {
+	return 0;
 }
 #endif
 
