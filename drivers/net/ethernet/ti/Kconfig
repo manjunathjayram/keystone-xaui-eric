@@ -105,6 +105,16 @@ config TI_KEYSTONE_NET_SA
 	  This driver supports TI's Keystone inflow Security Accelerator
           mode.
 
+config TI_KEYSTONE_QOS
+	tristate "TI Keystone Quality of Service Support"
+	depends on ARCH_KEYSTONE
+	default y if ARCH_KEYSTONE
+	---help---
+	  This driver supports TI's Keystone Quality of Service support.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called keystone_qos.
+
 config TLAN
 	tristate "TI ThunderLAN support"
 	depends on (PCI || EISA)
