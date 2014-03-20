@@ -33,6 +33,8 @@
 #define SGMII_LINK_MAC_MAC_FORCED	2
 #define SGMII_LINK_MAC_FIBER		3
 #define SGMII_LINK_MAC_PHY_NO_MDIO	4
+#define XGMII_LINK_MAC_PHY		10
+#define XGMII_LINK_MAC_MAC_FORCED	11
 
 int serdes_init(void);
 void serdes_init_6638_156p25Mhz(void);
@@ -266,4 +268,8 @@ int netcp_register_rxhook(struct netcp_priv *netcp_priv, int order,
 int netcp_unregister_rxhook(struct netcp_priv *netcp_priv, int order,
 		netcp_hook_rtn *hook_rtn, void *hook_data);
 
+void *netcp_device_find_module(struct netcp_device *netcp_device,
+		const char *name);
+int xge_serdes_init_156p25Mhz(void);
+int keystone_pcsr_config(void __iomem *pcsr_ofs, int port, u32 interface);
 #endif
