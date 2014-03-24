@@ -1556,11 +1556,10 @@ EXPORT_SYMBOL_GPL(rio_route_clr_table);
 
 static bool rio_chan_filter(struct dma_chan *chan, void *arg)
 {
-	struct rio_dev *rdev = arg;
+	struct rio_mport *mport = arg;
 
 	/* Check that DMA device belongs to the right MPORT */
-	return (rdev->net->hport ==
-		container_of(chan->device, struct rio_mport, dma));
+	return mport == container_of(chan->device, struct rio_mport, dma);
 }
 
 /**
@@ -1570,14 +1569,14 @@ static bool rio_chan_filter(struct dma_chan *chan, void *arg)
  *
  * Returns pointer to allocated DMA channel or NULL if failed.
  */
-struct dma_chan *rio_request_dma(struct rio_dev *rdev)
+struct dma_chan *rio_request_dma(struct rio_mport *mport)
 {
 	dma_cap_mask_t mask;
 	struct dma_chan *dchan;
 
 	dma_cap_zero(mask);
 	dma_cap_set(DMA_SLAVE, mask);
-	dchan = dma_request_channel(mask, rio_chan_filter, rdev);
+	dchan = dma_request_channel(mask, rio_chan_filter, mport);
 
 	return dchan;
 }
@@ -1596,8 +1595,8 @@ EXPORT_SYMBOL_GPL(rio_release_dma);
 /**
  * rio_dma_prep_slave_sg - RapidIO specific wrapper
  *   for device_prep_slave_sg callback defined by DMAENGINE.
- * @rdev: RIO device control structure
  * @dchan: DMA channel to configure
+ * @destid: target RapidIO device destination ID
  * @data: RIO specific data descriptor
  * @direction: DMA data transfer direction (TO or FROM the device)
  * @flags: dmaengine defined flags
@@ -1607,8 +1606,8 @@ EXPORT_SYMBOL_GPL(rio_release_dma);
  * target RIO device.
  * Returns pointer to DMA transaction descriptor or NULL if failed.
  */
-struct dma_async_tx_descriptor *rio_dma_prep_slave_sg(struct rio_dev *rdev,
-	struct dma_chan *dchan, struct rio_dma_data *data,
+struct dma_async_tx_descriptor *rio_dma_prep_slave_sg(struct dma_chan *dchan,
+	u16 destid, struct rio_dma_data *data,
 	enum dma_transfer_direction direction, unsigned long flags)
 {
 	struct dma_async_tx_descriptor *txd = NULL;
@@ -1619,7 +1618,7 @@ struct dma_async_tx_descriptor *rio_dma_prep_slave_sg(struct rio_dev *rdev,
 		return NULL;
 	}
 
-	rio_ext.destid = rdev->destid;
+	rio_ext.destid = destid;
 	rio_ext.rio_addr_u = data->rio_addr_u;
 	rio_ext.rio_addr = data->rio_addr;
 	rio_ext.wr_type = data->wr_type;
