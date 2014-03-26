@@ -2178,7 +2178,7 @@
 					label		= "crypto-rx0";
 					pool		= "pool-crypto";
 					complete-queue 	= <8712>;
-					flow		= <24>;
+					flow		= <26>;
 					rx-error-retry; /* enable retry on buffer starvation */
 					/* debug; */
 				};
