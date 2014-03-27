@@ -191,7 +191,7 @@ static int cpts_fifo_pop(struct cpts *cpts, u32 *high, u32 *low)
 	return -1;
 }
 
-static int cpts_event_list_clean_up(struct cpts *cpts)
+static int cpts_event_list_clean_up(struct cpts *cpts, int ev_type)
 {
 	struct list_head *this, *next;
 	struct cpts_event *event;
@@ -199,7 +199,7 @@ static int cpts_event_list_clean_up(struct cpts *cpts)
 
 	list_for_each_safe(this, next, &cpts->events) {
 		event = list_entry(this, struct cpts_event, list);
-		if (event_expired(event)) {
+		if (event_expired(event) || (ev_type == event_type(event))) {
 			list_del_init(&event->list);
 			list_add(&event->list, &cpts->pool);
 			++removed;
@@ -221,7 +221,7 @@ static int cpts_fifo_read(struct cpts *cpts, int match)
 		if (cpts_fifo_pop(cpts, &hi, &lo))
 			break;
 		if (list_empty(&cpts->pool)) {
-			removed = cpts_event_list_clean_up(cpts);
+			removed = cpts_event_list_clean_up(cpts, -1);
 			if (!removed) {
 				pr_err("cpts: event pool is empty\n");
 				return -1;
@@ -531,6 +531,7 @@ static int cpts_pps_reload(struct cpts *cpts)
 
 static int cpts_pps_enable(struct cpts *cpts, int on)
 {
+	unsigned long flags;
 	struct timespec ts;
 
 	if (cpts->pps_enable == on)
@@ -538,10 +539,8 @@ static int cpts_pps_enable(struct cpts *cpts, int on)
 
 	cpts->pps_enable = on;
 
-	if (!on) {
-		cpts_disable_ts_comp(cpts);
+	if (!on)
 		return 0;
-	}
 
 	/* get current counter value */
 	cpts_write32(cpts, CPTS_EN, control);
@@ -550,9 +549,13 @@ static int cpts_pps_enable(struct cpts *cpts, int on)
 	cpts->ts_comp_last = cpts->tc.cycle_last;
 	/* align to next sec boundary and add one sec */
 	cpts_ts_comp_add_ns(cpts, 2 * NSEC_PER_SEC - ts.tv_nsec);
+	/* remove stale TS_COMP events */
+	spin_lock_irqsave(&cpts->lock, flags);
+	cpts_event_list_clean_up(cpts, CPTS_EV_COMP);
 	/* enable ts_comp pulse */
 	cpts_disable_ts_comp(cpts);
 	cpts_enable_ts_comp(cpts);
+	spin_unlock_irqrestore(&cpts->lock, flags);
 	return 0;
 }
 
@@ -600,6 +603,8 @@ static void cpts_overflow_check(struct work_struct *work)
 	pr_debug("cpts overflow check at %ld.%09lu\n", ts.tv_sec, ts.tv_nsec);
 	if (cpts->pps_enable)
 		cpts_pps_reload(cpts);
+	else
+		cpts_disable_ts_comp(cpts);
 	schedule_delayed_work(&cpts->overflow_work, CPTS_OVERFLOW_PERIOD);
 }
 
