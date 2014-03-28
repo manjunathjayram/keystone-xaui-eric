@@ -1832,7 +1832,7 @@
 					reserved;
 				};
 				infradma {
-					values = <800 12>;
+					values = <800 16>;
 					reserved;
 				};
 				xge {
