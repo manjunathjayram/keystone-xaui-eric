@@ -1927,7 +1927,7 @@
 					region-id = <13>;
 				};
 				pool-udma {
-					values = <1636 256>;	/* num_desc desc_size */
+					values = <1920 256>;	/* num_desc desc_size */
 					region-id = <13>;
 				};
 				pool-xge {
@@ -2460,6 +2460,50 @@
 					priority	= <1>;
 					flowtag		= <11>;
 				};
+				udmatx12 {
+					transmit;
+					label		= "udmatx12";
+					pool		= "pool-udma";
+					submit-queue	= <812>;
+					/* complete-queue  = <12> */
+					/* debug; */
+					channel		= <12>;
+					priority	= <1>;
+					flowtag		= <12>;
+				};
+				udmatx13 {
+					transmit;
+					label		= "udmatx13";
+					pool		= "pool-udma";
+					submit-queue	= <813>;
+					/* complete-queue  = <13> */
+					/* debug; */
+					channel		= <13>;
+					priority	= <1>;
+					flowtag		= <13>;
+				};
+				udmatx14 {
+					transmit;
+					label		= "udmatx14";
+					pool		= "pool-udma";
+					submit-queue	= <814>;
+					/* complete-queue  = <14> */
+					/* debug; */
+					channel		= <14>;
+					priority	= <1>;
+					flowtag		= <14>;
+				};
+				udmatx15 {
+					transmit;
+					label		= "udmatx15";
+					pool		= "pool-udma";
+					submit-queue	= <815>;
+					/* complete-queue  = <15> */
+					/* debug; */
+					channel		= <15>;
+					priority	= <1>;
+					flowtag		= <15>;
+				};
 				udmarx0 {
 					receive;
 					label		= "udmarx0";
@@ -2579,6 +2623,46 @@
 					/* debug; */
 					channel		= <11>;
 					flow		= <11>;
+				};
+				udmarx12 {
+					receive;
+					label		= "udmarx12";
+					pool		= "pool-udma";
+					/* submit-queue = <xx>; */
+					/* complete-queue  = <28> */
+					/* debug; */
+					channel		= <12>;
+					flow		= <12>;
+				};
+				udmarx13 {
+					receive;
+					label		= "udmarx13";
+					pool		= "pool-udma";
+					/* submit-queue = <xx>; */
+					/* complete-queue  = <29> */
+					/* debug; */
+					channel		= <13>;
+					flow		= <13>;
+				};
+				udmarx14 {
+					receive;
+					label		= "udmarx14";
+					pool		= "pool-udma";
+					/* submit-queue = <xx>; */
+					/* complete-queue  = <30> */
+					/* debug; */
+					channel		= <14>;
+					flow		= <14>;
+				};
+				udmarx15 {
+					receive;
+					label		= "udmarx15";
+					pool		= "pool-udma";
+					/* submit-queue = <xx>; */
+					/* complete-queue  = <31> */
+					/* debug; */
+					channel		= <15>;
+					flow		= <15>;
 				};
 			};
 		};
