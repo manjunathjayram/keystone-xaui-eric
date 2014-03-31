@@ -23,5 +23,5 @@ extern void secondary_startup(void);
 extern int __init keystone_pm_runtime_init(void);
 
 extern int __init tci6614_timer_init(void);
-
+extern int keystone_init_ddr3_ecc(struct device_node *node);
 #endif /* __KEYSTONE_H__ */
