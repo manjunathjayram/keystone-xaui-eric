@@ -203,6 +203,7 @@ static int __init keystone_init_misc(void)
 	void __iomem *rstmux8;
 	int error_irq = 0;
 	u32 val;
+	int ret;
 
 	/*
 	 * For WD reset to function, rstmux8 should be configured
@@ -241,7 +242,9 @@ static int __init keystone_init_misc(void)
 		"a15-l1l2-ecc-err-irq", 0) < 0) {
 		WARN_ON("request_irq fail for arm L1/L2 ECC error irq\n");
 	}
-	return 0;
+
+	ret = keystone_init_ddr3_ecc(node);
+	return ret;
 }
 postcore_initcall(keystone_init_misc);
 
