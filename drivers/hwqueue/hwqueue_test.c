@@ -21,6 +21,9 @@
 #include <linux/module.h>
 #include <linux/types.h>
 
+static uint qpend = 655;
+module_param(qpend, uint, 0444);
+
 struct hwqueue_test_ctx {
 	struct hwqueue *qpool;
 	struct hwqueue *qgenwr;
@@ -110,10 +113,11 @@ static int __init hwqueue_test(void)
 		hwqueue_get_id(qgenrd), qgenrd);
 	ctx.qgenrd = qgenrd;
 
-	qirqwr = hwqueue_open("irq1", 655, O_LOWLATENCY | O_RDWR);
+	qirqwr = hwqueue_open("irq1", qpend, O_LOWLATENCY | O_RDWR);
 	if (IS_ERR_OR_NULL(qirqwr)) {
 		ret = PTR_ERR(qirqwr);
-		pr_err("failed to open write queue, errno=%d\n", ret);
+		pr_err("failed to open write queue: qpend=%u, errno=%d\n",
+			qpend, ret);
 		goto fail;
 	}
 	pr_info("opened qirqwr, id = %d qh = %p\n",
@@ -242,6 +246,7 @@ static int __init hwqueue_test(void)
 	}
 #endif
 
+	pr_info("done\n");
 fail:
 	if (ctx.desc)
 		hwqueue_push(ctx.qpool, ctx.desc, ctx.desc_size, 0);
@@ -262,6 +267,11 @@ fail:
 	return ret;
 }
 module_init(hwqueue_test);
+
+static void __exit hwqueue_test_exit(void)
+{
+}
+module_exit(hwqueue_test_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Hardware queue test driver");
