@@ -27,7 +27,7 @@ struct rio_mport_dbell {
 struct rio_mport_dio_transfer {
 	uint16_t id;
 	uint64_t tgt_addr;      /* physical RapidIO address on 64 bits */
-        void __user *src_addr;  /* user virtual source address on 32 bits */
+	void __user *src_addr;  /* user virtual source address on 32 bits */
 	uint32_t length;
 	uint16_t mode;
 };
@@ -36,11 +36,30 @@ struct rio_mport_dio_transfer {
 #ifdef CONFIG_RAPIDIO_DMA_ENGINE
 struct rio_mport_dma_transfer {
 	uint16_t id;
-	uint64_t tgt_addr;      /* physical RapidIO address on 64 bits */
-        void __user *loc_addr;  /* user virtual source address on 32 bits */
+	uint64_t tgt_addr;      /* RapidIO address (64 bits) */
+	void __user *loc_addr;
+	uint64_t handle;
+	uint32_t offset;
 	uint32_t length;
 	uint16_t mode;
 };
+
+/*
+ * RapidIO specification defines two types of data write requests: NWRITE and
+ * NWRITE_R (write-with-response). RapidIO DMA channel interface allows to
+ * specify required type of write operation or combination of them when only
+ * the last data packet requires response.
+ */
+#define	RIO_DMA_DEFAULT		0 /* default method used by DMA driver */
+#define	RIO_DMA_ALL_NWRITE	1 /* send all packets using NWRITE */
+#define	RIO_DMA_ALL_NWRITE_R	2 /* send all packets using NWRITE_R */
+#define	RIO_DMA_LAST_NWRITE_R	3 /* last packet NWRITE_R, others - NWRITE */
+
+struct rio_mport_dma_buf {
+	uint32_t length;
+	uint64_t __user *handle;
+};
+
 #endif
 
 struct rio_mport_maint_transfer {
@@ -50,6 +69,13 @@ struct rio_mport_maint_transfer {
 	uint32_t length;
 	uint32_t __user *val;
 };
+
+struct rio_mport_inbound_map {
+	uint64_t rio_base;
+	uint32_t length;
+	uint64_t __user *handle;
+};
+
 
 /* Mport DirectI/O and doorbells IOCTLs */
 #define RIO_MPORT_DIO_AND_DBELL_MAGIC   'd'
@@ -62,9 +88,16 @@ struct rio_mport_maint_transfer {
 #endif
 
 #ifdef CONFIG_RAPIDIO_DMA_ENGINE
-#define RIO_MPORT_DMA_GET_XFER_SIZE             _IOR(RIO_MPORT_DIO_AND_DBELL_MAGIC, 4, uint32_t *)
-#define RIO_MPORT_DMA_READ                      _IOR(RIO_MPORT_DIO_AND_DBELL_MAGIC, 5, struct rio_mport_dma_transfer *)
-#define RIO_MPORT_DMA_WRITE                     _IOR(RIO_MPORT_DIO_AND_DBELL_MAGIC, 6, struct rio_mport_dma_transfer *)
+#define RIO_MPORT_DMA_GET_XFER_SIZE	\
+	_IOR(RIO_MPORT_DIO_AND_DBELL_MAGIC, 4, uint32_t)
+#define RIO_MPORT_DMA_READ		\
+	_IOW(RIO_MPORT_DIO_AND_DBELL_MAGIC, 5, struct rio_mport_dma_transfer)
+#define RIO_MPORT_DMA_WRITE		\
+	_IOW(RIO_MPORT_DIO_AND_DBELL_MAGIC, 6, struct rio_mport_dma_transfer)
+#define RIO_MPORT_DMA_BUF_ALLOC		\
+	_IOWR(RIO_MPORT_DIO_AND_DBELL_MAGIC, 7, struct rio_mport_dma_buf)
+#define RIO_MPORT_DMA_BUF_FREE		\
+	_IOW(RIO_MPORT_DIO_AND_DBELL_MAGIC, 8, uint64_t)
 #endif
 
 /* Maintenance IOCTLs */
@@ -78,5 +111,13 @@ struct rio_mport_maint_transfer {
 #define RIO_MPORT_MAINT_HDID_SET                _IOR(RIO_MPORT_MAINT_MAGIC, 5, uint16_t *)
 #define RIO_MPORT_MAINT_COMPTAG_SET             _IOR(RIO_MPORT_MAINT_MAGIC, 7, uint32_t *)
 #define RIO_MPORT_MAINT_PORT_IDX_GET            _IOR(RIO_MPORT_MAINT_MAGIC, 8, uint32_t *)
+
+/* Inbound Memory Mapping IOCTLs */
+#define RIO_MPORT_IB_MAGIC	'i'
+
+#define RIO_MPORT_INBOUND_ALLOC		\
+	_IOWR(RIO_MPORT_IB_MAGIC, 1, struct rio_mport_inbound_map)
+#define RIO_MPORT_INBOUND_FREE		\
+	_IOW(RIO_MPORT_IB_MAGIC, 2, uint64_t)
 
 #endif /* _RIO_MPORT_CDEV_H_ */
