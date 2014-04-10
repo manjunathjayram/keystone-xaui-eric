@@ -1,15 +1,17 @@
 /*
  * RapidIO mport character device
  *
- * Copyright 2013 Prodrive B.V.
- * Jerry Jacobs <jerry.jacobs@prodrive.nl>
- *
- * Original version was modified by Alex Bounine <alexandre.bounine@idt.com>
- * for testing of RIO_CM RapidIO Messaging Chanel Management driver.
- * 
  * Copyright (C) 2014 Texas Instruments Incorporated
  * Aurelien Jacquiot <a-jacquiot@ti.com>
  * - Introduced DirectI/O, doorbell and basic maintenance operations
+ *
+ * Copyright 2014 Integrated Device Technology, Inc.
+ * Alexandre Bounine <alexandre.bounine@idt.com>
+ * - Added DMA data transfer IOCTL requests
+ *
+ * Copyright 2013 Prodrive B.V.
+ * Jerry Jacobs <jerry.jacobs@prodrive.nl>
+ * - Initial version of char device driver for RapidIO mport
  *
  * This program is free software; you can redistribute  it and/or modify it
  * under  the terms of  the GNU General  Public License as published by the
@@ -33,21 +35,39 @@
 #include <linux/mm.h>
 #include <linux/slab.h>
 
+#include <linux/dma-mapping.h>
+#ifdef CONFIG_RAPIDIO_DMA_ENGINE
+#include <linux/dmaengine.h>
+#endif
+
 #include <linux/rio.h>
 #include <linux/rio_ids.h>
 #include <linux/rio_drv.h>
 #include <linux/rio_mport_cdev.h>
 
-#define DRV_NAME        "rio-mport-cdev"
-#define DRV_AUTHOR      "Jerry Jacobs <jerry.jacobs@prodrive.nl>"
-#define DRV_DESC        "RapidIO mport character device driver"
+#define DRV_NAME	"rio_mport"
 
-MODULE_AUTHOR(DRV_AUTHOR);
-MODULE_DESCRIPTION(DRV_DESC);
+MODULE_AUTHOR("Jerry Jacobs <jerry.jacobs@prodrive.nl>");
+MODULE_AUTHOR("Aurelien Jacquiot <a-jacquiot@ti.com>");
+MODULE_AUTHOR("Alexandre Bounine <alexandre.bounine@idt.com>");
+MODULE_DESCRIPTION("RapidIO mport character device driver");
 MODULE_LICENSE("GPL");
 
 #define DRV_PREFIX		"RIO " DRV_NAME ": "
 #define DEV_NAME		"rio_mport"
+
+
+/*
+ * An internal DMA coherent buffer
+ */
+struct mport_dma_buf {
+	void		*ib_base;
+	dma_addr_t	ib_phys;
+	u32		ib_size;
+	u64		ib_rio_base;
+};
+
+#define MPORT_MAX_DMA_BUFS	8
 
 /*
  * An mport_dev represents a structure on mport
@@ -57,10 +77,12 @@ MODULE_LICENSE("GPL");
  * @mport	Associated master port
  */
 struct mport_dev {
-	struct list_head  node;
-	struct cdev	  cdev;
-	struct device	 *dev;
-	struct rio_mport *mport;
+	struct list_head	node;
+	struct cdev		cdev;
+	struct device		*dev;
+	struct rio_mport	*mport;
+	struct mport_dma_buf	mbuf[MPORT_MAX_DMA_BUFS];
+	int			buf_count;
 };
 
 static LIST_HEAD(mport_devs);
@@ -513,6 +535,460 @@ static int maint_comptag_set(struct mport_dev *data, void __user *arg)
 	return 0;
 }
 
+#ifdef CONFIG_RAPIDIO_DMA_ENGINE
+
+/* DMA Transfer Timeout in msec */
+static int timeout = 3000;
+module_param(timeout, int, S_IRUGO);
+MODULE_PARM_DESC(timeout, "DMA Transfer Timeout in msec (default: 3000)");
+
+static void dma_callback(void *completion)
+{
+	complete(completion);
+}
+
+static struct dma_async_tx_descriptor
+*prep_dma_xfer(struct dma_chan *chan, struct rio_mport_dma_transfer *pdt,
+	struct sg_table *sgt, int nents, enum dma_transfer_direction dir,
+	enum dma_ctrl_flags flags)
+{
+	struct rio_dma_data tx_data;
+	struct dma_async_tx_descriptor *tx = NULL;
+
+	tx_data.sg = sgt->sgl;
+	tx_data.sg_len = nents;
+	tx_data.rio_addr_u = 0;
+	tx_data.rio_addr = pdt->tgt_addr;
+	if (dir == DMA_MEM_TO_DEV) {
+		switch (pdt->mode) {
+		case RIO_DMA_ALL_NWRITE:
+			tx_data.wr_type = RDW_DEFAULT;
+			break;
+		case RIO_DMA_ALL_NWRITE_R:
+			tx_data.wr_type = RDW_DEFAULT;
+			break;
+		case RIO_DMA_LAST_NWRITE_R:
+			tx_data.wr_type = RDW_DEFAULT;
+			break;
+		case RIO_DMA_DEFAULT:
+		default:
+			tx_data.wr_type = RDW_DEFAULT;
+			break;
+		}
+	}
+
+	tx = rio_dma_prep_slave_sg(chan, pdt->id, &tx_data, dir, flags);
+
+	return tx;
+}
+
+static int do_dma_request(struct mport_dev *md, struct sg_table *sgt,
+			  struct rio_mport_dma_transfer *dt,
+			  enum dma_transfer_direction direction)
+{
+	struct dma_chan *chan;
+	struct dma_async_tx_descriptor *tx;
+	struct completion cmp;
+	dma_cookie_t cookie;
+	unsigned long tmo = msecs_to_jiffies(timeout);
+	enum dma_status	status;
+	int nents, ret = 0;
+
+	/* Request DMA channel associated with this mport device */
+	chan = rio_request_dma(md->mport);
+	if (!chan) {
+		pr_err(DRV_PREFIX "%s: Failed to get DMA channel\n", __func__);
+		return -ENODEV;
+	}
+
+	nents = dma_map_sg(chan->device->dev, sgt->sgl, sgt->nents, direction);
+	if (nents == -EFAULT) {
+		pr_err(DRV_PREFIX "%s: Failed to map SG list\n", __func__);
+		ret = -EFAULT;
+		goto err_chan;
+	}
+
+	/* Initialize DMA transaction request */
+	tx = prep_dma_xfer(chan, dt, sgt, nents, direction,
+			   DMA_CTRL_ACK | DMA_PREP_INTERRUPT);
+
+	if (!tx) {
+		pr_err(DRV_PREFIX "%s: prep error for %s A:0x%llx L:0x%x\n",
+			__func__, (direction == DMA_DEV_TO_MEM)?"READ":"WRITE",
+			dt->tgt_addr, dt->length);
+		ret = -EIO;
+		goto err_out;
+	}
+
+	init_completion(&cmp);
+	tx->callback = dma_callback;
+	tx->callback_param = &cmp;
+
+	/* Submit DMA transaction request */
+	cookie = tx->tx_submit(tx);
+	pr_debug(DRV_PREFIX "%s: DMA tx_cookie = %d\n", __func__, cookie);
+
+	if (dma_submit_error(cookie)) {
+		pr_err(DRV_PREFIX "%s: submit err=%d (addr:0x%llx len:0x%x)\n",
+			__func__, cookie, dt->tgt_addr, dt->length);
+		ret = -EIO;
+		goto err_out;
+	}
+
+	dma_async_issue_pending(chan);
+
+	tmo = wait_for_completion_interruptible_timeout(&cmp, tmo);
+	status = dma_async_is_tx_complete(chan, cookie, NULL, NULL);
+
+	if (tmo == 0) {
+		pr_err(DRV_PREFIX "%s: timed out waiting for DMA\n", __func__);
+		ret = -ETIMEDOUT;
+	} else if (status != DMA_SUCCESS) {
+		pr_warn(DRV_PREFIX "%s: DMA completion with status %d\n",
+			__func__, status);
+		ret = -EIO;
+	}
+
+err_out:
+	dma_unmap_sg(chan->device->dev, sgt->sgl, sgt->nents, direction);
+err_chan:
+	dma_release_channel(chan);
+	return ret;
+}
+
+
+/*
+ * rio_dma_transfer() - Perform RapidIO DMA data transfer to/from
+ *                      the remote RapidIO device
+ * @md:        driver private mport device object
+ * @arg:       DMA transfer information
+ * @direction: DMA transfer direction (DMA_MEM_TO_DEV = write OR
+ *                                      DMA_DEV_TO_MEM = read)
+ */
+static int rio_dma_transfer(struct mport_dev *md, void __user *arg,
+			    enum dma_transfer_direction direction)
+{
+	struct rio_mport_dma_transfer dt;
+	unsigned int nr_pages = 0;
+	struct page **page_list = NULL;
+	struct sg_table sgt;
+	int i, ret;
+
+	if (copy_from_user(&dt, arg,
+			   sizeof(struct rio_mport_dma_transfer)))
+		return -EFAULT;
+
+	if (dt.length == 0)
+		return -EINVAL;
+
+	/*
+	 * If parameter loc_addr != NULL, we are transferring data from/to
+	 * data buffer allocated in user-space: lock in memory user-space
+	 * buffer pages and build an SG table for DMA transfer request
+	 *
+	 * Otherwise (loc_addr == NULL) contiguous kernel-space buffer is
+	 * used for DMA data transfers: build single entry SG table using
+	 * offset within the internal buffer specified by handle parameter.
+	 */
+	if (dt.loc_addr) {
+		unsigned long offset;
+		long pinned;
+
+		offset = (unsigned long)dt.loc_addr & ~PAGE_MASK;
+		nr_pages = PAGE_ALIGN(dt.length + offset) >> PAGE_SHIFT;
+
+		page_list = kmalloc(nr_pages * sizeof(*page_list), GFP_KERNEL);
+		if (page_list == NULL)
+			return -ENOMEM;
+
+		down_read(&current->mm->mmap_sem);
+		pinned = get_user_pages(current, current->mm,
+				(unsigned long)dt.loc_addr & PAGE_MASK,
+				nr_pages, direction == DMA_DEV_TO_MEM, 0,
+				page_list, NULL);
+		up_read(&current->mm->mmap_sem);
+
+		if (pinned != nr_pages) {
+			pr_err(DRV_PREFIX "%s: ERROR: pinned %ld out of %d pages\n",
+				__func__, pinned, nr_pages);
+			kfree(page_list);
+			return -ENOMEM;
+		}
+
+		ret = sg_alloc_table_from_pages(&sgt, page_list, nr_pages,
+						offset, dt.length, GFP_KERNEL);
+		if (ret) {
+			pr_err(DRV_PREFIX "%s: sg_alloc_table failed with err=%d\n",
+				__func__, ret);
+			goto err_out;
+		}
+	} else {
+		dma_addr_t baddr;
+		struct mport_dma_buf *mbuf;
+
+		baddr = (dma_addr_t)dt.handle;
+
+		for (i = 0; i < MPORT_MAX_DMA_BUFS; i++)
+			if (md->mbuf->ib_base && baddr >= md->mbuf[i].ib_phys &&
+			    baddr < (md->mbuf[i].ib_phys + md->mbuf[i].ib_size))
+				break;
+
+		if (i == MPORT_MAX_DMA_BUFS)
+			return -ENOMEM;
+
+		mbuf = &md->mbuf[i];
+
+		if (dt.length + dt.offset > mbuf->ib_size)
+			return -EINVAL;
+
+		ret = sg_alloc_table(&sgt, 1, GFP_KERNEL);
+		if (unlikely(ret)) {
+			pr_err("%s: sg_alloc_table failed for internal buf\n",
+				__func__);
+			return ret;
+		}
+
+		sg_set_buf(sgt.sgl, mbuf->ib_base + dt.offset, dt.length);
+
+	}
+
+	ret = do_dma_request(md, &sgt, &dt, direction);
+
+	sg_free_table(&sgt);
+err_out:
+	if (page_list) {
+		for (i = 0; i < nr_pages; i++)
+			put_page(page_list[i]);
+		kfree(page_list);
+	}
+	return ret;
+}
+
+/*
+ * rio_dma_buf_alloc() - allocate DMA coherent memory buffer for inbound RapidIO
+ *                  reas/write requests and map it into RapidIO address space
+ * @md:  driver private mport device object
+ * @arg: buffer descriptor structure
+ */
+static int rio_dma_buf_alloc(struct mport_dev *md, void __user *arg)
+{
+	struct rio_mport_dma_buf db;
+	struct mport_dma_buf *mbuf;
+	u64 handle;
+	int i, ret;
+
+	if (md->buf_count == MPORT_MAX_DMA_BUFS)
+		return -EBUSY;
+
+	/*
+	 * Find a free entry in the buffer allocation table
+	 */
+	for (i = 0; i < MPORT_MAX_DMA_BUFS; i++)
+		if (md->mbuf[i].ib_base == NULL)
+			break;
+
+	if (i == MPORT_MAX_DMA_BUFS)
+		return -EFAULT;
+
+	mbuf = &md->mbuf[i];
+
+	if (copy_from_user(&db, arg, sizeof(struct rio_mport_dma_buf)))
+		return -EFAULT;
+
+	mbuf->ib_base = dma_alloc_coherent(md->mport->dev.parent,
+				     db.length, &mbuf->ib_phys, GFP_KERNEL);
+	if (!mbuf->ib_base) {
+		pr_err("%s: Unable allocate DMA coherent memory (size=0x%x)\n",
+			__func__, db.length);
+		return -ENOMEM;
+	}
+
+	mbuf->ib_size = db.length;
+	mbuf->ib_rio_base = 0;
+	md->buf_count++;
+
+	pr_debug("%s: internal DMA buffer %d @ %p (pa = %llx) for %s\n",
+		__func__, i, mbuf->ib_base,
+		(unsigned long long)(mbuf->ib_phys), md->mport->name);
+
+	handle = mbuf->ib_phys;
+	if (copy_to_user(db.handle, &handle, sizeof(u64))) {
+		ret = -EFAULT;
+		goto err_out;
+	}
+
+	return 0;
+
+err_out:
+	dma_free_coherent(&md->mport->dev,
+			  db.length, mbuf->ib_base, mbuf->ib_phys);
+	mbuf->ib_base = NULL;
+	mbuf->ib_phys = 0;
+	mbuf->ib_size = 0;
+	return ret;
+}
+
+/*
+ * rio_dma_buf_free() - free a previously allocated DMA coherent buffer
+ * @md:  driver private mport device object
+ * @arg: buffer handle returned by allocation routine
+ */
+static int rio_dma_buf_free(struct mport_dev *md, void __user *arg)
+{
+	struct mport_dma_buf *mbuf;
+	u64 handle;
+	int i;
+
+	if (!md->buf_count)
+		return -EINVAL;
+
+	if (copy_from_user(&handle, arg, sizeof(u64)))
+		return -EFAULT;
+
+	for (i = 0; i < MPORT_MAX_DMA_BUFS; i++)
+		if (md->mbuf[i].ib_phys == handle)
+			break;
+
+	if (i == MPORT_MAX_DMA_BUFS)
+		return -EFAULT;
+
+	mbuf = &md->mbuf[i];
+
+	pr_debug("%s: free internal DMA buffer %d @ %p (pa = %llx) for %s\n",
+		__func__, i, mbuf->ib_base,
+		(unsigned long long)(mbuf->ib_phys), md->mport->name);
+
+	dma_free_coherent(md->mport->dev.parent,
+			  mbuf->ib_size, mbuf->ib_base, mbuf->ib_phys);
+	mbuf->ib_base = NULL;
+	mbuf->ib_phys = 0;
+	mbuf->ib_size = 0;
+	md->buf_count--;
+	return 0;
+}
+
+#endif /* CONFIG_RAPIDIO_DMA_ENGINE */
+
+/*
+ * ibw_map_alloc() - allocate DMA coherent memory buffer for inbound RapidIO
+ *                   reas/write requests and map it into RapidIO address space
+ * @md:  driver private mport device object
+ * @arg: inbound mapping info structure
+ */
+static int ibw_map_alloc(struct mport_dev *md, void __user *arg)
+{
+	struct rio_mport_inbound_map ibw;
+	struct mport_dma_buf *mbuf;
+	u64 handle;
+	int i, ret;
+
+	if (!md->mport->ops->map_inb)
+		return -EPROTONOSUPPORT;
+
+	if (md->buf_count == MPORT_MAX_DMA_BUFS)
+		return -EBUSY;
+
+	for (i = 0; i < MPORT_MAX_DMA_BUFS; i++)
+		if (md->mbuf[i].ib_base == NULL)
+			break;
+
+	if (i == MPORT_MAX_DMA_BUFS)
+		return -EFAULT;
+
+	mbuf = &md->mbuf[i];
+
+	if (copy_from_user(&ibw, arg, sizeof(struct rio_mport_inbound_map)))
+		return -EFAULT;
+
+	/*
+	 * Allocate and map inbound DMA data buffer
+	 */
+	mbuf->ib_base = dma_alloc_coherent(md->mport->dev.parent,
+				     ibw.length, &mbuf->ib_phys, GFP_KERNEL);
+	if (!mbuf->ib_base) {
+		pr_err("%s: Unable allocate IB DMA memory (size=0x%x)\n",
+			__func__, ibw.length);
+		return -ENOMEM;
+	}
+
+	ret = rio_map_inb_region(md->mport,
+				 mbuf->ib_phys, ibw.rio_base, ibw.length, 0);
+	if (ret) {
+		pr_err("%s: Request to map IB region failed for %s, err=%d\n",
+			__func__, md->mport->name, ret);
+		goto err_map;
+	}
+
+	mbuf->ib_size = ibw.length;
+	mbuf->ib_rio_base = ibw.rio_base;
+	md->buf_count++;
+
+	pr_debug("%s: Configured IB DMA buffer @ %p (phys = %llx) for %s\n",
+		__func__, mbuf->ib_base,
+		(unsigned long long)(mbuf->ib_phys), md->mport->name);
+
+	handle = mbuf->ib_phys;
+	if (copy_to_user(ibw.handle, &handle, sizeof(u64))) {
+		ret = -EFAULT;
+		goto err_out;
+	}
+
+	return 0;
+
+err_out:
+	rio_unmap_inb_region(md->mport, mbuf->ib_phys);
+err_map:
+	dma_free_coherent(&md->mport->dev,
+			  ibw.length, mbuf->ib_base, mbuf->ib_phys);
+	mbuf->ib_base = NULL;
+	mbuf->ib_phys = 0;
+	mbuf->ib_size = 0;
+	return ret;
+}
+
+/*
+ * ibw_unmap_free() - unmap from RapidIO address space and free a previously
+ *                    allocated inbound DMA coherent buffer
+ * @md:  driver private mport device object
+ * @arg: buffer handle returned by allocation routine
+ */
+static int ibw_unmap_free(struct mport_dev *md, void __user *arg)
+{
+	struct mport_dma_buf *mbuf;
+	u64 handle;
+	int i;
+
+	if (!md->mport->ops->unmap_inb)
+		return -EPROTONOSUPPORT;
+	if (!md->buf_count)
+		return -EINVAL;
+
+	if (copy_from_user(&handle, arg, sizeof(u64)))
+		return -EFAULT;
+
+	for (i = 0; i < MPORT_MAX_DMA_BUFS; i++)
+		if (md->mbuf[i].ib_phys == handle)
+			break;
+
+	if (i == MPORT_MAX_DMA_BUFS)
+		return -EFAULT;
+
+	mbuf = &md->mbuf[i];
+
+	pr_debug("%s: unmap IB DMA buffer @ %p (phys = %llx) for %s\n",
+		__func__, mbuf->ib_base,
+		(unsigned long long)(mbuf->ib_phys), md->mport->name);
+
+	rio_unmap_inb_region(md->mport, mbuf->ib_phys);
+	dma_free_coherent(md->mport->dev.parent,
+			  mbuf->ib_size, mbuf->ib_base, mbuf->ib_phys);
+	mbuf->ib_base = NULL;
+	mbuf->ib_phys = 0;
+	mbuf->ib_size = 0;
+	md->buf_count--;
+	return 0;
+}
+
 /*
  * maint_port_idx_get() - Get the port index of the mport instance
  * @data:	Driver private data
@@ -549,6 +1025,7 @@ static int mport_cdev_open(struct inode *inode, struct file *filp)
 	}
 
 	chdev = container_of(inode->i_cdev, struct mport_dev, cdev);
+	chdev->buf_count = 0;
 	filp->private_data = chdev;
 
 	return 0;
@@ -588,10 +1065,18 @@ static long mport_cdev_ioctl(struct file *filp,
 		err = -EINVAL;
 		break;
 	case RIO_MPORT_DMA_READ:
-		err = -EINVAL;
+		err = rio_dma_transfer(data,
+				       (void __user *)arg, DMA_DEV_TO_MEM);
 		break;
 	case RIO_MPORT_DMA_WRITE:
-		err = -EINVAL;
+		err = rio_dma_transfer(data,
+				       (void __user *)arg, DMA_MEM_TO_DEV);
+		break;
+	case RIO_MPORT_DMA_BUF_ALLOC:
+		err = rio_dma_buf_alloc(data, (void __user *)arg);
+		break;
+	case RIO_MPORT_DMA_BUF_FREE:
+		err = rio_dma_buf_free(data, (void __user *)arg);
 		break;
 #endif
 	case RIO_MPORT_MAINT_LOCAL_CONFIG_READ:
@@ -615,12 +1100,58 @@ static long mport_cdev_ioctl(struct file *filp,
 	case RIO_MPORT_MAINT_PORT_IDX_GET:
 		err = maint_port_idx_get(data, (void __user *)arg);
 		break;
+	case RIO_MPORT_INBOUND_ALLOC:
+		err = ibw_map_alloc(data, (void __user *)arg);
+		break;
+	case RIO_MPORT_INBOUND_FREE:
+		err = ibw_unmap_free(data, (void __user *)arg);
+		break;
 	default:
 		err = -EINVAL;
 		break;
 	}
 
 	return err;
+}
+
+static int mport_cdev_mmap(struct file *file, struct vm_area_struct *vma)
+{
+	struct mport_dev *md = file->private_data;
+	struct mport_dma_buf *mbuf;
+	size_t size = vma->vm_end - vma->vm_start;
+	dma_addr_t baddr;
+	unsigned long offset;
+	int i, ret;
+
+	pr_debug(DRV_PREFIX "%s 0x%x bytes at offset 0x%lx\n",
+		__func__, (unsigned int)size, vma->vm_pgoff);
+
+	baddr = ((dma_addr_t)vma->vm_pgoff << PAGE_SHIFT);
+
+	for (i = 0; i < MPORT_MAX_DMA_BUFS; i++)
+		if (md->mbuf->ib_base && baddr >= md->mbuf[i].ib_phys &&
+		    baddr < (md->mbuf[i].ib_phys + md->mbuf[i].ib_size))
+			break;
+
+	if (i == MPORT_MAX_DMA_BUFS)
+		return -ENOMEM;
+
+	mbuf = &md->mbuf[i];
+	offset = baddr & (mbuf->ib_size - 1);
+
+	if (size + offset > mbuf->ib_size)
+		return -EINVAL;
+
+	vma->vm_pgoff = offset >> PAGE_SHIFT;
+	pr_debug(DRV_PREFIX "MMAP adjusted offset = 0x%lx\n", vma->vm_pgoff);
+
+	ret = dma_mmap_coherent(md->mport->dev.parent, vma, mbuf->ib_base,
+				mbuf->ib_phys, mbuf->ib_size);
+
+	if (ret)
+		pr_err(DRV_PREFIX "MMAP exit with err=%d\n", ret);
+
+	return ret;
 }
 
 unsigned int mport_poll(struct file *file, poll_table *wait)
@@ -644,6 +1175,7 @@ static const struct file_operations mport_fops = {
 	.open		= mport_cdev_open,
 	.release	= mport_cdev_release,
 	.poll		= mport_poll,
+	.mmap		= mport_cdev_mmap,
 	.unlocked_ioctl = mport_cdev_ioctl
 };
 
