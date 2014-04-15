@@ -1,5 +1,7 @@
 /* include/linux/rio_mport_cdev.h
  *
+ * Copyright (C) 2014 Integrated Device Technology, Inc.
+ * Copyright (C) 2014 Texas Instruments Incorporated
  * Copyright (C) 2013 Prodrive B.V.
  *
  * This software is licensed under the terms of the GNU General Public
@@ -80,11 +82,14 @@ struct rio_mport_inbound_map {
 /* Mport DirectI/O and doorbells IOCTLs */
 #define RIO_MPORT_DIO_AND_DBELL_MAGIC   'd'
 
-#define RIO_MPORT_DBELL_SEND                    _IOR(RIO_MPORT_DIO_AND_DBELL_MAGIC, 1, struct rio_mport_dbell *)
-#define RIO_MPORT_DBELL_RECEIVE                 _IOR(RIO_MPORT_DIO_AND_DBELL_MAGIC, 2, struct rio_mport_dbell *)
+#define RIO_MPORT_DBELL_SEND		\
+	_IOW(RIO_MPORT_DIO_AND_DBELL_MAGIC, 1, struct rio_mport_dbell)
+#define RIO_MPORT_DBELL_RECEIVE		\
+	_IOWR(RIO_MPORT_DIO_AND_DBELL_MAGIC, 2, struct rio_mport_dbell)
 
 #ifdef CONFIG_TI_KEYSTONE_RAPIDIO
-#define RIO_MPORT_DIO_TRANSFER                  _IOR(RIO_MPORT_DIO_AND_DBELL_MAGIC, 3, struct rio_mport_dio_transfer *)
+#define RIO_MPORT_DIO_TRANSFER		\
+	_IOWR(RIO_MPORT_DIO_AND_DBELL_MAGIC, 3, struct rio_mport_dio_transfer)
 #endif
 
 #ifdef CONFIG_RAPIDIO_DMA_ENGINE
@@ -103,14 +108,21 @@ struct rio_mport_inbound_map {
 /* Maintenance IOCTLs */
 #define RIO_MPORT_MAINT_MAGIC           'm'
 
-#define RIO_MPORT_MAINT_LOCAL_CONFIG_READ       _IOR(RIO_MPORT_MAINT_MAGIC, 1, struct rio_mport_maint_transfer *)
-#define RIO_MPORT_MAINT_LOCAL_CONFIG_WRITE      _IOR(RIO_MPORT_MAINT_MAGIC, 2, struct rio_mport_maint_transfer *)
-#define RIO_MPORT_MAINT_CONFIG_READ             _IOR(RIO_MPORT_MAINT_MAGIC, 3, struct rio_mport_maint_transfer *)
-#define RIO_MPORT_MAINT_CONFIG_WRITE            _IOR(RIO_MPORT_MAINT_MAGIC, 4, struct rio_mport_maint_transfer *)
+#define RIO_MPORT_MAINT_LOCAL_CONFIG_READ	\
+	_IOWR(RIO_MPORT_MAINT_MAGIC, 1, struct rio_mport_maint_transfer)
+#define RIO_MPORT_MAINT_LOCAL_CONFIG_WRITE	\
+	_IOW(RIO_MPORT_MAINT_MAGIC, 2, struct rio_mport_maint_transfer)
+#define RIO_MPORT_MAINT_CONFIG_READ		\
+	_IOWR(RIO_MPORT_MAINT_MAGIC, 3, struct rio_mport_maint_transfer)
+#define RIO_MPORT_MAINT_CONFIG_WRITE		\
+	_IOW(RIO_MPORT_MAINT_MAGIC, 4, struct rio_mport_maint_transfer)
 
-#define RIO_MPORT_MAINT_HDID_SET                _IOR(RIO_MPORT_MAINT_MAGIC, 5, uint16_t *)
-#define RIO_MPORT_MAINT_COMPTAG_SET             _IOR(RIO_MPORT_MAINT_MAGIC, 7, uint32_t *)
-#define RIO_MPORT_MAINT_PORT_IDX_GET            _IOR(RIO_MPORT_MAINT_MAGIC, 8, uint32_t *)
+#define RIO_MPORT_MAINT_HDID_SET	\
+	_IOW(RIO_MPORT_MAINT_MAGIC, 5, uint16_t)
+#define RIO_MPORT_MAINT_COMPTAG_SET	\
+	_IOW(RIO_MPORT_MAINT_MAGIC, 7, uint32_t)
+#define RIO_MPORT_MAINT_PORT_IDX_GET	\
+	_IOR(RIO_MPORT_MAINT_MAGIC, 8, uint32_t)
 
 /* Inbound Memory Mapping IOCTLs */
 #define RIO_MPORT_IB_MAGIC	'i'
