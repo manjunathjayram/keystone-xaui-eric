@@ -562,13 +562,13 @@ static struct dma_async_tx_descriptor
 	if (dir == DMA_MEM_TO_DEV) {
 		switch (pdt->mode) {
 		case RIO_DMA_ALL_NWRITE:
-			tx_data.wr_type = RDW_DEFAULT;
+			tx_data.wr_type = RDW_ALL_NWRITE;
 			break;
 		case RIO_DMA_ALL_NWRITE_R:
-			tx_data.wr_type = RDW_DEFAULT;
+			tx_data.wr_type = RDW_ALL_NWRITE_R;
 			break;
 		case RIO_DMA_LAST_NWRITE_R:
-			tx_data.wr_type = RDW_DEFAULT;
+			tx_data.wr_type = RDW_LAST_NWRITE_R;
 			break;
 		case RIO_DMA_DEFAULT:
 		default:
