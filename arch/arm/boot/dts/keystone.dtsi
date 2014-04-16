@@ -279,5 +279,42 @@
 			ti,ngpio = <32>;
 			ti,davinci-gpio-unbanked = <32>;
 		};
+
+		pci-controller@21800000 {
+			device_type = "pci";
+			#address-cells = <3>;
+			#size-cells = <2>;
+			#interrupt-cells = <2>;
+			compatible = "ti,keystone2-pci";
+			reg =  <0x21800000 0x8000	/* pcie-regs */
+				0x0262014c 4		/* device cfg */
+				0x02320000 0x4000>;	/* Keystone2 serdes cfg */
+
+			/* outbound pci resources */
+			ranges = <0x02000000 0 0x50000000 0x50000000 0 0x10000000
+				  0x01000000 0 0 0x24000000 0 0x4000>;
+
+			/* inbound dma range */
+			dma-ranges = <0x02000000 0 0x80000000 0x80000000 0 0x20000000>;
+
+			interrupt-parent = <&gic>;
+			interrupts = <GIC_SPI 26 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_EDGE_RISING)>,
+					<GIC_SPI 27 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_EDGE_RISING)>,
+					<GIC_SPI 28 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_EDGE_RISING)>,
+					<GIC_SPI 29 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_EDGE_RISING)>, /* 4 Legacy IRQs */
+					<GIC_SPI 30 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_EDGE_RISING)>,
+					<GIC_SPI 31 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_EDGE_RISING)>,
+					<GIC_SPI 32 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_EDGE_RISING)>,
+					<GIC_SPI 33 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_EDGE_RISING)>,
+					<GIC_SPI 34 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_EDGE_RISING)>,
+					<GIC_SPI 35 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_EDGE_RISING)>,
+					<GIC_SPI 36 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_EDGE_RISING)>,
+					<GIC_SPI 37 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_EDGE_RISING)>, /* 8 MSI IRQs */
+					<GIC_SPI 38 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_EDGE_RISING)>; /* Error IRQ */
+			clocks = <&clkpcie>;
+			clock-names = "pcie";
+			enable-linktrain; /* When the boot loader enables link train and configure ep
+					   * remove this attribute */
+		};
 	};
 };
