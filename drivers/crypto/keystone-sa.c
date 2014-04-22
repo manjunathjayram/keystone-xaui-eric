@@ -269,7 +269,7 @@ enum sa_submode {
  * word-0: Request type
  * word-1: pointer to request
  */
-#define SA_NUM_PSDATA_CTX_WORDS 2
+#define SA_NUM_PSDATA_CTX_WORDS 4
 
 /* Maximum size of Command label in 32 words */
 #define SA_MAX_CMDL_WORDS (SA_DMA_NUM_PS_WORDS - SA_NUM_PSDATA_CTX_WORDS)
