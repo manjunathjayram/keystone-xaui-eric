@@ -70,11 +70,13 @@ struct mport_dma_buf {
 #define MPORT_MAX_DMA_BUFS	8
 
 /*
- * An mport_dev represents a structure on mport
- * @node	List node to maintain list of registered mports
- * @cdev	Character device
- * @dev		Associated device object
- * @mport	Associated master port
+ * mport_dev  driver-specific structure that represents mport device
+ * @node      list node to maintain list of registered mports
+ * @cdev      character device
+ * @dev       associated device object
+ * @mport     associated subsystem's master port device object
+ * @mbuf      table of descriptors for allocated kernel space buffers
+ * @buf_count number of valid entries in the buffer descriptor table
  */
 struct mport_dev {
 	struct list_head	node;
@@ -84,6 +86,18 @@ struct mport_dev {
 	struct mport_dma_buf	mbuf[MPORT_MAX_DMA_BUFS];
 	int			buf_count;
 };
+
+/*
+ * mport_cdev_priv - this structure is used to track an open device
+ * @md    master port character device object
+ * @dmach DMA engine channel allocated for specific file object
+ *
+ */
+struct mport_cdev_priv {
+	struct mport_dev	*md;
+	struct dma_chan		*dmach;
+};
+
 
 static LIST_HEAD(mport_devs);
 static DEFINE_MUTEX(mport_devs_lock);
@@ -109,26 +123,26 @@ struct dbell_cell {
 
 /*
  * dbell_send() - Send a doorbell
- * @data:	Driver private data
- * @arg:	Dbell information
+ * @priv: driver private data
+ * @arg:  Dbell information
  */
-static int dbell_send(struct mport_dev *data, void __user *arg)
+static int dbell_send(struct mport_cdev_priv *priv, void __user *arg)
 {
+	struct mport_dev *md = priv->md;
 	struct rio_mport_dbell dbell;
 	int ret;
 
 	if (copy_from_user(&dbell, arg, sizeof(struct rio_mport_dbell)))
 		return -EFAULT;
 
-	if (!data->mport->ops->dsend)
+	if (!md->mport->ops->dsend)
 		return -EPROTONOSUPPORT;
 
-	pr_debug(DRV_PREFIX "Send doorbell %d to dest Id %d\n", dbell.id, dbell.num);
+	pr_debug(DRV_PREFIX "Send doorbell %d to dest Id %d\n",
+		 dbell.id, dbell.num);
 
-	ret = data->mport->ops->dsend(data->mport,
-				      data->mport->id,
-				      dbell.id,
-				      dbell.num);
+	ret = md->mport->ops->dsend(md->mport, md->mport->id,
+				      dbell.id, dbell.num);
 
 	return ret;
 }
@@ -170,7 +184,7 @@ static struct dbell_cell* dbell_lookup(u16 info)
 	}
 
 	/* Allocate and insert the doorbell */
-	dbell = (struct dbell_cell*) kmalloc(sizeof(struct dbell_cell), GFP_KERNEL);
+	dbell = kmalloc(sizeof(struct dbell_cell), GFP_KERNEL);
 	if (dbell == NULL)
 		goto out;
 	
@@ -267,12 +281,13 @@ static int dbell_wait(struct rio_mport *mport, u16 info, u16 *src_id)
 }
 
 /*
- * dbell_send() - Send a doorbell
- * @data:	Driver private data
- * @arg:	Dbell information
+ * dbell_receive() - receive a doorbell
+ * @priv: driver private data
+ * @arg: Dbell information
  */
-static int dbell_receive(struct mport_dev *data, void __user *arg)
+static int dbell_receive(struct mport_cdev_priv *priv, void __user *arg)
 {
+	struct mport_dev *md = priv->md;
 	struct rio_mport_dbell dbell;
 	int ret;
 
@@ -281,7 +296,7 @@ static int dbell_receive(struct mport_dev *data, void __user *arg)
 
 	pr_debug(DRV_PREFIX "Wait doorbell %d\n", dbell.num);
 
-	ret = dbell_wait(data->mport, dbell.num, &dbell.id);
+	ret = dbell_wait(md->mport, dbell.num, &dbell.id);
 
 	if (copy_to_user(arg, &dbell, sizeof(struct rio_mport_dbell)))
 		ret = -EFAULT;
@@ -292,19 +307,21 @@ static int dbell_receive(struct mport_dev *data, void __user *arg)
 #ifdef CONFIG_TI_KEYSTONE_RAPIDIO
 /*
  * dio_transfer() - Perform a DirectI/O transfer
- * @data:	Driver private data
- * @arg:	DirectI/O transfer information
+ * @priv: driver private data
+ * @arg:  DirectI/O transfer information
  */
-static int dio_transfer(struct mport_dev *data, void __user *arg)
+static int dio_transfer(struct mport_cdev_priv *priv, void __user *arg)
 {
+	struct mport_dev *md = priv->md;
 	struct rio_mport_dio_transfer dio_transfer;
 	int ret;
 	void *vaddr;
 
-	if (copy_from_user(&dio_transfer, arg, sizeof(struct rio_mport_dio_transfer)))
+	if (copy_from_user(&dio_transfer, arg,
+			   sizeof(struct rio_mport_dio_transfer)))
 		return -EFAULT;
 
-	if (!data->mport->ops->transfer)
+	if (!md->mport->ops->transfer)
 		return -EPROTONOSUPPORT;
 
 	if (dio_transfer.length >= RIO_MAX_DIO_CHUNK_SIZE)
@@ -332,13 +349,13 @@ static int dio_transfer(struct mport_dev *data, void __user *arg)
 		}
 	}
 
-	ret = data->mport->ops->transfer(data->mport,
-					 data->mport->id,
-					 dio_transfer.id,
-					 (u32) vaddr,
-					 (u32) dio_transfer.tgt_addr,
-					 (int) dio_transfer.length,
-					 (int) dio_transfer.mode);
+	ret = md->mport->ops->transfer(md->mport,
+				       md->mport->id,
+				       dio_transfer.id,
+				       (u32) vaddr,
+				       (u32) dio_transfer.tgt_addr,
+				       (int) dio_transfer.length,
+				       (int) dio_transfer.mode);
 	if (ret < 0)
 		goto end;
 
@@ -358,19 +375,21 @@ end:
 
 /*
  * maint_lconfig_read() - Perform a local config space read transaction
- * @data:	Driver private data
- * @arg:	Maintenance transaction information
+ * @priv: driver private data
+ * @arg:  Maintenance transaction information
  */
-static int maint_lconfig_read(struct mport_dev *data, void __user *arg)
+static int maint_lconfig_read(struct mport_cdev_priv *priv, void __user *arg)
 {
+	struct mport_dev *md = priv->md;
 	struct rio_mport_maint_transfer maint_transfer;
 	int ret;
 	void *buf;
 
-	if (copy_from_user(&maint_transfer, arg, sizeof(struct rio_mport_maint_transfer)))
+	if (copy_from_user(&maint_transfer, arg,
+			   sizeof(struct rio_mport_maint_transfer)))
 		return -EFAULT;
 
-	if (!data->mport->ops->lcread)
+	if (!md->mport->ops->lcread)
 		return -EPROTONOSUPPORT;
 
 	pr_debug(DRV_PREFIX "Perform a local maintenance read at offset %d\n",
@@ -380,11 +399,10 @@ static int maint_lconfig_read(struct mport_dev *data, void __user *arg)
 	if (!buf)
 		return -ENOMEM;
 
-	ret = data->mport->ops->lcread(data->mport,
-				       data->mport->id,
-				       maint_transfer.offset,
-				       maint_transfer.length,
-				       (u32 *) buf);
+	ret = md->mport->ops->lcread(md->mport, md->mport->id,
+				     maint_transfer.offset,
+				     maint_transfer.length,
+				     (u32 *) buf);
 
 	if (copy_to_user(maint_transfer.val, buf, maint_transfer.length))
 		return -EFAULT;
@@ -394,43 +412,45 @@ static int maint_lconfig_read(struct mport_dev *data, void __user *arg)
 
 /*
  * maint_lconfig_write() - Perform a local config space write transaction
- * @data:	Driver private data
- * @arg:	Maintenance transaction information
+ * @priv: driver private data
+ * @arg:  Maintenance transaction information
  */
-static int maint_lconfig_write(struct mport_dev *data, void __user *arg)
+static int maint_lconfig_write(struct mport_cdev_priv *priv, void __user *arg)
 {
+	struct mport_dev *md = priv->md;
 	struct rio_mport_maint_transfer maint_transfer;
 	int ret;
 	u32 val;
 
-	if (copy_from_user(&maint_transfer, arg, sizeof(struct rio_mport_maint_transfer)))
+	if (copy_from_user(&maint_transfer, arg,
+			   sizeof(struct rio_mport_maint_transfer)))
 		return -EFAULT;
 
-	if (!data->mport->ops->lcwrite)
+	if (!md->mport->ops->lcwrite)
 		return -EPROTONOSUPPORT;
 
 	pr_debug(DRV_PREFIX "Perform a local maintenance read at offset %d\n",
 		 maint_transfer.offset);
 
-	if (copy_from_user(&val, maint_transfer.val, sizeof(data)))
+	if (copy_from_user(&val, maint_transfer.val, sizeof(val)))
 		return -EFAULT;
 
-	ret = data->mport->ops->lcwrite(data->mport,
-					data->mport->id,
-					maint_transfer.offset,
-					maint_transfer.length,
-					val);
+	ret = md->mport->ops->lcwrite(md->mport, md->mport->id,
+				      maint_transfer.offset,
+				      maint_transfer.length,
+				      val);
 
 	return ret;
 }
 
 /*
  * maint_config_read() - Perform a remote config space read transaction
- * @data:	Driver private data
+ * @priv: driver private data
  * @arg:	Maintenance transaction information
  */
-static int maint_config_read(struct mport_dev *data, void __user *arg)
+static int maint_config_read(struct mport_cdev_priv *priv, void __user *arg)
 {
+	struct mport_dev *md = priv->md;
 	struct rio_mport_maint_transfer maint_transfer;
 	int ret;
 	void *buf;
@@ -438,7 +458,7 @@ static int maint_config_read(struct mport_dev *data, void __user *arg)
 	if (copy_from_user(&maint_transfer, arg, sizeof(struct rio_mport_maint_transfer)))
 		return -EFAULT;
 
-	if (!data->mport->ops->cread)
+	if (!md->mport->ops->cread)
 		return -EPROTONOSUPPORT;
 
 	pr_debug(DRV_PREFIX "Perform a remote maintenance read at offset %d\n",
@@ -448,13 +468,13 @@ static int maint_config_read(struct mport_dev *data, void __user *arg)
 	if (!buf)
 		return -ENOMEM;
 
-	ret = data->mport->ops->cread(data->mport,
-				      data->mport->id,
-				      maint_transfer.id,
-				      maint_transfer.hopcount,
-				      maint_transfer.offset,
-				      maint_transfer.length,
-				      (u32 *) buf);
+	ret = md->mport->ops->cread(md->mport,
+				    md->mport->id,
+				    maint_transfer.id,
+				    maint_transfer.hopcount,
+				    maint_transfer.offset,
+				    maint_transfer.length,
+				    (u32 *) buf);
 
 	if (copy_to_user(maint_transfer.val, buf, maint_transfer.length))
 		return -EFAULT;
@@ -464,52 +484,55 @@ static int maint_config_read(struct mport_dev *data, void __user *arg)
 
 /*
  * maint_config_write() - Perform a remote config space write transaction
- * @data:	Driver private data
+ * @priv: driver private data
  * @arg:	Maintenance transaction information
  */
-static int maint_config_write(struct mport_dev *data, void __user *arg)
+static int maint_config_write(struct mport_cdev_priv *priv, void __user *arg)
 {
+	struct mport_dev *md = priv->md;
 	struct rio_mport_maint_transfer maint_transfer;
 	int ret;
 	u32 val;
 
-	if (copy_from_user(&maint_transfer, arg, sizeof(struct rio_mport_maint_transfer)))
+	if (copy_from_user(&maint_transfer, arg,
+			   sizeof(struct rio_mport_maint_transfer)))
 		return -EFAULT;
 
-	if (!data->mport->ops->cwrite)
+	if (!md->mport->ops->cwrite)
 		return -EPROTONOSUPPORT;
 
 	pr_debug(DRV_PREFIX "Perform a remote maintenance read at offset %d\n",
 		 maint_transfer.offset);
 
-	if (copy_from_user(&val, maint_transfer.val, sizeof(data)))
+	if (copy_from_user(&val, maint_transfer.val, sizeof(val)))
 		return -EFAULT;
 
-	ret = data->mport->ops->cwrite(data->mport,
-				       data->mport->id,
-				       maint_transfer.id,
-				       maint_transfer.hopcount,
-				       maint_transfer.offset,
-				       maint_transfer.length,
-				       val);
+	ret = md->mport->ops->cwrite(md->mport,
+				     md->mport->id,
+				     maint_transfer.id,
+				     maint_transfer.hopcount,
+				     maint_transfer.offset,
+				     maint_transfer.length,
+				     val);
 
 	return ret;
 }
 
 /*
  * maint_hdid_set() - Set the host Device ID
- * @data:	Driver private data
+ * @priv: driver private data
  * @arg:	Device Id
  */
-static int maint_hdid_set(struct mport_dev *data, void __user *arg)
+static int maint_hdid_set(struct mport_cdev_priv *priv, void __user *arg)
 {
+	struct mport_dev *md = priv->md;
 	uint16_t hdid;
 
 	if (copy_from_user(&hdid, arg, sizeof(uint16_t)))
 		return -EFAULT;
 
-	data->mport->host_deviceid = hdid;
-	rio_local_set_device_id(data->mport, hdid);
+	md->mport->host_deviceid = hdid;
+	rio_local_set_device_id(md->mport, hdid);
 	
 	pr_debug(DRV_PREFIX "Set host device Id to %d\n", hdid);
 
@@ -518,17 +541,18 @@ static int maint_hdid_set(struct mport_dev *data, void __user *arg)
 
 /*
  * maint_comptag_set() - Set the host Component Tag
- * @data:	Driver private data
+ * @priv: driver private data
  * @arg:	Component Tag
  */
-static int maint_comptag_set(struct mport_dev *data, void __user *arg)
+static int maint_comptag_set(struct mport_cdev_priv *priv, void __user *arg)
 {
+	struct mport_dev *md = priv->md;
 	uint32_t comptag;
 
 	if (copy_from_user(&comptag, arg, sizeof(uint32_t)))
 		return -EFAULT;
 
-	rio_local_write_config_32(data->mport, RIO_COMPONENT_TAG_CSR, comptag);
+	rio_local_write_config_32(md->mport, RIO_COMPONENT_TAG_CSR, comptag);
 
 	pr_debug(DRV_PREFIX "Set host Component Tag to %d\n", comptag);
 
@@ -582,7 +606,7 @@ static struct dma_async_tx_descriptor
 	return tx;
 }
 
-static int do_dma_request(struct mport_dev *md, struct sg_table *sgt,
+static int do_dma_request(struct mport_cdev_priv *priv, struct sg_table *sgt,
 			  struct rio_mport_dma_transfer *dt,
 			  enum dma_transfer_direction direction)
 {
@@ -595,17 +619,21 @@ static int do_dma_request(struct mport_dev *md, struct sg_table *sgt,
 	int nents, ret = 0;
 
 	/* Request DMA channel associated with this mport device */
-	chan = rio_request_dma(md->mport);
-	if (!chan) {
-		pr_err(DRV_PREFIX "%s: Failed to get DMA channel\n", __func__);
-		return -ENODEV;
+	if (!priv->dmach) {
+		priv->dmach = rio_request_dma(priv->md->mport);
+		if (!priv->dmach) {
+			pr_err(DRV_PREFIX "%s: Failed to get DMA channel\n",
+				__func__);
+			return -ENODEV;
+		}
 	}
+
+	chan = priv->dmach;
 
 	nents = dma_map_sg(chan->device->dev, sgt->sgl, sgt->nents, direction);
 	if (nents == -EFAULT) {
 		pr_err(DRV_PREFIX "%s: Failed to map SG list\n", __func__);
-		ret = -EFAULT;
-		goto err_chan;
+		return -EFAULT;
 	}
 
 	/* Initialize DMA transaction request */
@@ -651,8 +679,6 @@ static int do_dma_request(struct mport_dev *md, struct sg_table *sgt,
 
 err_out:
 	dma_unmap_sg(chan->device->dev, sgt->sgl, sgt->nents, direction);
-err_chan:
-	dma_release_channel(chan);
 	return ret;
 }
 
@@ -660,14 +686,15 @@ err_chan:
 /*
  * rio_dma_transfer() - Perform RapidIO DMA data transfer to/from
  *                      the remote RapidIO device
- * @md:        driver private mport device object
+ * @priv:      driver private data
  * @arg:       DMA transfer information
  * @direction: DMA transfer direction (DMA_MEM_TO_DEV = write OR
  *                                      DMA_DEV_TO_MEM = read)
  */
-static int rio_dma_transfer(struct mport_dev *md, void __user *arg,
+static int rio_dma_transfer(struct mport_cdev_priv *priv, void __user *arg,
 			    enum dma_transfer_direction direction)
 {
+	struct mport_dev *md = priv->md;
 	struct rio_mport_dma_transfer dt;
 	unsigned int nr_pages = 0;
 	struct page **page_list = NULL;
@@ -752,7 +779,7 @@ static int rio_dma_transfer(struct mport_dev *md, void __user *arg,
 
 	}
 
-	ret = do_dma_request(md, &sgt, &dt, direction);
+	ret = do_dma_request(priv, &sgt, &dt, direction);
 
 	sg_free_table(&sgt);
 err_out:
@@ -767,11 +794,12 @@ err_out:
 /*
  * rio_dma_buf_alloc() - allocate DMA coherent memory buffer for inbound RapidIO
  *                  reas/write requests and map it into RapidIO address space
- * @md:  driver private mport device object
- * @arg: buffer descriptor structure
+ * @priv: driver private data
+ * @arg:  buffer descriptor structure
  */
-static int rio_dma_buf_alloc(struct mport_dev *md, void __user *arg)
+static int rio_dma_buf_alloc(struct mport_cdev_priv *priv, void __user *arg)
 {
+	struct mport_dev *md = priv->md;
 	struct rio_mport_dma_buf db;
 	struct mport_dma_buf *mbuf;
 	u64 handle;
@@ -830,11 +858,12 @@ err_out:
 
 /*
  * rio_dma_buf_free() - free a previously allocated DMA coherent buffer
- * @md:  driver private mport device object
- * @arg: buffer handle returned by allocation routine
+ * @priv: driver private data
+ * @arg:  buffer handle returned by allocation routine
  */
-static int rio_dma_buf_free(struct mport_dev *md, void __user *arg)
+static int rio_dma_buf_free(struct mport_cdev_priv *priv, void __user *arg)
 {
+	struct mport_dev *md = priv->md;
 	struct mport_dma_buf *mbuf;
 	u64 handle;
 	int i;
@@ -872,11 +901,12 @@ static int rio_dma_buf_free(struct mport_dev *md, void __user *arg)
 /*
  * ibw_map_alloc() - allocate DMA coherent memory buffer for inbound RapidIO
  *                   reas/write requests and map it into RapidIO address space
- * @md:  driver private mport device object
- * @arg: inbound mapping info structure
+ * @priv: driver private data
+ * @arg:  inbound mapping info structure
  */
-static int ibw_map_alloc(struct mport_dev *md, void __user *arg)
+static int ibw_map_alloc(struct mport_cdev_priv *priv, void __user *arg)
 {
+	struct mport_dev *md = priv->md;
 	struct rio_mport_inbound_map ibw;
 	struct mport_dma_buf *mbuf;
 	u64 handle;
@@ -949,11 +979,12 @@ err_map:
 /*
  * ibw_unmap_free() - unmap from RapidIO address space and free a previously
  *                    allocated inbound DMA coherent buffer
- * @md:  driver private mport device object
- * @arg: buffer handle returned by allocation routine
+ * @priv: driver private data
+ * @arg:  buffer handle returned by allocation routine
  */
-static int ibw_unmap_free(struct mport_dev *md, void __user *arg)
+static int ibw_unmap_free(struct mport_cdev_priv *priv, void __user *arg)
 {
+	struct mport_dev *md = priv->md;
 	struct mport_dma_buf *mbuf;
 	u64 handle;
 	int i;
@@ -991,12 +1022,13 @@ static int ibw_unmap_free(struct mport_dev *md, void __user *arg)
 
 /*
  * maint_port_idx_get() - Get the port index of the mport instance
- * @data:	Driver private data
- * @arg:	Port index
+ * @priv: driver private data
+ * @arg:  port index
  */
-static int maint_port_idx_get(struct mport_dev *data, void __user *arg)
+static int maint_port_idx_get(struct mport_cdev_priv *priv, void __user *arg)
 {
-	uint32_t port_idx = data->mport->index;
+	struct mport_dev *md = priv->md;
+	uint32_t port_idx = md->mport->index;
 
 	pr_debug(DRV_PREFIX "Get port index %d\n", port_idx);
 
@@ -1017,6 +1049,7 @@ static int mport_cdev_open(struct inode *inode, struct file *filp)
 {
 	int minor = iminor(inode);
 	struct mport_dev *chdev = NULL;
+	struct mport_cdev_priv *priv;
 
 	/* Test for valid device */
 	if (minor >= RIO_MAX_MPORTS) {
@@ -1024,9 +1057,13 @@ static int mport_cdev_open(struct inode *inode, struct file *filp)
 		return -EINVAL;
 	}
 
+	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+
 	chdev = container_of(inode->i_cdev, struct mport_dev, cdev);
-	chdev->buf_count = 0;
-	filp->private_data = chdev;
+	priv->md = chdev;
+	filp->private_data = priv;
 
 	return 0;
 }
@@ -1036,6 +1073,11 @@ static int mport_cdev_open(struct inode *inode, struct file *filp)
  */
 static int mport_cdev_release(struct inode *inode, struct file *filp)
 {
+	struct mport_cdev_priv *priv = filp->private_data;
+
+	if (priv->dmach)
+		dma_release_channel(priv->dmach);
+	kfree(priv);
 	return 0;
 }
 
@@ -1046,7 +1088,7 @@ static long mport_cdev_ioctl(struct file *filp,
 		unsigned int cmd, unsigned long arg)
 {
 	int err = 0;
-	struct mport_dev *data = filp->private_data;
+	struct mport_cdev_priv *data = filp->private_data;
 
 	switch (cmd) {
 	case RIO_MPORT_DBELL_SEND:
@@ -1114,9 +1156,10 @@ static long mport_cdev_ioctl(struct file *filp,
 	return err;
 }
 
-static int mport_cdev_mmap(struct file *file, struct vm_area_struct *vma)
+static int mport_cdev_mmap(struct file *filp, struct vm_area_struct *vma)
 {
-	struct mport_dev *md = file->private_data;
+	struct mport_cdev_priv *priv = filp->private_data;
+	struct mport_dev *md;
 	struct mport_dma_buf *mbuf;
 	size_t size = vma->vm_end - vma->vm_start;
 	dma_addr_t baddr;
@@ -1126,6 +1169,7 @@ static int mport_cdev_mmap(struct file *file, struct vm_area_struct *vma)
 	pr_debug(DRV_PREFIX "%s 0x%x bytes at offset 0x%lx\n",
 		__func__, (unsigned int)size, vma->vm_pgoff);
 
+	md = priv->md;
 	baddr = ((dma_addr_t)vma->vm_pgoff << PAGE_SHIFT);
 
 	for (i = 0; i < MPORT_MAX_DMA_BUFS; i++)
@@ -1154,12 +1198,12 @@ static int mport_cdev_mmap(struct file *file, struct vm_area_struct *vma)
 	return ret;
 }
 
-unsigned int mport_poll(struct file *file, poll_table *wait)
+unsigned int mport_poll(struct file *filp, poll_table *wait)
 {
 	unsigned int mask = 0;
 #if 0
 
-	struct mport_dev *chdev = file->private_data;
+	struct mport_dev *chdev = filp->private_data->md;
 
 	poll_wait(file, &mport_cdev_wait, wait);
 
