@@ -28,6 +28,7 @@
 #include <linux/errqueue.h>
 
 #include <net/ipv6.h>
+#include <net/xfrm.h>
 
 #include "keystone_net.h"
 #include "keystone_pasahost.h"
@@ -48,9 +49,12 @@ struct sa_intf {
 };
 
 struct ipsecmgr_mod_sa_ctx_info {
-	u32 word0;
-	u32 word1;
-	u16 flow_id;
+	atomic_t	refcnt;
+	int		len;
+	int		majic;
+	u32		word0;
+	u32		word1;
+	u16		flow_id;
 };
 
 /**
@@ -80,6 +84,7 @@ static inline void calc_ipv6_esp_info(const struct sk_buff *skb,
 }
 
 #define	SA_TXHOOK_ORDER	30
+#define SA_IPSECMAN_MAJIC 0xdeadfeed
 static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 {
 	struct sa_intf *sa_intf = data;
@@ -89,7 +94,7 @@ static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	struct ipsecmgr_mod_sa_ctx_info *ctx_info =
 			(struct ipsecmgr_mod_sa_ctx_info *)p_info->skb->sp;
 
-	if (!ctx_info)
+	if ((!ctx_info) || (ctx_info->majic != SA_IPSECMAN_MAJIC))
 		return 0;
 
 	iph = ip_hdr(p_info->skb);
@@ -132,8 +137,8 @@ static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 			ctx_info->flow_id);
 
 	p_info->tx_pipe = &sa_intf->tx_pipe;
-	kfree(ctx_info);
-	p_info->skb->sp = NULL;
+	ctx_info->len=0;
+	secpath_reset(p_info->skb);
 	return 0;
 }
 
