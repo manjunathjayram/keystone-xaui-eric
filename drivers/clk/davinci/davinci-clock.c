@@ -320,6 +320,8 @@ static const __initconst struct of_device_id clk_match[] = {
 						main_pll_mux_clk_init, },
 	{ .compatible = "davinci,pll-divider-clk", .data = pll_div_clk_init, },
 	{ .compatible = "davinci,psc-clk", .data = of_davinci_psc_clk_setup, },
+	{ .compatible = "keystone,pa-pll-clk", .data =
+					of_keystone_pll_clk_init, },
 	{}
 };
 
