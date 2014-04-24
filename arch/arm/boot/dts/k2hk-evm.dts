@@ -498,6 +498,13 @@
 				clock-output-names = "refclk-main";
 			};
 
+			refclkpass: refclkpass {
+				#clock-cells = <0>;
+				compatible = "fixed-clock";
+				clock-frequency = <122880000>;
+				clock-output-names = "refclk-pass";
+			};
+
 			mainpllclk: mainpllclk@2310110 {
 				#clock-cells = <0>;
 				compatible = "keystone,main-pll-clk";
@@ -507,6 +514,17 @@
 				pll_has_pllctrl;
 				pllm_lower_mask	= <0x3f>;
 				pllm_upper_mask = <0x7f000>;
+				pllm_upper_shift = <6>;
+				plld_mask = <0x3f>;
+				fixed_postdiv = <2>;
+			};
+
+			papllclk: papllclk@2620358 {
+				#clock-cells = <0>;
+				compatible = "keystone,pa-pll-clk";
+				clocks = <&refclkpass>;
+				reg = <0x02620358 4>;	/* PASSPLLCTL0 */
+				pllm_upper_mask = <0x7ffc0>;
 				pllm_upper_shift = <6>;
 				plld_mask = <0x3f>;
 				fixed_postdiv = <2>;
@@ -567,6 +585,14 @@
 				#clock-cells = <0>;
 				compatible = "fixed-clock-factor";
 				clocks = <&chipclk1>;
+				clock-mult = <1>;
+				clock-div = <3>;
+			};
+
+			paclk13: paclk13 {
+				#clock-cells = <0>;
+				compatible = "fixed-clock-factor";
+				clocks = <&papllclk>;
 				clock-mult = <1>;
 				clock-div = <3>;
 			};
@@ -690,7 +716,7 @@
 			clkpa: clkpa {
 				#clock-cells = <0>;
 				compatible = "davinci,psc-clk";
-				clocks = <&chipclk16>;
+				clocks = <&paclk13>;
 				clock-output-names = "pa";
 				base-flags = "ignore-unused";
 				reg = <0x02350000 4096>;
@@ -1290,20 +1316,6 @@
 				status = "enabled";
 				reg = <0x02350000 4096>;
 			};
-
-			papllclk: papllclk@2620358 {
-				#clock-cells = <0>;
-				compatible = "keystone,main-pll-clk";
-				clocks = <&refclkmain>;
-				clock-output-names = "pa-pll-clk";
-				reg = <0x02620358 4>;	/* PAPLL_CTL0 */
-				pllm_lower_mask	= <0x3f>;
-				pllm_upper_mask = <0x7ffc0>;
-				pllm_upper_shift = <6>;
-				plld_mask = <0x3f>;
-				fixed_postdiv = <6>;
-			};
-
 		};
 
 		gic:	interrupt-controller@02560000 {
@@ -2672,7 +2684,7 @@
 				0x2620110 0x8>;
 			compatible = "ti,keystone-netcp";
 
-			clocks = <&papllclk>, <&clkcpgmac>, <&chipclk12>;
+			clocks = <&paclk13>, <&clkcpgmac>, <&chipclk12>;
 			clock-names = "clk_pa", "clk_cpgmac", "cpsw_cpts_rft_clk";
 			dma-coherent;
 			streaming-regs = <0x02000604 0x4>;
