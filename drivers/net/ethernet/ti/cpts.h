@@ -157,6 +157,7 @@ struct cpts {
 	u64 max_nsec;
 	s32 ppb;
 	bool ignore_adjfreq;
+	u32 hw_ts_enable;
 #endif
 };
 
