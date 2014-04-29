@@ -208,6 +208,7 @@
 			interrupts = <GIC_SPI 393 IRQ_TYPE_EDGE_RISING>;
 			ranges;
 			status = "disabled";
+			dma-coherent;
 
 			dwc3@2690000 {
 				compatible = "synopsys,dwc3";
