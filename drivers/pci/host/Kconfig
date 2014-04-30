@@ -33,4 +33,10 @@ config PCI_RCAR_GEN2
 	  There are 3 internal PCI controllers available with a single
 	  built-in EHCI/OHCI host controller present on each one.
 
+config TI_KEYSTONE_PCIE
+	bool "TI Keystone PCIe support"
+	depends on ARCH_KEYSTONE
+	select PCIEPORTBUS
+	help
+	  This driver supports TI's Keystone PCIe (root complex).
 endmenu

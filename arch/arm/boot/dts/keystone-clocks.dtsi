@@ -26,7 +26,7 @@ clocks {
 		#clock-cells = <0>;
 		compatible = "ti,keystone,pll-clock";
 		clocks = <&refclkpass>;
-		clock-output-names = "pa-pll-clk";
+		clock-output-names = "papllclk";
 		reg = <0x02620358 4>;
 		reg-names = "control";
 	};
@@ -260,7 +260,7 @@ clocks {
 	clkpa: clkpa {
 		#clock-cells = <0>;
 		compatible = "ti,keystone,psc-clock";
-		clocks = <&chipclk16>;
+		clocks = <&paclk13>;
 		clock-output-names = "pa";
 		reg = <0x0235001c 0xb00>, <0x02350008 0x400>;
 		reg-names = "control", "domain";
@@ -472,7 +472,7 @@ clocks {
 		compatible = "ti,keystone,psc-clock";
 		clocks = <&chipclk13>;
 		clock-output-names = "fftc-1";
-		reg = <0x02350074 0xb00>, <0x023504c0 0x400>;
+		reg = <0x02350074 0xb00>, <0x0235004c 0x400>;
 		reg-names = "control", "domain";
 		domain-id = <19>;
 	};

@@ -1,0 +1,741 @@
+hwqueue0: hwqueue@2a40000 {
+	compatible = "ti,keystone-hwqueue";
+	dma-coherent;
+	#address-cells = <1>;
+	#size-cells = <1>;
+	clocks = <&chipclk13>;
+	clock-names = "clk_hwqueue";
+	ranges;
+	range		= <0 0x4000>;
+	linkram0	= <0x100000 0x8000>;
+	linkram1	= <0x0 0x10000>;
+
+	qmgrs {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+		qmgr0 {
+			managed-queues = <0 0x2000>;	/* managed queues */
+			reg = <0x2a40000 0x20000	/* 0 - peek	*/
+			       0x2a06000 0x400		/* 1 - status	*/
+			       0x2a02000 0x1000		/* 2 - config	*/
+			       0x2a03000 0x1000		/* 3 - region	*/
+			       0x2a80000 0x20000	/* 4 - push	*/
+			       0x2a80000 0x20000>;	/* 5 - pop	*/
+		};
+
+		qmgr1 {
+			managed-queues = <0x2000 0x2000>;	/* managed queues */
+			reg = <0x2a60000 0x20000	/* 0 - peek	*/
+			       0x2a06400 0x400		/* 1 - status	*/
+			       0x2a04000 0x1000		/* 2 - config	*/
+			       0x2a05000 0x1000		/* 3 - region	*/
+			       0x2aa0000 0x20000	/* 4 - push	*/
+			       0x2aa0000 0x20000>;	/* 5 - pop	*/
+		};
+	};
+	queues {
+		qpend-arm-low {
+			values = <658 8>;
+			interrupts = <0 40 0xf04 0 41 0xf04 0 42 0xf04 0 43 0xf04
+				      0 44 0xf04 0 45 0xf04 0 46 0xf04 0 47 0xf04>;
+			reserved;
+		};
+		qpend-arm-hi {
+			values = <8704 32>;
+			interrupts = <0 48 0x104 0 49 0x204 0 50 0xf04 0 51 0xf04
+				      0 52 0xf04 0 53 0xf04 0 54 0xf04 0 55 0xf04
+				      0 56 0xf04 0 57 0xf04 0 58 0xf04 0 59 0xf04
+				      0 60 0x104 0 61 0x204 0 62 0x404 0 63 0x804
+				      0 64 0x404 0 65 0x804 0 66 0xf04 0 59 0xf04
+				      0 68 0xf04 0 69 0xf04 0 70 0xf04 0 71 0xf04
+				      0 72 0xf04 0 73 0xf04 0 74 0xf04 0 75 0xf04
+				      0 76 0xf04 0 77 0xf04 0 78 0xf04 0 79 0xf04>;
+			reserved;
+		};
+		general {
+			values = <4000 64>;
+		};
+		pa {
+			values = <640 9>;
+			reserved;
+		};
+		infradma {
+			values = <800 12>;
+			reserved;
+		};
+		xge {
+			values = <8752 8>;
+			reserved;
+		};
+		accumulator-low-0 {
+			values = <128 32>;
+			// pdsp-id, channel, entries, pacing mode, latency
+			accumulator = <0 36 16 2 50>;
+			interrupts = <0 215 0xf01>;
+			multi-queue;
+			reserved;
+		};
+		accumulator-low-1 {
+			values = <160 32>;
+			// pdsp-id, channel, entries, pacing mode, latency
+			accumulator = <0 37 16 2 50>;
+			interrupts = <0 216 0xf01>;
+			multi-queue;
+		};
+		accumulator-low-2 {
+			values = <192 32>;
+			// pdsp-id, channel, entries, pacing mode, latency
+			accumulator = <0 38 16 2 50>;
+			interrupts = <0 217 0xf01>;
+			multi-queue;
+		};
+		accumulator-low-3 {
+			values = <224 32>;
+			// pdsp-id, channel, entries, pacing mode, latency
+			accumulator = <0 39 16 2 50>;
+			interrupts = <0 218 0xf01>;
+			multi-queue;
+		};
+		qos-inputs-1 {
+			values			= <8000 192>;
+			pdsp-id			= <3>;
+			ticks-per-sec		= <10000>;
+			qos-cfg			= <4 50 1 1 0xf00 0 0>;
+			sched-port-configs	= <0 20 0x1c8>;
+			drop-out-profiles	= <0 36 0xc>;
+			drop-cfg-profiles	= <0 8 0x14>;
+			drop-queue-configs	= <0 80 0x4>;
+			statistics-profiles	= <0 48>;
+			drop-policies		= <&droppolicies>;
+			qos-tree		= <&qostree>;
+			reserved;
+		};
+		qos-inputs-2 {
+			values			= <6400 192>;
+			pdsp-id			= <7>;
+			ticks-per-sec		= <10000>;
+			qos-cfg			= <4 50 1 1 0xf00 0 0>;
+			sched-port-configs	= <0 20 0x1c8>;
+			drop-out-profiles	= <0 36 0xc>;
+			drop-cfg-profiles	= <0 8 0x14>;
+			drop-queue-configs	= <0 80 0x4>;
+			statistics-profiles	= <0 48>;
+			drop-policies		= <&droppolicies>;
+			qos-tree		= <&qostree2>;
+			reserved;
+		};
+	};
+	regions {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+		region-12 {
+			id = <12>;
+			values	= <14336 128>;	/* num_desc desc_size */
+			link-index = <0x4000>;
+		};
+		region-13 {
+			id = <13>;
+			values	= <2048 256>;	/* num_desc desc_size */
+			link-index = <0x7800>;
+		};
+		region-14 {
+			id = <14>;
+			values	= <2048 128>;	/* num_desc desc_size */
+			link-index = <0x8000>;
+		};
+	};
+	descriptors {
+		pool-net {
+			values = <12288 128>;	/* num_desc desc_size */
+			region-id = <12>;
+		};
+		pool-rio {
+			values = <128 256>;
+			region-id = <13>;
+		};
+		pool-udma {
+			values = <1920 256>;	/* num_desc desc_size */
+			region-id = <13>;
+		};
+		pool-xge {
+			values = <1024 128>;
+			region-id = <14>;
+		};
+		pool-crypto {
+			values = <1024 128>;	/* num_desc desc_size */
+			region-id = <12>;
+		};
+	};
+	pdsps {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+		pdsp0@0x2a10000 {
+			firmware = "keystone/qmss_pdsp_acc48_k2_le_1_0_0_8.fw";
+			reg = <0x2a10000 0x1000    /*iram */
+			       0x2a0f000 0x100     /*reg*/
+			       0x2a0c000 0x3c8	   /*intd */
+			       0x2a20000 0x4000>;  /*cmd*/
+			id = <0>;
+		};
+		pdsp3@0x2a13000 {
+			firmware = "keystone/qmss_pdsp_qos_k2_le_2_0_1_6.fw";
+			reg = <0x2a13000 0x1000    /*iram */
+			       0x2a0f300 0x100     /*reg*/
+			       0x2a0c000 0x3c8	   /*intd */
+			       0x2a2c000 0x4000>;  /*cmd*/
+			id = <3>;
+		};
+		pdsp7@0x2a17000 {
+			firmware = "keystone/qmss_pdsp_qos_k2_le_2_0_1_6.fw";
+			reg = <0x2a17000 0x1000    /*iram */
+			       0x2a0f700 0x100     /*reg*/
+			       0x2a0c000 0x3c8	   /*intd */
+			       0x2a3c000 0x4000>;  /*cmd*/
+			id = <7>;
+		};
+	};
+}; /* hwqueue0 */
+
+padma: pktdma@2004000 {
+	compatible = "ti,keystone-pktdma";
+	reg = <0x2004000 0x100		/* 0 - global  */
+	       0x2004400 0x120		/* 1 - txchan  */
+	       0x2004800 0x300		/* 2 - rxchan  */
+	       0x2004c00 0x120		/* 3 - txsched */
+	       0x2005000 0x400>;	/* 4 - rxflow  */
+	/* loop-back;  */
+	/* bigendian; */
+	dma-coherent;
+	enable-all;
+	debug;
+	/* rx-priority = <0>; */
+	/* tx-priority = <0>; */
+	rx-retry-timeout = <3500>; /* Number of pktdma cycles to wait
+				before retry on buffer starvation */
+	logical-queue-managers	= <4>;
+	queues-per-queue-manager = <4096>;
+	qm-base-address = <0x23a80000 0x23a90000
+			   0x23aa0000 0x23ab0000>;
+
+	channels {
+		nettx0 {
+			transmit;
+			label		= "nettx0";
+			pool		= "pool-net";
+			submit-queue	= <648>;
+			/* complete-queue = <xx>; */
+			/* debug; */
+			/* channel = <0>; */
+			/* priority = <1>; */
+		};
+		nettx1 {
+			transmit;
+			label		= "nettx1";
+			pool		= "pool-net";
+			submit-queue	= <648>;
+			/* complete-queue = <xx>; */
+			/* debug; */
+			/* channel = <0>; */
+			/* priority = <1>; */
+		};
+		nettx2 {
+			transmit;
+			label		= "nettx2";
+			pool		= "pool-net";
+			submit-queue	= <648>;
+			/* complete-queue = <xx>; */
+			/* debug; */
+			/* channel = <0>; */
+			/* priority = <1>; */
+		};
+		nettx3 {
+			transmit;
+			label		= "nettx3";
+			pool		= "pool-net";
+			submit-queue	= <648>;
+			/* complete-queue = <xx>; */
+			/* debug; */
+			/* channel = <0>; */
+			/* priority = <1>; */
+		};
+		netrx0 {
+			receive;
+			label		= "netrx0";
+			pool		= "pool-net";
+			/* submit-queue   = <xx>; */
+			complete-queue = <8704>;
+			/* debug; */
+			/* channel = <0>; */
+			flow		= <22>;
+		};
+		netrx1 {
+			receive;
+			label		= "netrx1";
+			pool		= "pool-net";
+			/* submit-queue   = <xx>; */
+			complete-queue = <8705>;
+			/* debug; */
+			/* channel = <0>; */
+			flow		= <23>;
+		};
+		netrx2 {
+			receive;
+			label		= "netrx2";
+			pool		= "pool-net";
+			/* submit-queue   = <xx>; */
+			complete-queue = <8718>;
+			/* debug; */
+			/* channel = <0>; */
+			flow		= <24>;
+		};
+		netrx3 {
+			receive;
+			label		= "netrx3";
+			pool		= "pool-net";
+			/* submit-queue   = <xx>; */
+			complete-queue = <8719>;
+			/* debug; */
+			/* channel = <0>; */
+			flow		= <25>;
+		};
+		satx-0 {
+			transmit;
+			label		= "satx-0";
+			pool		= "pool-net";
+			submit-queue	= <646>;
+		};
+		satx-1 {
+			transmit;
+			label		= "satx-1";
+			pool		= "pool-net";
+			submit-queue	= <646>;
+		};
+		patx-pdsp0 {
+			transmit;
+			label		= "patx-pdsp0";
+			pool		= "pool-net";
+			submit-queue	= <640>;
+			complete-queue  = <8706>;
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		patx-pdsp5-0 {
+			transmit;
+			label		= "patx-pdsp5-0";
+			pool		= "pool-net";
+			submit-queue	= <645>;
+			/* complete-queue = <xx>; */
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		patx-pdsp5-1 {
+			transmit;
+			label		= "patx-pdsp5-1";
+			pool		= "pool-net";
+			submit-queue	= <645>;
+			/* complete-queue = <xx>; */
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		patx-pdsp5-2 {
+			transmit;
+			label		= "patx-pdsp5-2";
+			pool		= "pool-net";
+			submit-queue	= <645>;
+			complete-queue = <8720>;
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		patx-pdsp5-3 {
+			transmit;
+			label		= "patx-pdsp5-3";
+			pool		= "pool-net";
+			submit-queue	= <645>;
+			complete-queue = <8721>;
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		qos-bypass-0 {
+			transmit;
+			label		= "qos-bypass-0";
+			pool		= "pool-net";
+			submit-queue	= <645>;
+			complete-queue 	= <8716>;
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		qos-bypass-1 {
+			transmit;
+			label		= "qos-bypass-1";
+			pool		= "pool-net";
+			submit-queue	= <645>;
+			complete-queue 	= <8717>;
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		parx {
+			receive;
+			label		= "parx";
+			pool		= "pool-net";
+			/* submit-queue   = <xx>; */
+			/* complete-queue = <xx>; */
+			/* debug; */
+			/* channel = <0>; */
+			flow		= <31>;
+		};
+		crypto-rx0 {
+			receive;
+			label		= "crypto-rx0";
+			pool		= "pool-crypto";
+			complete-queue 	= <8712>;
+			flow		= <24>;
+			rx-error-retry; /* enable retry on buffer starvation */
+			/* debug; */
+		};
+		crypto-tx {
+			transmit;
+			label		= "crypto-tx";
+			pool		= "pool-crypto";
+			submit-queue	= <646>;
+			complete-queue 	= <8713>;
+			/* debug; */
+		};
+		qos0 {
+			transmit;
+			label		= "qos0";
+			pool		= "pool-net";
+			submit-queue	= <8072>;
+			/* complete-queue = <xx>; */
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		qos1 {
+			transmit;
+			label		= "qos1";
+			pool		= "pool-net";
+			submit-queue	= <8073>;
+			/* complete-queue = <xx>; */
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		qos2 {
+			transmit;
+			label		= "qos2";
+			pool		= "pool-net";
+			submit-queue	= <8074>;
+			/* complete-queue = <xx>; */
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		qos3 {
+			transmit;
+			label		= "qos3";
+			pool		= "pool-net";
+			submit-queue	= <8075>;
+			/* complete-queue = <xx>; */
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		qos4 {
+			transmit;
+			label		= "qos4";
+			pool		= "pool-net";
+			submit-queue	= <8076>;
+			/* complete-queue = <xx>; */
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		qos5 {
+			transmit;
+			label		= "qos5";
+			pool		= "pool-net";
+			submit-queue	= <8077>;
+			complete-queue  = <8707>;
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		qos6 {
+			transmit;
+			label		= "qos6";
+			pool		= "pool-net";
+			submit-queue	= <6472>;
+			/* complete-queue = <xx>; */
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		qos7 {
+			transmit;
+			label		= "qos7";
+			pool		= "pool-net";
+			submit-queue	= <6473>;
+			/* complete-queue = <xx>; */
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		qos8 {
+			transmit;
+			label		= "qos8";
+			pool		= "pool-net";
+			submit-queue	= <6474>;
+			/* complete-queue = <xx>; */
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		qos9 {
+			transmit;
+			label		= "qos9";
+			pool		= "pool-net";
+			submit-queue	= <6475>;
+			/* complete-queue = <xx>; */
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		qos10 {
+			transmit;
+			label		= "qos10";
+			pool		= "pool-net";
+			submit-queue	= <6476>;
+			/* complete-queue = <xx>; */
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+		qos11 {
+			transmit;
+			label		= "qos11";
+			pool		= "pool-net";
+			submit-queue	= <6477>;
+			complete-queue  = <8708>;
+			/* debug; */
+			/* channel = <xx>; */
+			/* priority = <1>; */
+		};
+	};
+};
+
+netcp: netcp@2090000 {
+	reg = <0x2090000 0xf00
+		0x2620110 0x8>;
+	compatible = "ti,keystone-netcp";
+
+	clocks = <&paclk13>, <&clkcpgmac>, <&chipclk12>;
+	clock-names = "clk_pa", "clk_cpgmac", "cpsw_cpts_rft_clk";
+	dma-coherent;
+	streaming-regs = <0x02000604 0x4>;
+
+	interfaces {
+		interface0: interface-0 {
+			rx-channel = "netrx0";
+			rx-queue-depth = <1024 128 0 0>;
+			rx-buffer-size = <1536 4096 0 0>;
+			efuse-mac = <1>;
+			/*local-mac-address = [02 18 31 7e 3e 6e]; */
+		};
+		interface1: interface-1 {
+			rx-channel = "netrx1";
+			rx-queue-depth = <1024 128 0 0>;
+			rx-buffer-size = <1536 4096 0 0>;
+			efuse-mac = <0>;
+			local-mac-address = [02 18 31 7e 3e 6f];
+		};
+		interface2: interface-2 {
+			rx-channel = "netrx2";
+			rx-queue-depth = <1024 128 0 0>;
+			rx-buffer-size = <1536 4096 0 0>;
+			efuse-mac = <0>;
+			/*local-mac-address = [02 18 31 7e 3e 7e]; */
+		};
+		interface3: interface-3 {
+			rx-channel = "netrx3";
+			rx-queue-depth = <1024 128 0 0>;
+			rx-buffer-size = <1536 4096 0 0>;
+			efuse-mac = <0>;
+			/*local-mac-address = [02 18 31 7e 3e 7f]; */
+		};
+	};
+
+	cpsw: cpsw@2090000 {
+		label = "keystone-cpsw";
+		serdes_at_probe = <1>;
+
+		intf_tx_queues = <7>;
+
+		sgmii_module_ofs  = <0x100>;
+		sgmii_module34_ofs  = <0x400>;
+		switch_module_ofs = <0x800>;
+		host_port_reg_ofs = <0x834>;
+		slave_reg_ofs	  = <0x860>;
+		sliver_reg_ofs	  = <0x900>;
+		slave23_reg_ofs	  = <0xa00>;
+		hw_stats_reg_ofs  = <0xb00>;
+		cpts_reg_ofs	  = <0xd00>;
+		ale_reg_ofs	  = <0xe00>;
+
+		num_slaves  = <4>;
+		ale_ageout  = <30>;
+		ale_entries = <1024>;
+		ale_ports   = <5>;
+
+		cpts_rftclk_sel = <0>;
+		/*cpts_rftclk_freq = <399360000>;*/
+		cpts_ts_comp_length = <3>;
+		cpts_clock_mult = <5000>;
+		cpts_clock_shift = <10>;
+		cpts_clock_div = <3>;
+		/* force_no_hwtstamp; */
+
+		multi-interface;
+		num-interfaces = <4>;
+		slaves-per-interface = <1>;
+
+		interfaces {
+			interface-0 {
+				slave_port = <0>;
+				tx-channel = "nettx0";
+				tx_queue_depth = <32>;
+			};
+			interface-1 {
+				slave_port = <1>;
+				tx-channel = "nettx1";
+				tx_queue_depth = <32>;
+			};
+			interface-2 {
+				slave_port = <2>;
+				tx-channel = "nettx2";
+				tx_queue_depth = <32>;
+			};
+			interface-3 {
+				slave_port = <3>;
+				tx-channel = "nettx3";
+				tx_queue_depth = <32>;
+			};
+		};
+
+		slaves {
+			slave0 {
+				label		= "slave0";
+				link-interface	= <4>;
+			};
+			slave1 {
+				label		= "slave1";
+				link-interface	= <4>;
+			};
+			slave2 {
+				label		= "slave2";
+				link-interface	= <2>;
+			};
+			slave3 {
+				label		= "slave3";
+				link-interface	= <2>;
+			};
+		};
+	};
+	pa: pa@2000000 {
+		label = "keystone-pa";
+		checksum-offload	= <1>; /* 1 - HW offload */
+		txhook-order		= <10>;
+		txhook-softcsum		= <40>;
+		rxhook-order		= <10>;
+
+		tx_cmd_queue_depth	= <64>;
+		tx_data_queue_depth	= <1024>;
+		rx_pool_depth		= <64>;
+		rx_buffer_size		= <128>;
+		lut-ranges		= <0 43 56 63>;
+		/* mark_mcast_match	= <0x12345a00 0xffffff00>; */
+		/* force_no_hwtstamp; */
+	};
+	sa: sa@20c0000 {
+		label = "keystone-sa";
+		multi-interface;
+		interface-0;
+		interface-1;
+		tx_queue_depth = <32>;
+	};
+	qos: qos@0 {
+		label = "keystone-qos";
+		multi-interface;
+
+		interface-0 {
+			chan-0 {
+				tx-channel = "qos-bypass-0";
+				tx_queue_depth = <1024>;
+			};
+			chan-1 {
+				tx-channel = "qos0";
+				tx_queue_depth = <64>;
+			};
+			chan-2 {
+				tx-channel = "qos1";
+				tx_queue_depth = <64>;
+			};
+			chan-3 {
+				tx-channel = "qos2";
+				tx_queue_depth = <64>;
+			};
+			chan-4 {
+				tx-channel = "qos3";
+				tx_queue_depth = <64>;
+			};
+			chan-5 {
+				tx-channel = "qos4";
+				tx_queue_depth = <64>;
+			};
+			chan-6 {
+				tx-channel = "qos5";
+				tx_queue_depth = <64>;
+			};
+		};
+		interface-1 {
+			chan-0 {
+				tx-channel = "qos-bypass-1";
+				tx_queue_depth = <1024>;
+			};
+			chan-1 {
+				tx-channel = "qos6";
+				tx_queue_depth = <64>;
+			};
+			chan-2 {
+				tx-channel = "qos7";
+				tx_queue_depth = <64>;
+			};
+			chan-3 {
+				tx-channel = "qos8";
+				tx_queue_depth = <64>;
+			};
+			chan-4 {
+				tx-channel = "qos9";
+				tx_queue_depth = <64>;
+			};
+			chan-5 {
+				tx-channel = "qos10";
+				tx_queue_depth = <64>;
+			};
+			chan-6 {
+				tx-channel = "qos11";
+				tx_queue_depth = <64>;
+			};
+		};
+	};
+};
+
