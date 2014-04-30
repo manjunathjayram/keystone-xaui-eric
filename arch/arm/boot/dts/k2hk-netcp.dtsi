@@ -538,7 +538,7 @@ netcp: netcp@2090000 {
 		0x2620110 0x8>;
 	compatible = "ti,keystone-netcp";
 
-	clocks = <&papllclk>, <&clkcpgmac>, <&chipclk12>;
+	clocks = <&paclk13>, <&clkcpgmac>, <&chipclk12>;
 	clock-names = "clk_pa", "clk_cpgmac", "cpsw_cpts_rft_clk";
 	dma-coherent;
 	streaming-regs = <0x02000604 0x4>;
