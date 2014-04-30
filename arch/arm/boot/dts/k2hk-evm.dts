@@ -3029,6 +3029,7 @@
 				reg = <0x2f00000 0xa0600>;
 				label = "keystone-cpswx";
 				serdes_at_probe = <1>;
+				serdes_tx_ctrl_override = <0 0 5>; /* RTM-BOC cm c1 c2 */
 
 				intf_tx_queues = <1>;
 
