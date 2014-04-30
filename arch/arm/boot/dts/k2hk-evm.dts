@@ -1915,23 +1915,23 @@
 				ranges;
 				region-12 {
 					id = <12>;
-					values	= <14336 128>;	/* num_desc desc_size */
+					values	= <10240 128>;	/* num_desc desc_size */
 					link-index = <0x4000>;
 				};
 				region-13 {
 					id = <13>;
 					values	= <2048 256>;	/* num_desc desc_size */
-					link-index = <0x7800>;
+					link-index = <0x6800>;
 				};
 				region-14 {
 					id = <14>;
 					values	= <2048 128>;	/* num_desc desc_size */
-					link-index = <0x8000>;
+					link-index = <0x7000>;
 				};
 			};
 			descriptors {
 				pool-net {
-					values = <12288 128>;	/* num_desc desc_size */
+					values = <9216 128>;	/* num_desc desc_size */
 					region-id = <12>;
 				};
 				pool-rio {
@@ -2692,28 +2692,28 @@
 			interfaces {
 				interface0: interface-0 {
 					rx-channel = "netrx0";
-					rx-queue-depth = <1024 128 0 0>;
+					rx-queue-depth = <128 128 0 0>;
 					rx-buffer-size = <1536 4096 0 0>;
 					efuse-mac = <1>;
 					/*local-mac-address = [02 18 31 7e 3e 6e]; */
 				};
 				interface1: interface-1 {
 					rx-channel = "netrx1";
-					rx-queue-depth = <1024 128 0 0>;
+					rx-queue-depth = <128 128 0 0>;
 					rx-buffer-size = <1536 4096 0 0>;
 					efuse-mac = <0>;
 					local-mac-address = [02 18 31 7e 3e 6f];
 				};
 				interface2: interface-2 {
 					rx-channel = "netrx2";
-					rx-queue-depth = <1024 128 0 0>;
+					rx-queue-depth = <128 128 0 0>;
 					rx-buffer-size = <1536 4096 0 0>;
 					efuse-mac = <0>;
 					/*local-mac-address = [02 18 31 7e 3e 7e]; */
 				};
 				interface3: interface-3 {
 					rx-channel = "netrx3";
-					rx-queue-depth = <1024 128 0 0>;
+					rx-queue-depth = <128 128 0 0>;
 					rx-buffer-size = <1536 4096 0 0>;
 					efuse-mac = <0>;
 					/*local-mac-address = [02 18 31 7e 3e 7f]; */
