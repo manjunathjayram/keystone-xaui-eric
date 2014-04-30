@@ -14,6 +14,8 @@
 / {
 	compatible =  "ti,keystone-evm";
 
+	/include/ "k2hk-qostree.dtsi"
+
 	soc {
 		clocks {
 			refclksys: refclksys {
@@ -51,6 +53,9 @@
 				clock-output-names = "refclk-ddr3b";
 			};
 		};
+
+		/include/ "k2hk-netcp.dtsi"
+
 	};
 
 	leds {
