@@ -197,7 +197,7 @@ static int xhci_plat_remove(struct platform_device *dev)
 	return 0;
 }
 
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_SLEEP
 static int xhci_plat_suspend(struct device *dev)
 {
 	struct usb_hcd	*hcd = dev_get_drvdata(dev);
@@ -220,7 +220,7 @@ static const struct dev_pm_ops xhci_plat_pm_ops = {
 #define DEV_PM_OPS	(&xhci_plat_pm_ops)
 #else
 #define DEV_PM_OPS	NULL
-#endif /* CONFIG_PM */
+#endif /* CONFIG_PM_SLEEP */
 
 #ifdef CONFIG_OF
 static const struct of_device_id usb_xhci_of_match[] = {
