@@ -899,6 +899,10 @@ int cpts_register(struct device *dev, struct cpts *cpts,
 	cpts->cc_mult = cpts->cc.mult;
 
 	v = cpts_read32(cpts, control) | CPTS_EN;
+	if (cpts->ts_comp_polarity)
+		v |= TS_COMP_POLARITY;
+	else
+		v &= ~TS_COMP_POLARITY;
 	cpts_write32(cpts, v, control);
 	cpts_write32(cpts, TS_PEND_EN, int_enable);
 
