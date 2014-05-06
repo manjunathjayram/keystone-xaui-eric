@@ -3266,6 +3266,10 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 		cpsw_dev->cpts.ts_comp_length = 1;
 	}
 
+	if (of_property_read_u32(node, "cpts_ts_comp_polarity",
+				&cpsw_dev->cpts.ts_comp_polarity))
+		cpsw_dev->cpts.ts_comp_polarity = 1;
+
 	if (of_property_read_u32(node, "cpts_clock_mult",
 				&cpsw_dev->cpts.cc.mult)) {
 		pr_err("Missing cpts_clock_mult property in the DT.\n");

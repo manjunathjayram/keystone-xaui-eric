@@ -70,6 +70,7 @@ struct cpsw_cpts {
 #define HW3_TS_PUSH_EN       (1<<10) /* Hardware push 3 enable */
 #define HW2_TS_PUSH_EN       (1<<9)  /* Hardware push 2 enable */
 #define HW1_TS_PUSH_EN       (1<<8)  /* Hardware push 1 enable */
+#define TS_COMP_POLARITY     (1<<2)  /* TS_COMP Polarity */
 #define INT_TEST             (1<<1)  /* Interrupt Test */
 #define CPTS_EN              (1<<0)  /* Time Sync Enable */
 
@@ -149,6 +150,7 @@ struct cpts {
 	int pps_enable;
 	u32 pps_one_sec; /* counter val equivalent of 1 sec */
 	u32 ts_comp_length;
+	u32 ts_comp_polarity;
 	u64 ts_comp_last;
 	u32 cc_div;
 	u64 cc_total;
