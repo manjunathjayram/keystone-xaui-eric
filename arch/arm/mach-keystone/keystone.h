@@ -19,6 +19,7 @@ extern struct smp_operations keystone_smp_ops;
 extern void secondary_startup(void);
 extern u32 keystone_cpu_smc(u32 command, u32 cpu, u32 addr);
 extern int keystone_pm_runtime_init(void);
+extern int keystone_init_ddr3_ecc(struct device_node *node);
 
 #endif /* __ASSEMBLER__ */
 #endif /* __KEYSTONE_H__ */
