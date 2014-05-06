@@ -2745,6 +2745,7 @@
 				cpts_rftclk_sel = <0>;
 				/*cpts_rftclk_freq = <399360000>;*/
 				cpts_ts_comp_length = <3>;
+				cpts_ts_comp_polarity = <1>;  /* 1 - assert high */
 				cpts_clock_mult = <5000>;
 				cpts_clock_shift = <10>;
 				cpts_clock_div = <3>;
