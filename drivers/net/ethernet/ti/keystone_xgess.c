@@ -2374,7 +2374,7 @@ static int cpswx_probe(struct netcp_device *netcp_device,
 		if (ret)
 			goto exit;
 
-		ret = xge_serdes_init_156p25Mhz();
+		ret = xge_serdes_init_156p25Mhz(node);
 		if (ret)
 			goto exit;
 	}
