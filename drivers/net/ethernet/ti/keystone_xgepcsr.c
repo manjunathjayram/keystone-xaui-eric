@@ -14,6 +14,7 @@
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/io.h>
+#include <linux/of.h>
 #include <linux/err.h>
 #include <linux/delay.h>
 
@@ -66,6 +67,12 @@
 #define VAL_SH(v, s)		(v << s)
 
 #define PHY_A(serdes)		0
+
+struct hw_specific {
+	u32 cm;
+	u32 c1;
+	u32 c2;
+};
 
 struct serdes_cfg {
 	u32 ofs;
@@ -152,13 +159,6 @@ struct serdes_cfg cfg_phyb_10p3125g_comlane[] = {
 	{0x0b78, 0x00000c00, 0x0000ff00},
 	{0x0abc, 0xff000000, 0xff000000},
 	{0x0ac0, 0x0000008b, 0x000000ff},
-};
-
-struct serdes_cfg cfg_cm_c1_c2[] = {
-	{0x0208, 0x00000000, 0x00000f00},
-	{0x0208, 0x00000000, 0x0000001f},
-	{0x0204, 0x00000000, 0x00040000},
-	{0x0208, 0x000000a0, 0x000000e0},
 };
 
 static inline void keystone_xge_serdes_init(void __iomem *serdes_regs)
@@ -322,28 +322,12 @@ u32 keystone_serdes_read_select_tbus(void __iomem *serdes_regs,
 void keystone_serdes_reset_cdr(void __iomem *serdes_regs,
 			void __iomem *sig_detect_reg, int lane)
 {
-	u32 tmp, dlpf, tbus;
-
-	/*Get the DLPF values */
-	tmp = keystone_serdes_read_select_tbus(
-			serdes_regs, lane + 1, 5);
-
-	dlpf = tmp >> 2;
-
-	if (dlpf < 400 || dlpf > 700) {
-		reg_rmw(sig_detect_reg, VAL_SH(2, 1), MASK_WID_SH(2, 1));
-		mdelay(1);
-		reg_rmw(sig_detect_reg, VAL_SH(0, 1), MASK_WID_SH(2, 1));
-	} else {
-		tbus = keystone_serdes_read_select_tbus(serdes_regs,
-							lane + 1, 0xe);
-
-		pr_debug("XGE: CDR centered, DLPF: %4d,%d,%d.\n",
-			tmp >> 2, tmp & 3, (tbus >> 2) & 3);
-	}
+	reg_rmw(sig_detect_reg, VAL_SH(2, 1), MASK_WID_SH(2, 1));
+	mdelay(1);
+	reg_rmw(sig_detect_reg, VAL_SH(0, 1), MASK_WID_SH(2, 1));
 }
 
-/* Call every 100 ms */
+/* Call every 10 ms */
 int keystone_xge_check_link_status(void __iomem *serdes_regs,
 		      void __iomem *sw_regs,
 		      u32 lanes,
@@ -356,19 +340,19 @@ int keystone_xge_check_link_status(void __iomem *serdes_regs,
 	int loss, i, status = 1;
 
 	for (i = 0; i < lanes; i++) {
-		/* Get the Loss bit */
+		/* Rx Signal Loss bit in serdes lane control and status reg*/
 		loss = readl(serdes_regs + 0x1fc0 + 0x20 + (i * 0x04)) & 0x1;
 
-		/* Get Block Errors and Block Lock bits */
+		/* Block Errors and Block Lock bits in PCSR rx status reg */
 		pcsr_rx_stat = readl(pcsr_base + 0x0c + (i * 0x80));
 		blk_lock = (pcsr_rx_stat >> 30) & 0x1;
 		blk_errs = (pcsr_rx_stat >> 16) & 0x0ff;
 
-		/* Get Signal Detect Overlay Address */
+		/* reg that has the Signal Detect Overlay */
 		sig_detect_reg = serdes_regs + (i * 0x200) + 0x200 + 0x04;
 
-		/* If Block errors maxed out, attempt recovery! */
-		if (blk_errs == 0x0ff)
+		/* If Block error, attempt recovery! */
+		if (blk_errs)
 			blk_lock = 0;
 
 		switch (current_state[i]) {
@@ -416,7 +400,7 @@ int keystone_xge_check_link_status(void __iomem *serdes_regs,
 			break;
 		}
 
-		if (blk_errs > 0) {
+		if (blk_errs) {
 			/* Reset the Error counts! */
 			reg_rmw(pcsr_base + 0x08 + (i * 0x80),
 					VAL_SH(0x19, 0), MASK_WID_SH(8, 0));
@@ -432,18 +416,19 @@ int keystone_xge_check_link_status(void __iomem *serdes_regs,
 }
 
 static int keystone_xge_serdes_check_lane(void __iomem *serdes_regs,
-					  void __iomem *sw_regs)
+					  void __iomem *sw_regs, u32 lanes)
 {
 	u32 current_state[2] = {0, 0};
 	int retries = 0, link_up;
 	u32 lane_down[2];
 
 	do {
+		mdelay(10);
 		lane_down[0] = 0;
 		lane_down[1] = 0;
 
 		link_up = keystone_xge_check_link_status(serdes_regs, sw_regs,
-					   2, current_state, lane_down);
+					   lanes, current_state, lane_down);
 
 		/* if we did not get link up then wait 100ms
 		   before calling it again
@@ -454,31 +439,37 @@ static int keystone_xge_serdes_check_lane(void __iomem *serdes_regs,
 		if (lane_down[0])
 			pr_debug("XGE: detected link down on lane 0\n");
 
-		if (lane_down[1])
+		if (lanes > 1 && lane_down[1])
 			pr_debug("XGE: detected link down on lane 1\n");
 
-		if (++retries > 1) {
-			pr_debug("XGE: timeout waiting for serdes link up\n");
+		if (++retries > 100) {
+			pr_err("XGE: timeout waiting for serdes link up\n");
 			return -ETIMEDOUT;
 		}
-		mdelay(100);
 	} while (!link_up);
 
-	pr_debug("XGE: PCSR link is up\n");
+	pr_debug("XGE: serdes link up: retried %d times\n", retries);
 	return 0;
 }
 
 static inline void keystone_xge_serdes_setup_cm_c1_c2(void __iomem *serdes_regs,
-				int lane, int cm, int c1, int c2)
+				int lane, u32 cm, u32 c1, u32 c2)
 {
-	int i;
+	/* TX Control override enable txdrv_cm_in[3:0] */
+	reg_rmw(serdes_regs + (0x200 * (lane + 1)) + 0x8,
+		((cm & 0xf) << 8), (0xf << 8));
 
-	for (i = 0; i < ARRAY_SIZE(cfg_cm_c1_c2); i++) {
-		reg_rmw(serdes_regs +
-				cfg_cm_c1_c2[i].ofs + (0x200 * lane),
-			cfg_cm_c1_c2[i].val,
-			cfg_cm_c1_c2[i].mask);
-	}
+	/* TX Control override enable txdrv_c1_in[4:0] */
+	reg_rmw(serdes_regs + (0x200 * (lane + 1)) + 0x8,
+		((c1 & 0x1f) << 0), (0x1f << 0));
+
+	/* TX Control override enable txdrv_c2_in[3] */
+	reg_rmw(serdes_regs + (0x200 * (lane + 1)) + 0x4,
+		(((c2 >> 3) & 0x1) << 18), (0x1 << 18));
+
+	/* TX Control override enable txdrv_c2_in[2:0] */
+	reg_rmw(serdes_regs + (0x200 * (lane + 1)) + 0x8,
+		((c2 & 0x7) << 5), (0x7 << 5));
 }
 
 static inline void keystone_xge_reset_serdes(void __iomem *serdes_regs)
@@ -494,26 +485,28 @@ static inline void keystone_xge_reset_serdes(void __iomem *serdes_regs)
 }
 
 static int keystone_xge_serdes_config(void __iomem *serdes_regs,
-				      void __iomem *sw_regs)
+				      void __iomem *sw_regs,
+				      struct hw_specific *hw)
 {
-	u32 ret, i;
+	u32 ret, i, lanes = 2;
 
 	keystone_xge_serdes_pll_disable(serdes_regs);
 
 	keystone_xge_serdes_init(serdes_regs);
 
-	for (i = 0; i < 2; i++)
+	for (i = 0; i < lanes; i++)
 		keystone_xge_serdes_lane_config(serdes_regs, i);
 
 	keystone_xge_serdes_com_enable(serdes_regs);
 
 	/* This is EVM + RTM-BOC specific */
-	for (i = 0; i < 2; i++)
-		keystone_xge_serdes_setup_cm_c1_c2(serdes_regs, i, 0, 0, 5);
+	for (i = 0; i < lanes; i++)
+		keystone_xge_serdes_setup_cm_c1_c2(serdes_regs, i,
+			hw->cm, hw->c1, hw->c2);
 
 	keystone_xge_serdes_pll_enable(serdes_regs);
 
-	for (i = 0; i < 2; i++)
+	for (i = 0; i < lanes; i++)
 		keystone_xge_serdes_lane_enable(serdes_regs, i);
 
 	/* SB PLL Status Poll */
@@ -523,12 +516,12 @@ static int keystone_xge_serdes_config(void __iomem *serdes_regs,
 
 	keystone_xge_serdes_enable_xgmii_port(sw_regs);
 
-	keystone_xge_serdes_check_lane(serdes_regs, sw_regs);
+	keystone_xge_serdes_check_lane(serdes_regs, sw_regs, lanes);
 
 	return ret;
 }
 
-static int keystone_xge_serdes_start(void)
+static int keystone_xge_serdes_start(struct hw_specific *hw)
 {
 	void __iomem *serdes_regs, *xge_sw_regs;
 	u32 val;
@@ -544,7 +537,7 @@ static int keystone_xge_serdes_start(void)
 		keystone_xge_reset_serdes(serdes_regs);
 	}
 
-	ret = keystone_xge_serdes_config(serdes_regs, xge_sw_regs);
+	ret = keystone_xge_serdes_config(serdes_regs, xge_sw_regs, hw);
 
 	iounmap(serdes_regs);
 	iounmap(xge_sw_regs);
@@ -553,15 +546,28 @@ static int keystone_xge_serdes_start(void)
 
 static int keystone_xge_serdes_configured;  /* FIXME */
 
-int xge_serdes_init_156p25Mhz(void)
+int xge_serdes_init_156p25Mhz(struct device_node *node)
 {
+	struct hw_specific hw;
+	u32 temp[3];
 	int ret;
 
 	/* Serdes should only be configured once */
 	if (keystone_xge_serdes_configured)
 		return 0;
 
-	ret = keystone_xge_serdes_start();
+	if (of_property_read_u32_array(node, "serdes_tx_ctrl_override",
+			(u32 *)&(temp[0]), 3)) {
+		temp[0] = 0;
+		temp[1] = 0;
+		temp[2] = 5;
+	}
+
+	hw.cm = temp[0];
+	hw.c1 = temp[1];
+	hw.c2 = temp[2];
+
+	ret = keystone_xge_serdes_start(&hw);
 	if (!ret)
 		keystone_xge_serdes_configured = 1;
 
