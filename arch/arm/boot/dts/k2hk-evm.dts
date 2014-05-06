@@ -2745,6 +2745,7 @@
 				cpts_rftclk_sel = <0>;
 				/*cpts_rftclk_freq = <399360000>;*/
 				cpts_ts_comp_length = <3>;
+				cpts_ts_comp_polarity = <1>;  /* 1 - assert high */
 				cpts_clock_mult = <5000>;
 				cpts_clock_shift = <10>;
 				cpts_clock_div = <3>;
@@ -3028,6 +3029,7 @@
 				reg = <0x2f00000 0xa0600>;
 				label = "keystone-cpswx";
 				serdes_at_probe = <1>;
+				serdes_tx_ctrl_override = <0 0 5>; /* RTM-BOC cm c1 c2 */
 
 				intf_tx_queues = <1>;
 
