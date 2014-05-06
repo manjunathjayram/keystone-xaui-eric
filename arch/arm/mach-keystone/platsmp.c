@@ -13,8 +13,9 @@
  */
 
 #include <linux/init.h>
-#include <linux/smp.h>
 #include <linux/io.h>
+#include <linux/of.h>
+#include <linux/smp.h>
 
 #include <asm/smp_plat.h>
 #include <asm/prom.h>

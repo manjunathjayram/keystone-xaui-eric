@@ -2886,19 +2886,6 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 	int ret = 0;
 	u32 reg;
 
-	cpsw_dev->cpgmac = clk_get(cpsw_dev->dev, "clk_cpgmac");
-	if (IS_ERR(cpsw_dev->cpgmac)) {
-		ret = PTR_ERR(cpsw_dev->cpgmac);
-		cpsw_dev->cpgmac = NULL;
-		dev_err(cpsw_dev->dev, "unable to get Keystone CPGMAC"
-			" clock: %d\n", ret);
-		return ret;
-	}
-
-	ret = clk_prepare_enable(cpsw_dev->cpgmac);
-	if (ret)
-		goto clk_fail;
-
 	reg = __raw_readl(&cpsw_dev->regs->id_ver);
 
 	dev_info(cpsw_dev->dev, "initializing cpsw version %d.%d (%d) "
@@ -2983,10 +2970,6 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 ale_fail:
 	netcp_txpipe_close(&cpsw_intf->tx_pipe);
 txpipe_fail:
-	clk_disable_unprepare(cpsw_dev->cpgmac);
-clk_fail:
-	clk_put(cpsw_dev->cpgmac);
-	cpsw_dev->cpgmac = NULL;
 	return ret;
 }
 
@@ -3012,9 +2995,6 @@ static int cpsw_close(void *intf_priv, struct net_device *ndev)
 				cpsw_intf);
 	netcp_txpipe_close(&cpsw_intf->tx_pipe);
 
-	clk_disable_unprepare(cpsw_dev->cpgmac);
-	clk_put(cpsw_dev->cpgmac);
-
 	cpsw_unregister_cpts(cpsw_dev);
 	return 0;
 }
@@ -3033,6 +3013,9 @@ static int cpsw_remove(struct netcp_device *netcp_device, void *inst_priv)
 		netcp_delete_interface(netcp_device, cpsw_intf->ndev);
 	}
 	BUG_ON(!list_empty(&cpsw_dev->cpsw_intf_head));
+
+	clk_disable_unprepare(cpsw_dev->cpgmac);
+	devm_clk_put(cpsw_dev->dev, cpsw_dev->cpgmac);
 
 	iounmap(cpsw_dev->ss_regs);
 	memset(cpsw_dev, 0x00, sizeof(*cpsw_dev));	/* FIXME: Poison */
@@ -3362,11 +3345,24 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	dev_dbg(dev, "ale_entries = %d\n", cpsw_dev->ale_entries);
 	dev_dbg(dev, "ale_ports = %d\n", cpsw_dev->ale_ports);
 
+	cpsw_dev->cpgmac = devm_clk_get(cpsw_dev->dev, "clk_cpgmac");
+	if (IS_ERR(cpsw_dev->cpgmac)) {
+		ret = PTR_ERR(cpsw_dev->cpgmac);
+		cpsw_dev->cpgmac = NULL;
+		dev_err(cpsw_dev->dev, "unable to get Keystone CPGMAC"
+			" clock: %d\n", ret);
+		goto exit;
+	}
+
+	ret = clk_prepare_enable(cpsw_dev->cpgmac);
+	if (ret)
+		goto exit_put_clk;
+
 	slaves = of_get_child_by_name(node, "slaves");
 	if (!slaves) {
 		dev_err(dev, "could not find slaves\n");
 		ret = -ENODEV;
-		goto exit;
+		goto exit_disable_clk;
 	}
 
 	for_each_child_of_node(slaves, slave) {
@@ -3398,10 +3394,15 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 
 	ret = cpsw_create_sysfs_entries(cpsw_dev);
 	if (ret)
-		goto exit;
+		goto exit_disable_clk;
 
 	return 0;
 
+exit_disable_clk:
+	clk_disable_unprepare(cpsw_dev->cpgmac);
+exit_put_clk:
+	devm_clk_put(cpsw_dev->dev, cpsw_dev->cpgmac);
+	cpsw_dev->cpgmac = NULL;
 exit:
 	if (cpsw_dev->ss_regs)
 		iounmap(cpsw_dev->ss_regs);

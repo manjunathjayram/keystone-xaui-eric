@@ -326,5 +326,13 @@
 			enable-linktrain; /* When the boot loader enables link train and configure ep
 					   * remove this attribute */
 		};
+
+		sysctrl {
+			/* add all system level resources here that are used by keystone soc code */
+			compatible = "ti,keystone-sys";
+			reg = <0x21010000 0x0200>; /* DDR3 controller reg */
+			interrupts = <0 24 0xf01    /* L1L2 ECC error interrupt */
+				      0 448 0xf01>; /* DDR3 ECC error interrupt */
+		};
 	};
 };

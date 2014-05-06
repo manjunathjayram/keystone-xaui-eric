@@ -9,17 +9,20 @@
  * under the terms and conditions of the GNU General Public License,
  * version 2, as published by the Free Software Foundation.
  */
+#include <linux/dma-mapping.h>
+#include <linux/interrupt.h>
+#include <linux/init.h>
 #include <linux/io.h>
 #include <linux/of.h>
-#include <linux/init.h>
+#include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/of_address.h>
-#include <linux/dma-mapping.h>
+#include <linux/reboot.h>
 
-#include <asm/setup.h>
 #include <asm/mach/map.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/time.h>
+#include <asm/setup.h>
 #include <asm/smp_plat.h>
 #include <asm/memory.h>
 
@@ -81,6 +84,56 @@ static unsigned long keystone_dma_to_pfn(struct device *dev, dma_addr_t addr)
 {
 	return PFN_DOWN(addr) + keystone_dma_pfn_offset;
 }
+
+#define L2_INTERN_ASYNC_ERROR	BIT(30)
+
+static irqreturn_t arm_l1l2_ecc_err_irq_handler(int irq, void *reg_virt)
+{
+	int ret = IRQ_NONE;
+	u32 status, fault;
+
+	/* read and clear L2ECTLR CP15 register for L2 ECC error */
+	asm("mrc p15, 1, %0, c9, c0, 3" : "=r"(status));
+
+	if (status & L2_INTERN_ASYNC_ERROR) {
+		status &= ~L2_INTERN_ASYNC_ERROR;
+		asm("mcr p15, 1, %0, c9, c0, 3" : : "r" (status));
+		asm("mcr p15, 0, %0, c5, c1, 0" : "=r" (fault));
+		/*
+		 * Do a machine restart as this is double bit ECC error
+		 * that can't be corrected
+		 */
+		pr_err("ARM Cortex A15 L1/L2 ECC error, CP15 ADFSR 0x%x\n",
+			fault);
+		machine_restart(NULL);
+		ret = IRQ_HANDLED;
+	}
+	return ret;
+}
+
+static int __init keystone_init_misc(void)
+{
+	struct device_node *node = NULL;
+	int error_irq = 0;
+	int ret;
+
+	/* add ARM ECC L1/L2 cache error handler */
+	node = of_find_compatible_node(NULL, NULL, "ti,keystone-sys");
+	if (node)
+		error_irq = irq_of_parse_and_map(node, 0);
+	if (!error_irq) {
+		pr_warn("Warning!! arm L1/L2 ECC irq number not defined\n");
+		return 0;
+	}
+	if (request_irq(error_irq, arm_l1l2_ecc_err_irq_handler, 0,
+		"a15-l1l2-ecc-err-irq", 0) < 0) {
+		WARN_ON("request_irq fail for arm L1/L2 ECC error irq\n");
+	}
+
+	ret = keystone_init_ddr3_ecc(node);
+	return ret;
+}
+subsys_initcall(keystone_init_misc);
 
 static void *keystone_dma_to_virt(struct device *dev, dma_addr_t addr)
 {
