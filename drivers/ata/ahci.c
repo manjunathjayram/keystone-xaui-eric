@@ -43,6 +43,7 @@
 #include <linux/device.h>
 #include <linux/dmi.h>
 #include <linux/gfp.h>
+#include <linux/aer.h>
 #include <scsi/scsi_host.h>
 #include <scsi/scsi_cmnd.h>
 #include <linux/libata.h>
@@ -1199,6 +1200,7 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	struct ata_host *host;
 	int n_ports, n_msis, i, rc;
 	int ahci_pci_bar = AHCI_PCI_BAR_STANDARD;
+	u16 pci_cmd;
 
 	VPRINTK("ENTER\n");
 
@@ -1394,6 +1396,10 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	pci_set_master(pdev);
 
+	pci_read_config_word(pdev, PCI_COMMAND, &pci_cmd);
+	pci_cmd |= PCI_COMMAND_SERR;
+	pci_write_config_word(pdev, PCI_COMMAND, pci_cmd);
+	pci_enable_pcie_error_reporting(pdev);
 	if (hpriv->flags & AHCI_HFLAG_MULTI_MSI)
 		return ahci_host_activate(host, pdev->irq, n_msis);
 
