@@ -1467,13 +1467,17 @@ int cpsw_ale_set_ageout(struct cpsw_ale *ale, int ageout)
 void cpsw_ale_start(struct cpsw_ale *ale)
 {
 	u32 rev;
-	int ret;
+	int ret, i;
 
 	rev = __raw_readl(ale->params.ale_regs + ALE_IDVER);
 	dev_dbg(ale->params.dev, "initialized cpsw ale revision %d.%d\n",
 		ALE_VERSION_MAJOR(rev), ALE_VERSION_MINOR(rev));
 	cpsw_ale_control_set(ale, 0, ALE_ENABLE, 1);
 	cpsw_ale_control_set(ale, 0, ALE_CLEAR, 1);
+
+	/* disable forwarding on all ports */
+	for (i = 0; i < ale->params.ale_ports; ++i)
+	   cpsw_ale_control_set(ale, i, ALE_PORT_STATE, ALE_PORT_STATE_DISABLE);
 
 	ale->ale_control_attr = dev_attr_ale_control;
 	ret = device_create_file(ale->params.dev, &ale->ale_control_attr);
