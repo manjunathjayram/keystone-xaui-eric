@@ -14,6 +14,7 @@
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/io.h>
+#include <linux/of.h>
 #include <linux/err.h>
 #include <linux/delay.h>
 
@@ -66,6 +67,12 @@
 #define VAL_SH(v, s)		(v << s)
 
 #define PHY_A(serdes)		0
+
+struct hw_specific {
+	u32 cm;
+	u32 c1;
+	u32 c2;
+};
 
 struct serdes_cfg {
 	u32 ofs;
@@ -152,13 +159,6 @@ struct serdes_cfg cfg_phyb_10p3125g_comlane[] = {
 	{0x0b78, 0x00000c00, 0x0000ff00},
 	{0x0abc, 0xff000000, 0xff000000},
 	{0x0ac0, 0x0000008b, 0x000000ff},
-};
-
-struct serdes_cfg cfg_cm_c1_c2[] = {
-	{0x0208, 0x00000000, 0x00000f00},
-	{0x0208, 0x00000000, 0x0000001f},
-	{0x0204, 0x00000000, 0x00040000},
-	{0x0208, 0x000000a0, 0x000000e0},
 };
 
 static inline void keystone_xge_serdes_init(void __iomem *serdes_regs)
@@ -469,16 +469,23 @@ static int keystone_xge_serdes_check_lane(void __iomem *serdes_regs,
 }
 
 static inline void keystone_xge_serdes_setup_cm_c1_c2(void __iomem *serdes_regs,
-				int lane, int cm, int c1, int c2)
+				int lane, u32 cm, u32 c1, u32 c2)
 {
-	int i;
+	/* TX Control override enable txdrv_cm_in[3:0] */
+	reg_rmw(serdes_regs + (0x200 * (lane + 1)) + 0x8,
+		((cm & 0xf) << 8), (0xf << 8));
 
-	for (i = 0; i < ARRAY_SIZE(cfg_cm_c1_c2); i++) {
-		reg_rmw(serdes_regs +
-				cfg_cm_c1_c2[i].ofs + (0x200 * lane),
-			cfg_cm_c1_c2[i].val,
-			cfg_cm_c1_c2[i].mask);
-	}
+	/* TX Control override enable txdrv_c1_in[4:0] */
+	reg_rmw(serdes_regs + (0x200 * (lane + 1)) + 0x8,
+		((c1 & 0x1f) << 0), (0x1f << 0));
+
+	/* TX Control override enable txdrv_c2_in[3] */
+	reg_rmw(serdes_regs + (0x200 * (lane + 1)) + 0x4,
+		(((c2 >> 3) & 0x1) << 18), (0x1 << 18));
+
+	/* TX Control override enable txdrv_c2_in[2:0] */
+	reg_rmw(serdes_regs + (0x200 * (lane + 1)) + 0x8,
+		((c2 & 0x7) << 5), (0x7 << 5));
 }
 
 static inline void keystone_xge_reset_serdes(void __iomem *serdes_regs)
@@ -494,7 +501,8 @@ static inline void keystone_xge_reset_serdes(void __iomem *serdes_regs)
 }
 
 static int keystone_xge_serdes_config(void __iomem *serdes_regs,
-				      void __iomem *sw_regs)
+				      void __iomem *sw_regs,
+				      struct hw_specific *hw)
 {
 	u32 ret, i;
 
@@ -509,7 +517,8 @@ static int keystone_xge_serdes_config(void __iomem *serdes_regs,
 
 	/* This is EVM + RTM-BOC specific */
 	for (i = 0; i < 2; i++)
-		keystone_xge_serdes_setup_cm_c1_c2(serdes_regs, i, 0, 0, 5);
+		keystone_xge_serdes_setup_cm_c1_c2(serdes_regs, i,
+			hw->cm, hw->c1, hw->c2);
 
 	keystone_xge_serdes_pll_enable(serdes_regs);
 
@@ -528,7 +537,7 @@ static int keystone_xge_serdes_config(void __iomem *serdes_regs,
 	return ret;
 }
 
-static int keystone_xge_serdes_start(void)
+static int keystone_xge_serdes_start(struct hw_specific *hw)
 {
 	void __iomem *serdes_regs, *xge_sw_regs;
 	u32 val;
@@ -544,7 +553,7 @@ static int keystone_xge_serdes_start(void)
 		keystone_xge_reset_serdes(serdes_regs);
 	}
 
-	ret = keystone_xge_serdes_config(serdes_regs, xge_sw_regs);
+	ret = keystone_xge_serdes_config(serdes_regs, xge_sw_regs, hw);
 
 	iounmap(serdes_regs);
 	iounmap(xge_sw_regs);
@@ -553,15 +562,28 @@ static int keystone_xge_serdes_start(void)
 
 static int keystone_xge_serdes_configured;  /* FIXME */
 
-int xge_serdes_init_156p25Mhz(void)
+int xge_serdes_init_156p25Mhz(struct device_node *node)
 {
+	struct hw_specific hw;
+	u32 temp[3];
 	int ret;
 
 	/* Serdes should only be configured once */
 	if (keystone_xge_serdes_configured)
 		return 0;
 
-	ret = keystone_xge_serdes_start();
+	if (of_property_read_u32_array(node, "serdes_tx_ctrl_override",
+			(u32 *)&(temp[0]), 3)) {
+		temp[0] = 0;
+		temp[1] = 0;
+		temp[2] = 5;
+	}
+
+	hw.cm = temp[0];
+	hw.c1 = temp[1];
+	hw.c2 = temp[2];
+
+	ret = keystone_xge_serdes_start(&hw);
 	if (!ret)
 		keystone_xge_serdes_configured = 1;
 
