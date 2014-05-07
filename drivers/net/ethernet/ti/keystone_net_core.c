@@ -48,6 +48,12 @@ static inline int emac_arch_get_mac_addr(char *x,
 	addr1 = __raw_readl(efuse_mac + 4);
 	addr0 = __raw_readl(efuse_mac);
 
+	/* tmp: workaround for MAC ID regs swapping issue */
+	if (!(addr0 & 0x00ff0000)) {
+		addr0 = addr1;
+		addr1 = __raw_readl(efuse_mac);
+	}
+
 	x[0] = (addr1 & 0x0000ff00) >> 8;
 	x[1] = addr1 & 0x000000ff;
 	x[2] = (addr0 & 0xff000000) >> 24;
