@@ -527,6 +527,12 @@
 			label = "mpax";
 		};
 
+		uio_edma3: edma3 {
+			compatible = "ti,uio-module-drv";
+			mem = <0x02700000 0x000C0000>;
+			label = "edma3";
+		};
+
 		pci-controller@21800000 {
 			device_type = "pci";
 			#address-cells = <3>;
