@@ -3118,7 +3118,7 @@
 		timer15: timer@22f0000 {
 			compatible = "ti,keystone-timer";
 			reg = <0x022f0000 0x80>;
-			interrupts = <0 80 0xf01>;
+			interrupts = <0 110 0xf01>;
 			clocks = <&clktimer15>;
 		};
 
