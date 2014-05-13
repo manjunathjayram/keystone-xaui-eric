@@ -304,75 +304,6 @@ static int dbell_receive(struct mport_cdev_priv *priv, void __user *arg)
 	return ret;
 }
 
-#ifdef CONFIG_TI_KEYSTONE_RAPIDIO
-/*
- * dio_transfer() - Perform a DirectI/O transfer
- * @priv: driver private data
- * @arg:  DirectI/O transfer information
- */
-static int dio_transfer(struct mport_cdev_priv *priv, void __user *arg)
-{
-	struct mport_dev *md = priv->md;
-	struct rio_mport_dio_transfer dio_transfer;
-	int ret;
-	void *vaddr;
-
-	if (copy_from_user(&dio_transfer, arg,
-			   sizeof(struct rio_mport_dio_transfer)))
-		return -EFAULT;
-
-	if (!md->mport->ops->transfer)
-		return -EPROTONOSUPPORT;
-
-	if (dio_transfer.length >= RIO_MAX_DIO_CHUNK_SIZE)
-		return -EINVAL;
-
-	pr_debug(DRV_PREFIX "Perform DirectI/O %d to dest Id %d\n",
-		 dio_transfer.id, dio_transfer.mode);
-
-	/*
-	 * We use a copy there, zero-copy will be implemented when moving
-	 * to DMA engine interface.
-	 */
-	vaddr = kmalloc(dio_transfer.length, GFP_KERNEL);
-	if (!vaddr)
-		return -ENOMEM;
-
-	if ((dio_transfer.mode ==  RIO_DIO_MODE_WRITER)
-	    || (dio_transfer.mode ==  RIO_DIO_MODE_WRITE)
-	    || (dio_transfer.mode ==  RIO_DIO_MODE_SWRITE)) {
-		if (copy_from_user(vaddr,
-				   dio_transfer.src_addr,
-				   dio_transfer.length)) {
-			ret = -EFAULT;
-			goto end;
-		}
-	}
-
-	ret = md->mport->ops->transfer(md->mport,
-				       md->mport->id,
-				       dio_transfer.id,
-				       (u32) vaddr,
-				       (u32) dio_transfer.tgt_addr,
-				       (int) dio_transfer.length,
-				       (int) dio_transfer.mode);
-	if (ret < 0)
-		goto end;
-
-	if (dio_transfer.mode ==  RIO_DIO_MODE_READ) {
-		if (copy_to_user(dio_transfer.src_addr,
-				 vaddr,
-				 dio_transfer.length)) {
-			ret = -EFAULT;
-			goto end;
-		}
-	}
-end:
-	kfree(vaddr);
-	return ret;
-}
-#endif /* CONFIG_TI_KEYSTONE_RAPIDIO */
-
 /*
  * maint_lconfig_read() - Perform a local config space read transaction
  * @priv: driver private data
@@ -1146,11 +1077,6 @@ static long mport_cdev_ioctl(struct file *filp,
 	case RIO_MPORT_DBELL_RECEIVE:
 		err = dbell_receive(data, (void __user *)arg);
 		break;
-#ifdef CONFIG_TI_KEYSTONE_RAPIDIO
-	case RIO_MPORT_DIO_TRANSFER:
-		err = dio_transfer(data, (void __user *)arg);
-		break;
-#endif
 #ifdef CONFIG_RAPIDIO_DMA_ENGINE
 	case RIO_MPORT_DMA_GET_XFER_SIZE:
 		err = -EINVAL;
