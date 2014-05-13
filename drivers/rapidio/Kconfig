@@ -38,7 +38,7 @@ config RAPIDIO_DMA_ENGINE
 
 config RAPIDIO_DEV
 	bool "Enable RapidIO user-level interface for Direct I/O and doorbells"
-	depends on RAPIDIO
+	depends on RAPIDIO && RAPIDIO_DMA_ENGINE
 	default n
 	help
           Say y here if you want to export Direct I/O read/write and doorbells
