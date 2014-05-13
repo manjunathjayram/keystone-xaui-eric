@@ -25,16 +25,6 @@ struct rio_mport_dbell {
 	uint16_t num;
 };
 
-#ifdef CONFIG_TI_KEYSTONE_RAPIDIO
-struct rio_mport_dio_transfer {
-	uint16_t id;
-	uint64_t tgt_addr;      /* physical RapidIO address on 64 bits */
-	void __user *src_addr;  /* user virtual source address on 32 bits */
-	uint32_t length;
-	uint16_t mode;
-};
-#endif
-
 #ifdef CONFIG_RAPIDIO_DMA_ENGINE
 struct rio_mport_dma_transfer {
 	uint16_t id;
@@ -99,12 +89,6 @@ struct rio_mport_query_resp {
 	_IOW(RIO_MPORT_DIO_AND_DBELL_MAGIC, 1, struct rio_mport_dbell)
 #define RIO_MPORT_DBELL_RECEIVE		\
 	_IOWR(RIO_MPORT_DIO_AND_DBELL_MAGIC, 2, struct rio_mport_dbell)
-
-#ifdef CONFIG_TI_KEYSTONE_RAPIDIO
-#define RIO_MPORT_DIO_TRANSFER		\
-	_IOWR(RIO_MPORT_DIO_AND_DBELL_MAGIC, 3, struct rio_mport_dio_transfer)
-#endif
-
 #ifdef CONFIG_RAPIDIO_DMA_ENGINE
 #define RIO_MPORT_DMA_GET_XFER_SIZE	\
 	_IOR(RIO_MPORT_DIO_AND_DBELL_MAGIC, 4, uint32_t)
