@@ -669,13 +669,25 @@ static int do_dma_request(struct mport_cdev_priv *priv, struct sg_table *sgt,
 	status = dma_async_is_tx_complete(chan, cookie, NULL, NULL);
 
 	if (tmo == 0) {
+		/* Timeout on wait_for_completion occurred */
 		pr_err(DRV_PREFIX "%s: timed out waiting for DMA\n", __func__);
 		ret = -ETIMEDOUT;
+	} else if (tmo == -ERESTARTSYS) {
+		/* Wait_for_completion was interrupted by a signal but DMA may
+		   be still in progress */
+		pr_warn(DRV_PREFIX "%s: wait for DMA completion interrupted\n",
+			__func__);
+		ret = -EINTR;
 	} else if (status != DMA_SUCCESS) {
+		/* DMA transaction completion was signaled for failed data
+		   transfer */
 		pr_warn(DRV_PREFIX "%s: DMA completion with status %d\n",
 			__func__, status);
 		ret = -EIO;
 	}
+
+	if (ret)
+		dmaengine_terminate_all(chan);
 
 err_out:
 	dma_unmap_sg(chan->device->dev, sgt->sgl, sgt->nents, direction);
@@ -1075,8 +1087,12 @@ static int mport_cdev_release(struct inode *inode, struct file *filp)
 {
 	struct mport_cdev_priv *priv = filp->private_data;
 
-	if (priv->dmach)
+#ifdef CONFIG_RAPIDIO_DMA_ENGINE
+	if (priv->dmach) {
+		dmaengine_terminate_all(priv->dmach);
 		dma_release_channel(priv->dmach);
+	}
+#endif
 	kfree(priv);
 	return 0;
 }
