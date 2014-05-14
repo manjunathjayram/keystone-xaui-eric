@@ -756,7 +756,7 @@ static int rio_dma_transfer(struct mport_cdev_priv *priv, void __user *arg,
 		baddr = (dma_addr_t)dt.handle;
 
 		for (i = 0; i < MPORT_MAX_DMA_BUFS; i++)
-			if (md->mbuf->ib_base && baddr >= md->mbuf[i].ib_phys &&
+			if (md->mbuf[i].ib_base && baddr >= md->mbuf[i].ib_phys &&
 			    baddr < (md->mbuf[i].ib_phys + md->mbuf[i].ib_size))
 				break;
 
@@ -1173,7 +1173,7 @@ static int mport_cdev_mmap(struct file *filp, struct vm_area_struct *vma)
 	baddr = ((dma_addr_t)vma->vm_pgoff << PAGE_SHIFT);
 
 	for (i = 0; i < MPORT_MAX_DMA_BUFS; i++)
-		if (md->mbuf->ib_base && baddr >= md->mbuf[i].ib_phys &&
+		if (md->mbuf[i].ib_base && baddr >= md->mbuf[i].ib_phys &&
 		    baddr < (md->mbuf[i].ib_phys + md->mbuf[i].ib_size))
 			break;
 
