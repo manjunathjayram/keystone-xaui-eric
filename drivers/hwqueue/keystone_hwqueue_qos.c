@@ -938,6 +938,49 @@ static int khwq_qos_free_drop_queue(struct khwq_qos_info *info, int idx)
 	return khwq_qos_free(info, QOS_DROP_QUEUE_CFG, idx);
 }
 
+#define	is_even(x)	(((x) & 1) == 0)
+
+static inline int khwq_qos_alloc_sched_port(struct khwq_qos_info *info,
+			  int parent_port_idx, bool port_pair)
+{
+	struct khwq_pdsp_info *pdsp = info->pdsp;
+	struct khwq_qos_shadow *shadow = &info->shadows[QOS_SCHED_PORT_CFG];
+	int parent_idx, idx, idx_odd;
+
+	parent_idx = (parent_port_idx < 0) ? shadow->count :
+			khwq_qos_id_to_idx(parent_port_idx);
+
+	spin_lock_bh(&info->lock);
+
+	idx = find_last_bit(shadow->avail, parent_idx);
+	if (idx >= parent_idx)
+		goto fail;
+
+	if (port_pair) {
+		do {
+			idx_odd = idx;
+			idx = find_last_bit(shadow->avail, idx_odd);
+			if (idx >= idx_odd)
+				goto fail;
+		} while (!is_even(idx) || (idx_odd != (idx + 1)));
+		clear_bit(idx_odd, shadow->avail);
+	}
+
+	clear_bit(idx, shadow->avail);
+	spin_unlock_bh(&info->lock);
+	return khwq_qos_make_id(pdsp->id, idx);
+
+fail:
+	spin_unlock_bh(&info->lock);
+	dev_err(info->kdev->dev, "QoS port allocation failure\n");
+	return -ENOSPC;
+}
+
+static int khwq_qos_free_sched_port(struct khwq_qos_info *info, int idx)
+{
+	return khwq_qos_free(info, QOS_SCHED_PORT_CFG, idx);
+}
+
 static int khwq_qos_sched_port_enable(struct khwq_qos_shadow *shadow, int idx,
 				       bool enable)
 {
@@ -966,7 +1009,7 @@ static int khwq_qos_sched_port_enable(struct khwq_qos_shadow *shadow, int idx,
 				 shadow->name, idx);
 		}
 		if (!enable && !test_bit(idx, shadow->running)) {
-			dev_warn(kdev->dev, "forced disable on halted %s %d\n",
+			dev_dbg(kdev->dev, "forced disable on halted %s %d\n",
 				 shadow->name, idx);
 		}
 		command = (QOS_CMD_ENABLE_PORT			|
@@ -1715,7 +1758,7 @@ static int khwq_qos_tree_parse(struct khwq_qos_info *info,
 {
 	struct khwq_qos_tree_node *qnode;
 	struct khwq_device *kdev = info->kdev;
-	int length, i, error = 0, elements;
+	int length, i, error = 0, elements, num_children;
 	struct device_node *child;
 	bool has_children;
 	const char *name;
@@ -1990,7 +2033,9 @@ static int khwq_qos_tree_parse(struct khwq_qos_info *info,
 	else
 		ktree_add_child_last(&parent->node, &qnode->node);
 
+	num_children = 0;
 	for_each_child_of_node(node, child) {
+		++num_children;
 		error = khwq_qos_tree_parse(info, child, qnode);
 		if (error)
 			goto error_destroy;
@@ -2002,6 +2047,27 @@ static int khwq_qos_tree_parse(struct khwq_qos_info *info,
 					     info);
 		if (error)
 			goto error_destroy;
+	}
+
+	if (num_children <= info->inputs_per_port)
+		qnode->is_joint_port = false;
+	else {
+		if (num_children <= (info->inputs_per_port * 2)) {
+			qnode->is_joint_port = true;
+			dev_dbg(kdev->dev, "node %s needs a joint port\n",
+				 qnode->name);
+		} else {
+			dev_err(kdev->dev, "node %s has too many children\n",
+				qnode->name);
+			error = -EINVAL;
+			goto error_destroy;
+		}
+	}
+	if (qnode->is_joint_port && qnode->type == QOS_NODE_DEFAULT) {
+		dev_err(kdev->dev, "joint port node %s must be wrr/prio\n",
+			qnode->name);
+		error = -EINVAL;
+		goto error_destroy;
 	}
 
 	if (qnode->type == QOS_NODE_PRIO) {
@@ -2028,6 +2094,7 @@ static int khwq_qos_tree_map_nodes(struct ktree_node *node, void *arg)
 	struct khwq_qos_tree_node *parent = qnode->parent;
 	struct khwq_qos_info *info = arg;
 	struct khwq_device *kdev = info->kdev;
+	int max_inputs;
 
 	qnode->child_port_count	=  0;
 	qnode->child_count	=  0;
@@ -2061,7 +2128,11 @@ static int khwq_qos_tree_map_nodes(struct ktree_node *node, void *arg)
 	if (qnode->has_sched_port && parent)
 		parent->child_port_count ++;
 
-	if (qnode->child_count > info->inputs_per_port) {
+	max_inputs = (qnode->is_joint_port) ?
+			info->inputs_per_port * 2 :
+			info->inputs_per_port;
+
+	if (qnode->child_count > max_inputs) {
 		dev_err(kdev->dev, "too many input_queues (%d) to node %s\n",
 			qnode->child_count, qnode->name);
 		return -EOVERFLOW;
@@ -2078,7 +2149,16 @@ static int khwq_qos_tree_alloc_nodes(struct ktree_node *node, void *arg)
 	int error, i;
 
 	if (qnode->has_sched_port) {
-		error = khwq_qos_alloc_sched_port(info);
+		error = khwq_qos_alloc_sched_port(info, 
+				parent ? parent->sched_port_idx : -1,
+				qnode->is_joint_port);
+		if (error < 0) {
+			error = khwq_qos_alloc_sched_port(info, -1,
+					qnode->is_joint_port);
+			if (error >= 0)
+				dev_warn(kdev->dev, "node %s: non-optimal port"
+					 " allocation\n", qnode->name);
+		}
 		if (error < 0) {
 			dev_err(kdev->dev, "node %s: failed to alloc sched port [%d]\n",
 				qnode->name, error);
@@ -2086,17 +2166,24 @@ static int khwq_qos_tree_alloc_nodes(struct ktree_node *node, void *arg)
 		}
 		qnode->sched_port_idx = error;
 	} else
-		qnode->sched_port_idx = qnode->parent->sched_port_idx;
+		qnode->sched_port_idx = parent->sched_port_idx;
 
 
 	if (parent) {
 		if (WARN_ON(qnode->output_queue != -1))
 			return -EINVAL;
 		if (parent->type == QOS_NODE_DEFAULT)
-			qnode->parent_input = qnode->parent->parent_input;
-		error = khwq_qos_control_sched_port(info, QOS_CONTROL_GET_INPUT,
-						    parent->sched_port_idx,
-						    qnode->parent_input);
+			qnode->parent_input = parent->parent_input;
+		if (parent->is_joint_port && (qnode->parent_input >= info->inputs_per_port))
+			error = khwq_qos_control_sched_port(info,
+					QOS_CONTROL_GET_INPUT,
+					khwq_qos_id_odd(parent->sched_port_idx),
+					qnode->parent_input - info->inputs_per_port);
+		else
+			error = khwq_qos_control_sched_port(info,
+					QOS_CONTROL_GET_INPUT,
+					parent->sched_port_idx,
+					qnode->parent_input);
 		if (WARN_ON(error < 0))
 			return error;
 		qnode->output_queue = error;
@@ -2167,6 +2254,8 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 			 QOS_SCHED_FLAG_CONG_BYTES) : 0;
 	if (parent && (parent->acct == QOS_BYTE_ACCT))
 		val |= QOS_SCHED_FLAG_THROTL_BYTES;
+	if (qnode->is_joint_port)
+		val |= QOS_SCHED_FLAG_IS_JOINT;
 	error = khwq_qos_set_sched_unit_flags(info, idx, val, sync);
 	if (WARN_ON(error))
 		return error;
@@ -2213,7 +2302,7 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 		return error;
 
 	inputs = (qnode->type == QOS_NODE_DEFAULT) ? 1 : qnode->child_count;
-
+	
 	error = khwq_qos_set_sched_total_q_count(info, idx, inputs, sync);
 	if (WARN_ON(error))
 		return error;
@@ -2237,8 +2326,18 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 	}
 
 	for (i = 0; i < inputs; i++) {
+		int port, queue;
+
+		if (qnode->is_joint_port && (i >= info->inputs_per_port)) {
+			port = khwq_qos_id_odd(idx);
+			queue = i - info->inputs_per_port;
+		} else {
+			port = idx;
+			queue = i;
+		}
+
 		val = 0;
-		error = khwq_qos_set_sched_cong_thresh(info, idx, i, val, sync);
+		error = khwq_qos_set_sched_cong_thresh(info, port, queue, val, sync);
 		if (WARN_ON(error))
 			return error;
 
@@ -2256,11 +2355,12 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 			}
 			val = (u32)(tmp);
 
-			dev_dbg(kdev->dev, "node %d weight = %d, credits = %d\n",
-					i, qnode->child_weight[i], val);
+			dev_dbg(kdev->dev, "node %s input %d "
+				"weight = %d, credits = %d\n",
+				qnode->name, i, qnode->child_weight[i], val);
 		}
 
-		error = khwq_qos_set_sched_wrr_credit(info, idx, i, val, sync);
+		error = khwq_qos_set_sched_wrr_credit(info, port, queue, val, sync);
 		if (WARN_ON(error))
 			return error;
 	}
@@ -2279,6 +2379,49 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 			qnode->name);
 		return error;
 	}
+
+	/* If this is a Lite-Joint port pair, configure the Odd port here */
+	if (qnode->is_joint_port) {
+		int odd_idx = khwq_qos_id_odd(idx);
+		int odd_inputs = (inputs <= info->inputs_per_port) ? 0 :
+					(inputs - info->inputs_per_port);
+
+		error = khwq_qos_set_sched_unit_flags(info, odd_idx,
+					QOS_SCHED_FLAG_IS_JOINT, sync);
+		if (WARN_ON(error))
+			return error;
+
+		error = khwq_qos_set_sched_total_q_count(info, odd_idx,
+							 odd_inputs, sync);
+		if (WARN_ON(error))
+			return error;
+
+		val = (qnode->type == QOS_NODE_PRIO) ? odd_inputs : 0;
+		error = khwq_qos_set_sched_sp_q_count(info, odd_idx, val, sync);
+		if (WARN_ON(error))
+			return error;
+
+		val = (qnode->type == QOS_NODE_WRR) ? odd_inputs : 0;
+		error = khwq_qos_set_sched_wrr_q_count(info, odd_idx, val, sync);
+		if (WARN_ON(error))
+			return error;
+
+		error = khwq_qos_sync_sched_port(info, odd_idx);
+		if (error) {
+			dev_err(kdev->dev, "error writing sched config for %s\n",
+				qnode->name);
+			return error;
+		}
+
+		error = khwq_qos_control_sched_port(info, QOS_CONTROL_ENABLE,
+						    odd_idx, false);
+		if (error) {
+			dev_err(kdev->dev, "error disabling sched port for %s\n",
+				qnode->name);
+			return error;
+		}
+	}
+
 	return 0;
 }
 
@@ -2561,6 +2704,8 @@ static int khwq_qos_stop_sched_port_queues(struct khwq_qos_info *info)
 								&queues);
 			if (WARN_ON(error))
 				return error;
+			if (queues > info->inputs_per_port)
+				queues = info->inputs_per_port;
 
 			for (j = 0; j < queues; j++) {
 				error = khwq_qos_set_sched_cong_thresh(info,
