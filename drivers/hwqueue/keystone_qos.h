@@ -18,6 +18,7 @@
 #define __KEYSTONE_QOS_FW_H
 
 #define QOS_MAX_INPUTS			128
+#define	QOS_MAX_CHILDREN		8
 
 #define QOS_RETCODE_SUCCESS		1
 
@@ -49,6 +50,7 @@
 #define	QOS_SCHED_FLAG_CIR_BYTES	BIT(1)
 #define	QOS_SCHED_FLAG_CONG_BYTES	BIT(2)
 #define	QOS_SCHED_FLAG_THROTL_BYTES	BIT(3)
+#define	QOS_SCHED_FLAG_IS_JOINT		BIT(4)
 
 #define QOS_DEFAULT_OVERHEAD_BYTES	24
 
@@ -213,11 +215,12 @@ struct khwq_qos_tree_node {
 	int	 child_port_count;	/* children that need ports	*/
 	int	 child_count;		/* number of children		*/
 	int	 parent_input;		/* input number of parent	*/
-	u32	 child_weight[4];
+	u32	 child_weight[QOS_MAX_CHILDREN];
 	u32	 child_weight_sum;	/* sum of child weights		*/
 	bool	 is_drop_input;		/* indicates that child's output
 					   feeds to the drop sched	*/
 	bool	 has_sched_port;	/* does this port need a sched?	*/
+	bool	 is_joint_port;		/* Even/odd joint pair*/
 	int	 output_queue;		/* from DT or calculated	*/
 
 	/* allocated resources */
@@ -260,6 +263,9 @@ struct khwq_query_stats_regs {
 #define khwq_qos_make_id(pdsp, idx)	((pdsp) << 16 | (idx))
 #define khwq_qos_id_to_queue(info, idx)		\
 	((info)->drop_sched_queue_base + khwq_qos_id_to_idx(idx))
+
+#define	khwq_qos_id_even(idx)	((idx) & ~0x0001)
+#define	khwq_qos_id_odd(idx)	((idx) |  0x0001)
 
 int khwq_qos_alloc(struct khwq_qos_info *info, enum khwq_qos_shadow_type type);
 int khwq_qos_free(struct khwq_qos_info *info, enum khwq_qos_shadow_type type,
@@ -307,7 +313,6 @@ static inline int khwq_qos_free_##_field(struct khwq_qos_info *info,	       \
 
 DEFINE_ALLOC(QOS_DROP_CFG_PROF,	 drop_cfg);
 DEFINE_ALLOC(QOS_DROP_OUT_PROF,	 drop_out);
-DEFINE_ALLOC(QOS_SCHED_PORT_CFG, sched_port);
 
 #define DEFINE_FIELD_U32(_type, _field, _offset, _startbit, _nbits)	 \
 static inline int khwq_qos_get_##_field(struct khwq_qos_info *info,	 \
