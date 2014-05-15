@@ -17,6 +17,12 @@
 #ifndef __KEYSTONE_QOS_FW_H
 #define __KEYSTONE_QOS_FW_H
 
+/* These should be kernel-wide definitions, but they're not */
+#ifndef U32_MAX
+#define	U32_MAX	((u32)(~0U))
+#define	S32_MAX	((s32)(U32_MAX >> 1))
+#endif
+
 #define QOS_MAX_INPUTS			128
 #define	QOS_MAX_CHILDREN		8
 
