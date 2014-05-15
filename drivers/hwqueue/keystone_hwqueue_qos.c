@@ -1408,6 +1408,16 @@ static ssize_t qnode_weight_store(struct khwq_qos_tree_node *qnode,
 
 	idx = parent->sched_port_idx;
 	for (i = inputs - 1; i >= 0; --i) {
+		int port, queue;
+
+		if (parent->is_joint_port && (i >= info->inputs_per_port)) {
+			port = khwq_qos_id_odd(idx);
+			queue = i - info->inputs_per_port;
+		} else {
+			port = idx;
+			queue = i;
+		}
+
 		tmp = parent->child_weight[i];
 		tmp *= scale;
 
@@ -1420,7 +1430,7 @@ static ssize_t qnode_weight_store(struct khwq_qos_tree_node *qnode,
 		}
 		val = (u32)(tmp);
 
-		khwq_qos_set_sched_wrr_credit(info, idx, i, val, (i == 0));
+		khwq_qos_set_sched_wrr_credit(info, port, queue, val, (queue == 0));
 	}
 
 	return size;
