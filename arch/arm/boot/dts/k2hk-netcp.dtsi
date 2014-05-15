@@ -44,10 +44,10 @@ hwqueue0: hwqueue@2a40000 {
 		qpend-arm-hi {
 			values = <8704 32>;
 			interrupts = <0 48 0x104 0 49 0x204 0 50 0xf04 0 51 0xf04
-				      0 52 0xf04 0 53 0xf04 0 54 0xf04 0 55 0xf04
+				      0 52 0x404 0 53 0x404 0 54 0xf04 0 55 0xf04
 				      0 56 0xf04 0 57 0xf04 0 58 0xf04 0 59 0xf04
-				      0 60 0x104 0 61 0x204 0 62 0x404 0 63 0x804
-				      0 64 0x404 0 65 0x804 0 66 0xf04 0 59 0xf04
+				      0 60 0xf04 0 61 0xf04 0 62 0xf04 0 63 0xf04
+				      0 64 0xf04 0 65 0xf04 0 66 0xf04 0 67 0xf04
 				      0 68 0xf04 0 69 0xf04 0 70 0xf04 0 71 0xf04
 				      0 72 0xf04 0 73 0xf04 0 74 0xf04 0 75 0xf04
 				      0 76 0xf04 0 77 0xf04 0 78 0xf04 0 79 0xf04>;
@@ -286,7 +286,7 @@ padma: pktdma@2004000 {
 			label		= "netrx2";
 			pool		= "pool-net";
 			/* submit-queue   = <xx>; */
-			complete-queue = <8718>;
+			complete-queue = <8706>;
 			/* debug; */
 			/* channel = <0>; */
 			flow		= <24>;
@@ -296,11 +296,12 @@ padma: pktdma@2004000 {
 			label		= "netrx3";
 			pool		= "pool-net";
 			/* submit-queue   = <xx>; */
-			complete-queue = <8719>;
+			complete-queue = <8707>;
 			/* debug; */
 			/* channel = <0>; */
 			flow		= <25>;
 		};
+		/*
 		satx-0 {
 			transmit;
 			label		= "satx-0";
@@ -313,12 +314,13 @@ padma: pktdma@2004000 {
 			pool		= "pool-net";
 			submit-queue	= <646>;
 		};
+		*/
 		patx-pdsp0 {
 			transmit;
 			label		= "patx-pdsp0";
 			pool		= "pool-net";
 			submit-queue	= <640>;
-			complete-queue  = <8706>;
+			/* complete-queue  = <xx>; */
 			/* debug; */
 			/* channel = <xx>; */
 			/* priority = <1>; */
@@ -328,6 +330,7 @@ padma: pktdma@2004000 {
 			label		= "patx-pdsp5-0";
 			pool		= "pool-net";
 			submit-queue	= <645>;
+			complete-queue  = <8708>;
 			/* complete-queue = <xx>; */
 			/* debug; */
 			/* channel = <xx>; */
@@ -338,6 +341,7 @@ padma: pktdma@2004000 {
 			label		= "patx-pdsp5-1";
 			pool		= "pool-net";
 			submit-queue	= <645>;
+			complete-queue  = <8709>;
 			/* complete-queue = <xx>; */
 			/* debug; */
 			/* channel = <xx>; */
@@ -348,7 +352,7 @@ padma: pktdma@2004000 {
 			label		= "patx-pdsp5-2";
 			pool		= "pool-net";
 			submit-queue	= <645>;
-			complete-queue = <8720>;
+			complete-queue = <8710>;
 			/* debug; */
 			/* channel = <xx>; */
 			/* priority = <1>; */
@@ -358,7 +362,7 @@ padma: pktdma@2004000 {
 			label		= "patx-pdsp5-3";
 			pool		= "pool-net";
 			submit-queue	= <645>;
-			complete-queue = <8721>;
+			complete-queue = <8711>;
 			/* debug; */
 			/* channel = <xx>; */
 			/* priority = <1>; */
@@ -465,7 +469,7 @@ padma: pktdma@2004000 {
 			label		= "qos5";
 			pool		= "pool-net";
 			submit-queue	= <8077>;
-			complete-queue  = <8707>;
+			/* complete-queue = <xx>; */
 			/* debug; */
 			/* channel = <xx>; */
 			/* priority = <1>; */
@@ -525,7 +529,7 @@ padma: pktdma@2004000 {
 			label		= "qos11";
 			pool		= "pool-net";
 			submit-queue	= <6477>;
-			complete-queue  = <8708>;
+			/* complete-queue = <xx>; */
 			/* debug; */
 			/* channel = <xx>; */
 			/* priority = <1>; */
@@ -602,7 +606,7 @@ netcp: netcp@2090000 {
 		cpts_clock_mult = <5000>;
 		cpts_clock_shift = <10>;
 		cpts_clock_div = <3>;
-		/* force_no_hwtstamp; */
+		force_no_hwtstamp;
 
 		multi-interface;
 		num-interfaces = <4>;
@@ -663,8 +667,9 @@ netcp: netcp@2090000 {
 		rx_buffer_size		= <128>;
 		lut-ranges		= <0 43 56 63>;
 		/* mark_mcast_match	= <0x12345a00 0xffffff00>; */
-		/* force_no_hwtstamp; */
+		force_no_hwtstamp;
 	};
+	/*
 	sa: sa@20c0000 {
 		label = "keystone-sa";
 		multi-interface;
@@ -672,6 +677,8 @@ netcp: netcp@2090000 {
 		interface-1;
 		tx_queue_depth = <32>;
 	};
+	*/
+	/*
 	qos: qos@0 {
 		label = "keystone-qos";
 		multi-interface;
@@ -736,6 +743,6 @@ netcp: netcp@2090000 {
 				tx_queue_depth = <64>;
 			};
 		};
-	};
+	}; */
 };
 
