@@ -114,14 +114,14 @@
 /*
  * RIO error, reset and special event interrupt defines
  */
-#define KEYSTONE_RIO_PORT_ERROR_OUT_PKT_DROP		BIT(26)
-#define KEYSTONE_RIO_PORT_ERROR_OUT_FAILED		BIT(25)
-#define KEYSTONE_RIO_PORT_ERROR_OUT_DEGRADED		BIT(24)
-#define KEYSTONE_RIO_PORT_ERROR_OUT_RETRY		BIT(20)
-#define KEYSTONE_RIO_PORT_ERROR_OUT_ERROR		BIT(17)
-#define KEYSTONE_RIO_PORT_ERROR_IN_ERROR		BIT(9)
-#define KEYSTONE_RIO_PORT_ERROR_PW_PENDING		BIT(4)
-#define KEYSTONE_RIO_PORT_ERROR_PORT_ERR		BIT(2)
+#define KEYSTONE_RIO_PORT_ERROR_OUT_PKT_DROP   BIT(26)
+#define KEYSTONE_RIO_PORT_ERROR_OUT_FAILED     BIT(25)
+#define KEYSTONE_RIO_PORT_ERROR_OUT_DEGRADED   BIT(24)
+#define KEYSTONE_RIO_PORT_ERROR_OUT_RETRY      BIT(20)
+#define KEYSTONE_RIO_PORT_ERROR_OUT_ERROR      BIT(17)
+#define KEYSTONE_RIO_PORT_ERROR_IN_ERROR       BIT(9)
+#define KEYSTONE_RIO_PORT_ERROR_PW_PENDING     BIT(4)
+#define KEYSTONE_RIO_PORT_ERROR_PORT_ERR       BIT(2)
 
 #define KEYSTONE_RIO_PORT_ERROR_MASK			\
 	(KEYSTONE_RIO_PORT_ERROR_OUT_PKT_DROP	|	\
@@ -138,6 +138,22 @@
 	 RIO_PORT_N_ERR_STS_PW_INP_ES	|	\
 	 RIO_PORT_N_ERR_STS_PW_PEND	|	\
 	 RIO_PORT_N_ERR_STS_PORT_ERR)
+
+/* RIO PLM port event status defines */
+#define KEYSTONE_RIO_PORT_PLM_STATUS_MAX_DENIAL        BIT(31)
+#define KEYSTONE_RIO_PORT_PLM_STATUS_LINK_INIT         BIT(28)
+#define KEYSTONE_RIO_PORT_PLM_STATUS_DLT               BIT(27)
+#define KEYSTONE_RIO_PORT_PLM_STATUS_PORT_ERR          BIT(26)
+#define KEYSTONE_RIO_PORT_PLM_STATUS_OUTPUT_FAIL       BIT(25)
+#define KEYSTONE_RIO_PORT_PLM_STATUS_OUTPUT_DEGR       BIT(24)
+#define KEYSTONE_RIO_PORT_PLM_STATUS_RST_REQ           BIT(16)
+#define KEYSTONE_RIO_PORT_PLM_STATUS_MECS              BIT(12)
+
+#define KEYSTONE_RIO_PORT_PLM_STATUS_ERRORS			\
+	(KEYSTONE_RIO_PORT_PLM_STATUS_MAX_DENIAL      |		\
+	 KEYSTONE_RIO_PORT_PLM_STATUS_PORT_ERR        |		\
+	 KEYSTONE_RIO_PORT_PLM_STATUS_OUTPUT_FAIL     |		\
+	 KEYSTONE_RIO_PORT_PLM_STATUS_OUTPUT_DEGR)
 
 #define KEYSTONE_RIO_SP_HDR_NEXT_BLK_PTR	0x1000
 #define KEYSTONE_RIO_SP_HDR_EP_REC_ID		0x0002
@@ -252,23 +268,12 @@ struct keystone_routing_config {
  * Per board RIO devices controller configuration
  */
 struct keystone_rio_board_controller_info {
-	u32		rio_regs_base;
-	u32		rio_regs_size;
-
-	u32		boot_cfg_regs_base;
-	u32		boot_cfg_regs_size;
-
-	u32		serdes_cfg_regs_base;
-	u32		serdes_cfg_regs_size;
-
 	u32             ports;  /* bitfield of port(s) to probe on this controller */
-	u32             mode;   /* hw mode (default serdes cfg). idx into serdes_config[] */
 	u32             id;     /* host id */
 	u32             size;   /* RapidIO common transport system size.
 		                 * 0 - Small size. 256 devices.
 		                 * 1 - Large size, 65536 devices. */
 	u16             keystone2_serdes;
-	u16             serdes_config_num;
 	u32             serdes_baudrate;
 	u32             path_mode;
 	u32             port_register_timeout;
@@ -278,7 +283,7 @@ struct keystone_rio_board_controller_info {
 	int             rio_irq;
       	int             lsu_irq;
 
-	struct keystone_serdes_config serdes_config[4];
+	struct keystone_serdes_config serdes_config;
 	struct keystone_routing_config routing_config[8];
 };
 
@@ -437,8 +442,7 @@ struct keystone_rio_data {
 
 	u32			ports_registering;
 	u32			port_chk_cnt;
-	struct work_struct	port_chk_task;
-	struct timer_list	timer;
+	struct delayed_work     port_chk_task;
 	struct tasklet_struct	task;
 
 	unsigned long		rxu_map_bitmap[2];
@@ -458,10 +462,13 @@ struct keystone_rio_data {
 
 	struct keystone_rio_rx_chan_info rx_channels[KEYSTONE_RIO_MAX_MBOX];
 
+	struct keystone_rio_regs __iomem         	*regs;
 	u32 __iomem					*jtagid_reg;
 	u32 __iomem					*serdes_sts_reg;
-	struct keystone_srio_serdes_regs __iomem	*serdes_regs;
-	struct keystone_rio_regs	 __iomem	*regs;
+	union {
+		struct keystone_srio_serdes_regs __iomem  *serdes_regs;
+		struct keystone2_srio_serdes_regs __iomem *k2_serdes_regs;
+	};
 
 	struct keystone_rio_car_csr_regs __iomem	*car_csr_regs;
 	struct keystone_rio_serial_port_regs __iomem	*serial_port_regs;
@@ -473,7 +480,6 @@ struct keystone_rio_data {
 	struct keystone_rio_port_write_regs __iomem	*port_write_regs;
 	struct keystone_rio_link_layer_regs __iomem	*link_regs;
 	struct keystone_rio_fabric_regs __iomem		*fabric_regs;
-	u32						 car_csr_regs_base;
 
 	struct keystone_rio_board_controller_info	 board_rio_cfg;
 };
@@ -494,6 +500,62 @@ struct keystone_srio_serdes_regs {
 		u32	rx;
 		u32	tx;
 	} channel[4];
+};
+
+/* Keystone2 SerDes registers 0000 - 1fff */
+struct keystone2_srio_serdes_regs {
+	u32 __cmu0_rsvd0[2];		/* 0000 - 0004 */
+	u32	cmu_008;				/* 0008 */
+	u32 __cmu0_rsvd1[56];		/* 000c - 00e8 */
+	u32 cmu_0EC;				/* 00ec */
+	u32 __cmu0_rsvd2[3];		/* 00f0 - 00f8 */
+	u32 cmu_0FC;				/* 00fc */
+	u32 __cmu0_rsvd3[64];		/* 0100 - 01fc */
+
+	struct {					/* 0200 * lane_no */
+		u32 lane_000;			/* 0000 */
+		u32 lane_004;			/* 0004 */
+		u32 lane_008;			/* 0008 */
+		u32 __lane_rsvd0[9];	/* 000c - 002c */
+		u32 lane_030;			/* 0030 */
+		u32 lane_034;			/* 0034 */
+		u32 lane_038;			/* 0038 */
+		u32 lane_03C;			/* 003c */
+		u32 lane_040;			/* 0040 */
+		u32 lane_044;			/* 0044 */
+		u32 lane_048;			/* 0048 */
+		u32 __lane_rsvd1[11];	/* 004c - 0074 */
+		u32 lane_078;			/* 0078 */
+		u32 __lane_rsvd2[2];	/* 007c - 0080 */
+		u32 lane_084;			/* 0084 */
+		u32 __lane_rsvd3;		/* 0088 */
+		u32 lane_08C;			/* 008c */
+		u32 __lane_rsvd4[4];	/* 0090 - 009c */
+		u32 lane_0A0;			/* 00a0 */
+		u32 __lane_rsvd5;		/* 00a4 */
+		u32 lane_0A8;			/* 00a8 */
+		u32 __lane_rsvd6[85];	/* 00ac - 01fc */
+	} lane[4];
+
+	u32 comlane_000;			/* 0a00 */
+	u32 __comlane_rsvd0[4];		/* 0a04 - 0a10 */
+	u32 comlane_014;			/* 0a14 */
+	u32 __comlane_rsvd1[27];	/* 0a18 - 0a80 */
+	u32 comlane_084;			/* 0a84 */
+	u32 __comlane_rsvd2;		/* 0a88 */
+	u32 comlane_08C;			/* 0a8c */
+	u32 comlane_090;			/* 0a90 */
+	u32 __comlane_rsvd3[89];	/* 0a94 - 0bf4 */
+	u32 comlane_1F8;			/* 0bf8 */
+	u32 __comlane_rsvd4[1265];	/* 0bfc - 1fbc */
+
+	u32 __wiz_rsvd0[8];			/* 1fc0 - 1fdc */
+	struct {
+		u32 ctl_sts;			/* 1fe0 - 1fec */
+	} wiz_lane[4];
+	u32 __wiz_rsvd1;			/* 1ff0 */
+	u32 wiz_pll_ctrl;			/* 1ff4 */
+	u32 __wiz_rsvd2[2];			/* 1ff8 - 1ffc */
 };
 
 /* RIO Registers  0000 - 2fff */
