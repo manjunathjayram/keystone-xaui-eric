@@ -1464,6 +1464,8 @@ static int qnode_output_rate_store_child(struct ktree_node *child, void *arg)
 
 	val = parent->output_rate;
 	val = (val + info->ticks_per_sec - 1) / info->ticks_per_sec;
+	if (val != 0)
+		++val;
 	khwq_qos_set_sched_out_throttle(info, idx, val, true);
 
 	return 0;
@@ -2301,6 +2303,8 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 
 	val = parent ? parent->output_rate : 0;
 	val = (val + info->ticks_per_sec - 1) / info->ticks_per_sec;
+	if (val != 0)
+		++val;
 	error = khwq_qos_set_sched_out_throttle(info, idx, val, sync);
 	if (WARN_ON(error))
 		return error;
