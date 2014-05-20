@@ -663,7 +663,7 @@ static int khwq_setup_link_ram(struct khwq_device *kdev)
 		dev_dbg(kdev->dev, "linkram0: phys:%x, virt:%p, size:%x\n",
 			block->phys, block->virt, block->size);
 		__raw_writel(block->phys, &qmgr->reg_config->link_ram_base0);
-		__raw_writel(block->size, &qmgr->reg_config->link_ram_size0);
+		__raw_writel(block->size - 1, &qmgr->reg_config->link_ram_size0);
 
 		block++;
 		if (!block->size)
