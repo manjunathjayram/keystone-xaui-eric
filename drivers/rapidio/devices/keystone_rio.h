@@ -270,6 +270,7 @@ struct keystone_routing_config {
 struct keystone_rio_board_controller_info {
 	u32             ports;  /* bitfield of port(s) to probe on this controller */
 	u32             ports_remote[KEYSTONE_RIO_MAX_PORT]; /* remote link partner port numbers */
+	u32		lanes;	/* used SerDes lanes */
 	u32             id;     /* host id */
 	u32             size;   /* RapidIO common transport system size.
 		                 * 0 - Small size. 256 devices.
@@ -444,6 +445,8 @@ struct keystone_rio_data {
 	u32                     pe_ports;
 	u32                     pe_cnt;
 	struct delayed_work     pe_work;
+
+	struct work_struct      reset_work;
 
 	u32			ports_registering;
 	u32			port_chk_cnt;
