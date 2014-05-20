@@ -80,11 +80,8 @@ static irqreturn_t lsu_interrupt_handler(int irq, void *data)
 
 static void special_interrupt_handler(int ics, struct keystone_rio_data *krio_priv)
 {
-	u32 port;
-	u32 error;
-
 	/* Acknowledge the interrupt */
-	__raw_writel(1 << ics, &(krio_priv->regs->err_rst_evnt_int_clear));
+	__raw_writel(BIT(ics), &krio_priv->regs->err_rst_evnt_int_clear);
 
 	dev_dbg(krio_priv->dev, "ics = %d\n", ics);
 
@@ -108,18 +105,15 @@ static void special_interrupt_handler(int ics, struct keystone_rio_data *krio_pr
 	case KEYSTONE_RIO_PORT2_ERROR_INT:
 	case KEYSTONE_RIO_PORT3_ERROR_INT:
 		/* Port error */
-		port  = (ics - KEYSTONE_RIO_PORT0_ERROR_INT);
-		error = __raw_readl(&(krio_priv->serial_port_regs->sp[port].err_stat));
 
-		dev_dbg(krio_priv->dev, "port = %d, error = 0x%x\n",
-			port, error);
+		/* Add port to failed ports and schedule immediate recovery */
+		krio_priv->pe_cnt =
+			krio_priv->board_rio_cfg.port_register_timeout /
+			(KEYSTONE_RIO_REGISTER_DELAY / HZ);
+		krio_priv->pe_ports |= BIT(ics - KEYSTONE_RIO_PORT0_ERROR_INT);
 
-#if (0)
-		/* acknowledge error on this port */
-		__raw_writel(error & ~KEYSTONE_RIO_PORT_ERROR_MASK,
-			     &(krio_priv->serial_port_regs->sp[port].err_stat));
-#endif
-		break;
+		schedule_delayed_work(&krio_priv->pe_work, 0);
+                break;
 
 	case KEYSTONE_RIO_RESET_INT:
 		/* Device reset interrupt on any port */
@@ -1416,75 +1410,194 @@ static int keystone_rio_test_link(u8 port, struct keystone_rio_data *krio_priv)
 	return res;
 }
 
-static int keystone_rio_port_error_recovery(int port, struct keystone_rio_data *krio_priv)
+static int keystone_rio_port_error_recovery(u32 port, struct keystone_rio_data *krio_priv)
 {
-	int res = 0;
-	u32 err_stat, err_det;
+	int res;
+	u32 err_stat;
+	u32 err_det;
+	u32 plm_status;
+	u32 r_port = krio_priv->board_rio_cfg.ports_remote[port];
+	int i;
 
-	if (port >= KEYSTONE_RIO_MAX_PORT)
-		return -EINVAL;
+	if (unlikely(port >= KEYSTONE_RIO_MAX_PORT))
+                return -EINVAL;
 
-	err_stat = __raw_readl(&(krio_priv->serial_port_regs->sp[port].err_stat));
-	dev_dbg(krio_priv->dev, "port = %d, err_stat = 0x%x\n", port, err_stat);
+	err_stat   = __raw_readl(&krio_priv->serial_port_regs->sp[port].err_stat);
+	err_det    = __raw_readl(&krio_priv->err_mgmt_regs->sp_err[port].det);
+	plm_status = __raw_readl(&krio_priv->phy_regs->phy_sp[port].status);
+	dev_dbg(krio_priv->dev,
+		"port %d: err_stat = 0x%08x, err_det = 0x%08x, plm_status = 0x%08x\n",
+		port, err_stat, err_det, plm_status);
 
-	err_det = __raw_readl(&(krio_priv->err_mgmt_regs->sp_err[port].det));
-	dev_dbg(krio_priv->dev, "port = %d, err_det = 0x%x\n", port, err_det);
+	/* Acknowledge errors on this port */
+	__raw_writel(err_stat & KEYSTONE_RIO_PORT_ERROR_MASK,
+		     &krio_priv->serial_port_regs->sp[port].err_stat);
+	__raw_writel(0, &krio_priv->err_mgmt_regs->sp_err[port].det);
+	__raw_writel(plm_status & KEYSTONE_RIO_PORT_PLM_STATUS_ERRORS,
+		     &krio_priv->phy_regs->phy_sp[port].status);
 
-	if ((err_stat & RIO_PORT_N_ERR_STS_PORT_OK) == 0)
-		return -EINVAL;
+	if (unlikely(!(err_stat & RIO_PORT_N_ERR_STS_PORT_OK)))
+                return -EINVAL;
 
-	/* Handle Output/Input Error-stopped */
-	if (err_stat & (RIO_PORT_N_ERR_STS_PW_OUT_ES | RIO_PORT_N_ERR_STS_PW_INP_ES)) {
-		u32 lm_resp, ackid_stat, ackid;
+	if (err_stat & RIO_PORT_N_ERR_STS_PW_OUT_ES) {
+		u32 lm_resp;
+		u32 ackid_stat;
+		u32 l_ackid;
+		u32 r_ackid;
 
-		/* Clear valid bit in maintenance response register */
-		__raw_readl(&(krio_priv->serial_port_regs->sp[port].link_maint_resp));
+		dev_dbg(krio_priv->dev,
+		       "port %d: Output Error-Stopped recovery\n", port);
 
-		/*
-		 * Send both link request and PNA control symbols
-		 * (this will clear error states)
-		 */
-		__raw_writel(0x2003f044, &krio_priv->phy_regs->phy_sp[port].long_cs_tx1);
+                /*
+		 * Clear valid bit in maintenance response register.
+		 * Send both Input-Status Link-Request and PNA control symbols and
+		 * wait for valid maintenance response
+                 */
+		__raw_readl(&krio_priv->serial_port_regs->sp[port].link_maint_resp);
+		__raw_writel(0x2003f044,
+			     &krio_priv->phy_regs->phy_sp[port].long_cs_tx1);
+		i = 0;
+                do {
+			if (++i > KEYSTONE_RIO_TIMEOUT_CNT) {
+				dev_dbg(krio_priv->dev,
+					"port %d: Input-Status response timeout\n", port);
+				goto oes_rd_err;
+			}
 
-		/* Wait for valid maintenance response */
-		do {
-			ndelay(KEYSTONE_RIO_TIMEOUT_NSEC);
-			lm_resp = __raw_readl(&(krio_priv->serial_port_regs->sp[port].link_maint_resp));
-		} while (0 == (lm_resp & RIO_PORT_N_MNT_RSP_RVAL));
+                        ndelay(KEYSTONE_RIO_TIMEOUT_NSEC);
+			lm_resp = __raw_readl(
+				&krio_priv->serial_port_regs->sp[port].link_maint_resp);
+		} while (!(lm_resp & RIO_PORT_N_MNT_RSP_RVAL));
 
-		/*
-		 * Set outbound ackID to the value expected by link partner sent in
-		 * link maintenance response. Clear outstanding ackID if outstanding
-		 * unacknowledged packets shall not be retransmitted.
-		 */
-		ackid = (lm_resp & 0x03e0) >> 5;
-		__raw_writel(ackid | BIT(31),
-			     &(krio_priv->serial_port_regs->sp[port].ackid_stat));
+		dev_dbg(krio_priv->dev,
+			"port %d: Input-Status response = 0x%08x\n", port, lm_resp);
 
-		/*
-		 * Set link partner inbound ackID to outbound ackID + 1
-		 * Set link partner outbound ackID to inbound ackID
-		 */
-		ackid_stat = __raw_readl(&(krio_priv->serial_port_regs->sp[port].ackid_stat));
+		/* Set outbound ackID to the value expected by link partner */
+		ackid_stat = __raw_readl(
+			&krio_priv->serial_port_regs->sp[port].ackid_stat);
 
-		/*
+		dev_dbg(krio_priv->dev,
+			"port %d: ackid_stat = 0x%08x\n", port, ackid_stat);
+
+		l_ackid = (ackid_stat & RIO_PORT_N_ACK_INBOUND) >> 24;
+		r_ackid = (lm_resp & RIO_PORT_N_MNT_RSP_ASTAT) >> 5;
+
+		__raw_writel((l_ackid << 24) | r_ackid,
+			     &krio_priv->serial_port_regs->sp[port].ackid_stat);
+
+		udelay(50);
+
+                /*
 		 * Reread outbound ackID as it may have changed as a result of
-		 * outstanding unacknowledged packets retransmission.
-		 * This may be ommited if clearing of outstanding ackID is
-		 * performed earlier.
-		 */
-		ackid = (((ackid + 1) & 0x1f) << 24)
-			| ((ackid_stat & 0x1f000000) >> 24);
+		 * outstanding unacknowledged packets retransmission
+                 */
+		ackid_stat = __raw_readl(
+			&krio_priv->serial_port_regs->sp[port].ackid_stat);
 
-		res = keystone_rio_maint_write(krio_priv, port, 0xffff,
+		dev_dbg(krio_priv->dev,
+			"port %d: ackid_stat = 0x%08x\n", port, ackid_stat);
+
+		r_ackid = ackid_stat & RIO_PORT_N_ACK_OUTBOUND;
+
+                /*
+		 * Set link partner inbound ackID to outbound ackID + 1.
+		 * Set link partner outbound and outstanding ackID to inbound ackID.
+                 */
+		res = keystone_rio_maint_write(krio_priv,
+					       port,
+					       0xffff,
 					       krio_priv->board_rio_cfg.size,
-					       0, 0x100 + RIO_PORT_N_ACK_STS_CSR(port),
-					       4, ackid);
-		if (res < 0) {
-			dev_err(krio_priv->dev, "failed to align ackIDs with link partner\n");
+					       0,
+					       0x100 + RIO_PORT_N_ACK_STS_CSR(r_port),
+					       sizeof(u32),
+					       ((++r_ackid << 24) & RIO_PORT_N_ACK_INBOUND) |
+					       (l_ackid << 8) | l_ackid);
+
+               if (res < 0) {
+                       dev_dbg(krio_priv->dev,
+                               "port %d: failed to align ackIDs with link partner port %d\n",
+                               port, r_port);
+               }
+
+oes_rd_err:
+               err_stat = __raw_readl(&krio_priv->serial_port_regs->sp[port].err_stat);
+               err_det = __raw_readl(&krio_priv->err_mgmt_regs->sp_err[port].det);
+               plm_status = __raw_readl(&krio_priv->phy_regs->phy_sp[port].status);
+
+               dev_dbg(krio_priv->dev,
+                       "port %d: err_stat = 0x%08x, err_det = 0x%08x, plm_status = 0x%08x\n",
+                       port, err_stat, err_det, plm_status);
+	}
+
+	if (err_stat & RIO_PORT_N_ERR_STS_PW_INP_ES) {
+		dev_dbg(krio_priv->dev,
+			"port %d: Input Error-Stopped recovery\n", port);
+
+		res = keystone_rio_maint_write(krio_priv,
+					       port,
+					       0xffff,
+					       krio_priv->board_rio_cfg.size,
+					       0,
+					       0x100 + RIO_PORT_N_MNT_REQ_CSR(r_port),
+					       sizeof(u32),
+					       RIO_MNT_REQ_CMD_IS);
+
+                if (res < 0) {
+                        dev_err(krio_priv->dev,
+                               "port %d: failed to issue Input-Status request from link partner port %d\n",
+                                port, r_port);
+                }
+
+		udelay(50);
+
+		err_stat = __raw_readl(&krio_priv->serial_port_regs->sp[port].err_stat);
+		err_det = __raw_readl(&krio_priv->err_mgmt_regs->sp_err[port].det);
+		plm_status = __raw_readl(&krio_priv->phy_regs->phy_sp[port].status);
+
+		dev_dbg(krio_priv->dev,
+			"port %d: err_stat = 0x%08x, err_det = 0x%08x, plm_status = 0x%08x\n",
+			port, err_stat, err_det, plm_status);
+        }
+
+	return err_stat & KEYSTONE_RIO_PORT_ERRORS;
+}
+
+static void keystone_rio_pe_dpc(struct work_struct *work)
+{
+	struct keystone_rio_data *krio_priv = container_of(
+		to_delayed_work(work), struct keystone_rio_data, pe_work);
+	u32 port;
+
+	dev_dbg(krio_priv->dev, "errors on ports: 0x%x\n", krio_priv->pe_ports);
+
+	for (port = 0; port < KEYSTONE_RIO_MAX_PORT; port++) {
+		if (test_and_clear_bit(port, (void*)&krio_priv->pe_ports)) {
+
+			/*  Recover from port error state */
+			if (keystone_rio_port_error_recovery(port, krio_priv)) {
+
+				/* If error recovery failed schedule another one if there is time left */
+				if (krio_priv->pe_cnt-- > 1) {
+					krio_priv->pe_ports |= BIT(port);
+					schedule_delayed_work(&krio_priv->pe_work,
+							      KEYSTONE_RIO_REGISTER_DELAY);
+					continue;
+				} else {
+					dev_err(krio_priv->dev,
+						"port %d: failed to recover from errors\n",
+						port);
+					continue;
+				}
+			}
+
+			/* Perform test read on successful recovery */
+			if (keystone_rio_test_link(port, krio_priv)) {
+				dev_err(krio_priv->dev,
+					"port %d: link test failed after error recovery\n",
+					port);
+			}
 		}
 	}
-	return res;
 }
 
 /**
@@ -1510,12 +1623,6 @@ static int keystone_rio_port_status(int port, struct keystone_rio_data *krio_pri
 	}
 
 	if ((value & RIO_PORT_N_ERR_STS_PORT_OK) != 0) {
-		if (value & KEYSTONE_RIO_PORT_ERRORS) {
-			dev_info(krio_priv->dev,
-				 "performing error recovery on port %d\n", port);
-			keystone_rio_port_error_recovery(port, krio_priv);
-		}
-
 		res = keystone_rio_test_link(port, krio_priv);
 		if (res != 0) {
 			dev_err(krio_priv->dev,
@@ -2959,6 +3066,15 @@ static int keystone_rio_get_controller_defaults(struct device_node *node,
 		goto error;
 	}
 
+	if (of_property_read_u32_array(node, "ports_remote",
+				       c->ports_remote, KEYSTONE_RIO_MAX_PORT)) {
+		/* Assume by default that remote ports are same as local ports */
+		for (i = 0; i < KEYSTONE_RIO_MAX_PORT; i++)
+			c->ports_remote[i] = i;
+
+		dev_warn(krio_priv->dev, "missing \"remote_ports\" parameter\n");
+	}
+
 	/* SerDes config */
 	if (!of_find_property(node, "keystone2-serdes", NULL)) {
 		/*
@@ -3073,8 +3189,8 @@ static int keystone_rio_get_controller_defaults(struct device_node *node,
 
 	if (krio_priv->num_mboxes > KEYSTONE_RIO_MAX_MBOX) {
 		dev_warn(krio_priv->dev,
-			"wrong \"num_mboxes\" parameter value %d, set to %d\n",
-			krio_priv->num_mboxes, KEYSTONE_RIO_MAX_MBOX);
+			 "wrong \"num_mboxes\" parameter value %d, set to %d\n",
+			 krio_priv->num_mboxes, KEYSTONE_RIO_MAX_MBOX);
 		krio_priv->num_mboxes = KEYSTONE_RIO_MAX_MBOX;
 	}
 
@@ -3154,12 +3270,6 @@ static int keystone_rio_port_chk(struct keystone_rio_data *krio_priv)
 				return -1;
 			}
 
-			/* Link is up, clear all errors */
-			__raw_writel(0x0, &krio_priv->err_mgmt_regs->err_det);
-			__raw_writel(0x0, &(krio_priv->err_mgmt_regs->sp_err[port].det));
-			__raw_writel(KEYSTONE_RIO_PORT_ERROR_MASK,
-				     &(krio_priv->serial_port_regs->sp[port].err_stat));
-
 			/* Update routing after discovery/enumeration with new dev id */
 			if (krio_priv->board_rio_cfg.pkt_forwarding)
 				keystone_rio_port_set_routing(port, krio_priv);
@@ -3179,8 +3289,7 @@ static int keystone_rio_port_chk(struct keystone_rio_data *krio_priv)
 static void keystone_rio_port_chk_task(struct work_struct *work)
 {
 	struct keystone_rio_data *krio_priv = container_of(
-		to_delayed_work(work),
-		struct keystone_rio_data, port_chk_task);
+		to_delayed_work(work), struct keystone_rio_data, port_chk_task);
 	int res;
 
 	res = keystone_rio_port_chk(krio_priv);
@@ -3352,6 +3461,8 @@ static int __init keystone_rio_probe(struct platform_device *pdev)
 	for (i = 0; i < KEYSTONE_RIO_LSU_NUM; i++)
 		INIT_LIST_HEAD(&krio_priv->dma_channels[i]);
 #endif
+
+	INIT_DELAYED_WORK(&krio_priv->pe_work, keystone_rio_pe_dpc);
 
 	/* Enable sRIO clock */
 	krio_priv->clk = clk_get(&pdev->dev, "clk_srio");
