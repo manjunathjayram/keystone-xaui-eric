@@ -269,6 +269,7 @@ struct keystone_routing_config {
  */
 struct keystone_rio_board_controller_info {
 	u32             ports;  /* bitfield of port(s) to probe on this controller */
+	u32             ports_remote[KEYSTONE_RIO_MAX_PORT]; /* remote link partner port numbers */
 	u32             id;     /* host id */
 	u32             size;   /* RapidIO common transport system size.
 		                 * 0 - Small size. 256 devices.
@@ -440,9 +441,14 @@ struct keystone_rio_data {
 	struct kfifo		pw_fifo;
 	spinlock_t		pw_fifo_lock;
 
+	u32                     pe_ports;
+	u32                     pe_cnt;
+	struct delayed_work     pe_work;
+
 	u32			ports_registering;
 	u32			port_chk_cnt;
 	struct delayed_work     port_chk_task;
+
 	struct tasklet_struct	task;
 
 	unsigned long		rxu_map_bitmap[2];
