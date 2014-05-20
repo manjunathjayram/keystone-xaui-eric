@@ -38,6 +38,9 @@
 
 #define DRIVER_VER "v1.3"
 
+static int keystone_rio_setup_controller(struct keystone_rio_data *krio_priv);
+static void keystone_rio_shutdown_controller(struct keystone_rio_data *krio_priv);
+static void keystone_rio_serdes_lane_disable(u32 lane, struct keystone_rio_data *krio_priv);
 static void dbell_handler(struct keystone_rio_data *krio_priv);
 static void keystone_rio_port_write_handler(struct keystone_rio_data *krio_priv);
 
@@ -80,6 +83,8 @@ static irqreturn_t lsu_interrupt_handler(int irq, void *data)
 
 static void special_interrupt_handler(int ics, struct keystone_rio_data *krio_priv)
 {
+	u32 lanes;
+
 	/* Acknowledge the interrupt */
 	__raw_writel(BIT(ics), &krio_priv->regs->err_rst_evnt_int_clear);
 
@@ -117,6 +122,17 @@ static void special_interrupt_handler(int ics, struct keystone_rio_data *krio_pr
 
 	case KEYSTONE_RIO_RESET_INT:
 		/* Device reset interrupt on any port */
+
+		/* Disable SerDes lanes asap to generate a loss of link */
+		lanes = krio_priv->board_rio_cfg.lanes;
+ 		while (lanes) {
+ 			u32 lane = __ffs(lanes);
+ 			lanes &= ~(1 << lane);
+			keystone_rio_serdes_lane_disable(lane, krio_priv);
+		}
+
+		/* Schedule SRIO peripheral reinitialization */
+		schedule_work(&krio_priv->reset_work);
 		break;
 	}
 	return;
@@ -1033,16 +1049,6 @@ static void k2_rio_serdes_lane_enable(u32 lane, u32 rate, struct keystone_rio_da
 	}
 }
 
-static void k2_rio_serdes_lane_disable(u32 lane, struct keystone_rio_data *krio_priv)
-{
-	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
-	u32 val;
-
-	val = __raw_readl(regs + 0x1fe0 + 4 * lane);
-	val &= ~(BIT(29) | BIT(30) | BIT(13) | BIT(14));
-	__raw_writel(val, regs + 0x1fe0 + 4 * lane);
-}
-
 static int k2_rio_serdes_config(u32 lanes, u32 baud, struct keystone_rio_data *krio_priv)
 {
 	struct keystone2_srio_serdes_regs *serdes_regs =
@@ -1079,10 +1085,6 @@ static int k2_rio_serdes_config(u32 lanes, u32 baud, struct keystone_rio_data *k
 	while(lanes) {
 		u32 lane = __ffs(lanes);
 		lanes &= ~(1 << lane);
-
-		if (lane >= KEYSTONE_RIO_MAX_PORT)
-			return -EINVAL;
-
 		k2_rio_serdes_lane_enable(lane, rate, krio_priv);
 	}
 
@@ -1120,33 +1122,6 @@ static int k2_rio_serdes_wait_lock(struct keystone_rio_data *krio_priv, u32 lane
 	return 0;
 }
 
-static int k2_rio_serdes_shutdown(struct keystone_rio_data *krio_priv, u32 lanes)
-{
-	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
-	u32 val;
-
-	while(lanes) {
-		u32 lane = __ffs(lanes);
-		lanes &= ~(1 << lane);
-
-		if (lane >= KEYSTONE_RIO_MAX_PORT)
-			return -EINVAL;
-
-		/* Disable SerDes for this lane */
-		k2_rio_serdes_lane_disable(lane, krio_priv);
-	}
-
-	/* Disable pll */
-	__raw_writel(0x00000000, regs + 0x1ff4);
-
-       /* Reset CMU PLL for all lanes */
-       val = __raw_readl(regs + 0x10);
-       val |= BIT(28);
-       __raw_writel(val, regs + 0x10);
-
-	return 0;
-}
-
 static int keystone_rio_serdes_config(u32 baud, struct keystone_rio_data *krio_priv)
 {
 	int res = 0;
@@ -1154,18 +1129,49 @@ static int keystone_rio_serdes_config(u32 baud, struct keystone_rio_data *krio_p
 	if (!K2_SERDES(krio_priv)) {
 		k1_rio_serdes_init(krio_priv);
 	} else {
-		u32 path_mode = krio_priv->board_rio_cfg.path_mode;
-		u32 ports     = krio_priv->board_rio_cfg.ports;
-
 		/* K2 SerDes main configuration */
-		res = keystone_rio_get_lane_config(ports, path_mode);
-		if (res > 0) {
-			u32 lanes = (u32) res;
-			res = k2_rio_serdes_config(lanes, baud, krio_priv);
-		}
+		res = k2_rio_serdes_config(krio_priv->board_rio_cfg.lanes,
+					   baud, krio_priv);
 	}
 
 	return res;
+}
+
+static void keystone_rio_serdes_lane_disable(u32 lane, struct keystone_rio_data *krio_priv)
+{
+	if (!K2_SERDES(krio_priv)) {
+		__raw_writel(0, &krio_priv->serdes_regs->channel[lane].rx);
+		__raw_writel(0, &krio_priv->serdes_regs->channel[lane].tx);
+	} else {
+		u32 val;
+		val = __raw_readl(&krio_priv->k2_serdes_regs->wiz_lane[lane].ctl_sts);
+		val &= ~(BIT(29) | BIT(30) | BIT(13) | BIT(14));
+		__raw_writel(val, &krio_priv->k2_serdes_regs->wiz_lane[lane].ctl_sts);
+	}
+}
+
+static void keystone_rio_serdes_shutdown(struct keystone_rio_data *krio_priv, u32 lanes)
+{
+	while(lanes) {
+		u32 lane = __ffs(lanes);
+		lanes &= ~(1 << lane);
+
+		/* Disable SerDes for this lane */
+		keystone_rio_serdes_lane_disable(lane, krio_priv);
+	}
+
+	if (!K2_SERDES(krio_priv)) {
+		__raw_writel(0, &krio_priv->serdes_regs->pll);
+	} else {
+		u32 val;
+
+		__raw_writel(0, &krio_priv->k2_serdes_regs->wiz_pll_ctrl);
+
+		/* Reset CMU PLL for all lanes */
+		val = __raw_readl(&krio_priv->k2_serdes_regs->__cmu0_rsvd1[1]);
+		val |= BIT(28);
+		__raw_writel(val, &krio_priv->k2_serdes_regs->__cmu0_rsvd1[1]);
+	}
 }
 
 /**
@@ -1399,6 +1405,34 @@ static void keystone_rio_stop(struct keystone_rio_data *krio_priv)
 	__raw_writel(val, &krio_priv->regs->pcr);
 }
 
+static void keystone_rio_reset_dpc(struct work_struct *work)
+{
+	struct keystone_rio_data *krio_priv =
+		container_of(work, struct keystone_rio_data, reset_work);
+	u32 ports_rst;
+	u32 ports;
+	u32 port;
+
+	ports_rst = __raw_readl(&krio_priv->evt_mgmt_regs->evt_mgmt_rst_port_stat);
+	dev_dbg(krio_priv->dev,
+		"reset device request received on ports: 0x%x\n", ports_rst);
+
+	/* Acknowledge reset */
+	ports = ports_rst;
+	while (ports) {
+		port = __ffs(ports);
+		ports &= ~(1 << port);
+		__raw_writel(KEYSTONE_RIO_PORT_PLM_STATUS_RST_REQ,
+			     &krio_priv->phy_regs->phy_sp[port].status);
+	}
+
+	__raw_writel(ports_rst, &krio_priv->evt_mgmt_regs->evt_mgmt_rst_port_stat);
+
+	/* Reinitialize SRIO peripheral */
+	keystone_rio_shutdown_controller(krio_priv);
+	keystone_rio_setup_controller(krio_priv);
+}
+
 static int keystone_rio_test_link(u8 port, struct keystone_rio_data *krio_priv)
 {
 	int res = 0;
@@ -1407,6 +1441,7 @@ static int keystone_rio_test_link(u8 port, struct keystone_rio_data *krio_priv)
 	res = keystone_rio_maint_read(krio_priv, port, 0xffff,
 				      krio_priv->board_rio_cfg.size,
 				      0, 0, sizeof(value), &value);
+
 	return res;
 }
 
@@ -1520,8 +1555,8 @@ static int keystone_rio_port_error_recovery(u32 port, struct keystone_rio_data *
                }
 
 oes_rd_err:
-               err_stat = __raw_readl(&krio_priv->serial_port_regs->sp[port].err_stat);
-               err_det = __raw_readl(&krio_priv->err_mgmt_regs->sp_err[port].det);
+               err_stat   = __raw_readl(&krio_priv->serial_port_regs->sp[port].err_stat);
+               err_det    = __raw_readl(&krio_priv->err_mgmt_regs->sp_err[port].det);
                plm_status = __raw_readl(&krio_priv->phy_regs->phy_sp[port].status);
 
                dev_dbg(krio_priv->dev,
@@ -1550,8 +1585,8 @@ oes_rd_err:
 
 		udelay(50);
 
-		err_stat = __raw_readl(&krio_priv->serial_port_regs->sp[port].err_stat);
-		err_det = __raw_readl(&krio_priv->err_mgmt_regs->sp_err[port].det);
+		err_stat   = __raw_readl(&krio_priv->serial_port_regs->sp[port].err_stat);
+		err_det    = __raw_readl(&krio_priv->err_mgmt_regs->sp_err[port].det);
 		plm_status = __raw_readl(&krio_priv->phy_regs->phy_sp[port].status);
 
 		dev_dbg(krio_priv->dev,
@@ -3017,6 +3052,7 @@ static int keystone_rio_get_controller_defaults(struct device_node *node,
 	struct keystone_rio_board_controller_info *c = &krio_priv->board_rio_cfg;
 	u32 temp[24];
 	int i;
+	int lanes;
 	int mbox;
 
 	i = of_property_match_string(node, "reg-names", "rio");
@@ -3135,6 +3171,15 @@ static int keystone_rio_get_controller_defaults(struct device_node *node,
 		ret = -EINVAL;
 		goto error;
 	}
+
+	lanes = keystone_rio_get_lane_config(c->ports, c->path_mode);
+	if (lanes < 0) {
+		dev_err(krio_priv->dev,
+			"cannot determine used SerDes lanes\n");
+		ret = -EINVAL;
+		goto error;
+	}
+	c->lanes = (u32) lanes;
 
 	/* Port register timeout */
 	if (of_property_read_u32(node, "port-register-timeout",
@@ -3262,21 +3307,26 @@ static int keystone_rio_port_chk(struct keystone_rio_data *krio_priv)
 		 */
 		status = keystone_rio_port_status(port, krio_priv);
 		if (status == 0) {
-			/* Register this port  */
-			mport = keystone_rio_register_mport(port, size, krio_priv);
-			if (!mport) {
-				dev_err(krio_priv->dev,
-					"failed to register mport %d\n", port);
-				return -1;
+			/* Register mport only if this is initial port check */
+ 			if (!krio_priv->mport[port]) {
+				mport = keystone_rio_register_mport(port, size, krio_priv);
+				if (!mport) {
+					dev_err(krio_priv->dev,
+						"failed to register mport %d\n", port);
+					return -1;
+				}
+				dev_info(krio_priv->dev,
+					 "port RIO%d host_deviceid %d registered\n",
+					 port, mport->host_deviceid);
+			} else {
+				dev_info(krio_priv->dev,
+					 "port RIO%d host_deviceid %d ready\n",
+					 port, krio_priv->mport[port]->host_deviceid);
 			}
 
 			/* Update routing after discovery/enumeration with new dev id */
 			if (krio_priv->board_rio_cfg.pkt_forwarding)
 				keystone_rio_port_set_routing(port, krio_priv);
-
-			dev_info(krio_priv->dev,
-				 "port RIO%d host_deviceid %d registered\n",
-				 port, mport->host_deviceid);
 		} else {
 			krio_priv->ports_registering |= (1 << port);
 			dev_dbg(krio_priv->dev, "port %d not ready\n", port);
@@ -3312,6 +3362,7 @@ static void keystone_rio_port_chk_task(struct work_struct *work)
 static int keystone_rio_setup_controller(struct keystone_rio_data *krio_priv)
 {
 	u32 ports;
+	u32 lanes;
 	u32 p;
 	u32 baud;
 	u32 path_mode;
@@ -3321,11 +3372,13 @@ static int keystone_rio_setup_controller(struct keystone_rio_data *krio_priv)
 
 	size      = krio_priv->board_rio_cfg.size;
 	ports     = krio_priv->board_rio_cfg.ports;
+	lanes     = krio_priv->board_rio_cfg.lanes;
 	baud      = krio_priv->board_rio_cfg.serdes_baudrate;
 	path_mode = krio_priv->board_rio_cfg.path_mode;
 
-	dev_dbg(krio_priv->dev, "size = %d, ports = 0x%x, baud = %d, path_mode = %d\n",
-		size, ports, baud, path_mode);
+	dev_dbg(krio_priv->dev,
+		"size = %d, ports = 0x%x, lanes = 0x%x, baud = %d, path_mode = %d\n",
+		size, ports, lanes, baud, path_mode);
 
 	switch (baud) {
 	case KEYSTONE_RIO_BAUD_1_250:
@@ -3372,10 +3425,8 @@ static int keystone_rio_setup_controller(struct keystone_rio_data *krio_priv)
 	keystone_rio_start(krio_priv);
 
 	if (K2_SERDES(krio_priv)) {
-		int lanes = keystone_rio_get_lane_config(ports, path_mode);
-
 		if (lanes > 0) {
-			res = k2_rio_serdes_wait_lock(krio_priv ,(u32) lanes);
+			res = k2_rio_serdes_wait_lock(krio_priv, lanes);
 			if (res < 0)
 			    dev_info(krio_priv->dev,
 				     "SerDes for lane mask 0x%x on %s Gbps not locked\n",
@@ -3411,14 +3462,39 @@ static int keystone_rio_setup_controller(struct keystone_rio_data *krio_priv)
 			krio_priv->board_rio_cfg.port_register_timeout /
 			(KEYSTONE_RIO_REGISTER_DELAY / HZ);
 
-		INIT_DELAYED_WORK(&krio_priv->port_chk_task,
-				  keystone_rio_port_chk_task);
-
 		schedule_delayed_work(&krio_priv->port_chk_task,
 				      KEYSTONE_RIO_REGISTER_DELAY);
         }
 
        return 0;
+}
+
+static void keystone_rio_shutdown_controller(struct keystone_rio_data *krio_priv)
+{
+	int i;
+
+	keystone_rio_interrupt_release(krio_priv);
+
+	for (i = 0; i < KEYSTONE_RIO_MAX_MBOX; i++) {
+		keystone_rio_close_tx_mbox(i, krio_priv);
+		keystone_rio_close_rx_mbox(i, krio_priv);
+	}
+
+	/* Stop the hw controller */
+	keystone_rio_stop(krio_priv);
+
+	/* Wait current DMA transfers to finish */
+	mdelay(10);
+
+	/* Shutdown associated SerDes */
+	keystone_rio_serdes_shutdown(krio_priv, krio_priv->board_rio_cfg.lanes);
+
+	/* Disable blocks */
+	__raw_writel(0, &krio_priv->regs->gbl_en);
+	for (i = 0; i < KEYSTONE_RIO_BLK_NUM; i++) {
+		__raw_writel(0, &(krio_priv->regs->blk[i].enable));
+		while(__raw_readl(&(krio_priv->regs->blk[i].status)) & 0x1);
+	}
 }
 
 static int __init keystone_rio_probe(struct platform_device *pdev)
@@ -3462,7 +3538,9 @@ static int __init keystone_rio_probe(struct platform_device *pdev)
 		INIT_LIST_HEAD(&krio_priv->dma_channels[i]);
 #endif
 
+	INIT_DELAYED_WORK(&krio_priv->port_chk_task, keystone_rio_port_chk_task);
 	INIT_DELAYED_WORK(&krio_priv->pe_work, keystone_rio_pe_dpc);
+	INIT_WORK(&krio_priv->reset_work, keystone_rio_reset_dpc);
 
 	/* Enable sRIO clock */
 	krio_priv->clk = clk_get(&pdev->dev, "clk_srio");
@@ -3488,32 +3566,8 @@ static int __init keystone_rio_probe(struct platform_device *pdev)
 static void keystone_rio_shutdown(struct platform_device *pdev)
 {
 	struct keystone_rio_data *krio_priv = platform_get_drvdata(pdev);
-	u32 lanes = keystone_rio_get_lane_config(krio_priv->board_rio_cfg.ports,
-						 krio_priv->board_rio_cfg.path_mode);
-	int i;
 
-	keystone_rio_interrupt_release(krio_priv);
-
-	for (i = 0; i < KEYSTONE_RIO_MAX_MBOX; i++) {
-		keystone_rio_close_tx_mbox(i, krio_priv);
-		keystone_rio_close_rx_mbox(i, krio_priv);
-	}
-
-	/* Stop the hw controller */
-	keystone_rio_stop(krio_priv);
-
-	/* Wait current DMA transfers to finish */
-	mdelay(10);
-
-	/* Disable blocks */
-	__raw_writel(0, &krio_priv->regs->gbl_en);
-	for (i = 0; i < KEYSTONE_RIO_BLK_NUM; i++) {
-		__raw_writel(0, &(krio_priv->regs->blk[i].enable));
-		while(__raw_readl(&(krio_priv->regs->blk[i].status)) & 0x1);
-	}
-
-	/* Shutdown associated SerDes */
-	k2_rio_serdes_shutdown(krio_priv, lanes);
+	keystone_rio_shutdown_controller(krio_priv);
 
 	if (krio_priv->clk) {
 		clk_disable_unprepare(krio_priv->clk);
