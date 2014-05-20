@@ -86,9 +86,10 @@ enum khwq_qos_drop_mode {
 };
 
 enum khwq_qos_tree_node_type {
+	QOS_NODE_DEFAULT,
 	QOS_NODE_PRIO,
 	QOS_NODE_WRR,
-	QOS_NODE_DEFAULT,
+	QOS_NODE_BLENDED,
 };
 
 enum khwq_qos_shadow_type {
@@ -207,6 +208,10 @@ struct khwq_qos_tree_node {
 	enum khwq_qos_tree_node_type	 type;
 	u32				 weight;
 	u32				 priority;
+	u32				 low_priority;
+	int				 prio_children;
+	int				 wrr_children;
+	int				 lowprio_children;
 	enum khwq_qos_accounting_type	 acct;
 	const char			*name;
 	int				 overhead_bytes;
