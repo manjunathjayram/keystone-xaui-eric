@@ -37,8 +37,6 @@
 
 #define	QOS_TXHOOK_ORDER	20
 
-#define	MAX_CHANNELS	8
-
 struct qos_channel {
 	const char		*tx_chan_name;
 	u32			 tx_queue_depth;
@@ -56,7 +54,8 @@ struct qos_intf {
 	struct net_device		*ndev;
 	struct device			*dev;
 	int				 num_channels;
-	struct qos_channel		 channels[MAX_CHANNELS];
+	int				 max_channels;
+	struct qos_channel		 channels[1];
 };
 
 static int qos_tx_hook(int order, void *data, struct netcp_packet *p_info)
@@ -161,14 +160,18 @@ static int qos_attach(void *inst_priv, struct net_device *ndev,
 	struct device_node *interface, *channel;
 	char node_name[24];
 	int i, ret;
+	int max_channels, size;
 
-	qos_intf = devm_kzalloc(qos_dev->dev,
-				 sizeof(struct qos_intf), GFP_KERNEL);
+	max_channels = netcp->ndev->num_tx_queues;
+	size = sizeof(struct qos_intf) +
+			((max_channels - 1) * sizeof(struct qos_channel));
+	qos_intf = devm_kzalloc(qos_dev->dev, size, GFP_KERNEL);
 	if (!qos_intf) {
 		dev_err(qos_dev->dev,
 			"qos interface memory allocation failed\n");
 		return -ENOMEM;
 	}
+	qos_intf->max_channels = max_channels;
 
 	qos_intf->ndev = ndev;
 	qos_intf->dev = qos_dev->dev;
@@ -189,7 +192,7 @@ static int qos_attach(void *inst_priv, struct net_device *ndev,
 
 	qos_intf->num_channels = 0;
 	for_each_child_of_node(interface, channel) {
-		if (qos_intf->num_channels >= MAX_CHANNELS) {
+		if (qos_intf->num_channels >= max_channels) {
 			dev_err(qos_intf->dev,
 				"too many QoS input channels defined\n");
 			break;
