@@ -78,6 +78,19 @@ struct rio_mport_inbound_map {
 	uint64_t __user *handle;
 };
 
+struct rio_mport_query_resp {
+	uint16_t hdid;
+	uint8_t  id;
+	uint8_t  index;
+	uint32_t flags;
+	uint8_t  sys_size;
+	uint8_t  port_ok;
+	uint8_t  link_speed;
+	uint8_t  link_width;
+	uint32_t dma_max_sge;
+	uint32_t dma_max_size;
+	uint32_t dma_align;
+};
 
 /* Mport DirectI/O and doorbells IOCTLs */
 #define RIO_MPORT_DIO_AND_DBELL_MAGIC   'd'
@@ -123,6 +136,8 @@ struct rio_mport_inbound_map {
 	_IOW(RIO_MPORT_MAINT_MAGIC, 7, uint32_t)
 #define RIO_MPORT_MAINT_PORT_IDX_GET	\
 	_IOR(RIO_MPORT_MAINT_MAGIC, 8, uint32_t)
+#define RIO_MPORT_QUERY_DEVICE	\
+	_IOR(RIO_MPORT_MAINT_MAGIC, 9, struct rio_mport_query_resp)
 
 /* Inbound Memory Mapping IOCTLs */
 #define RIO_MPORT_IB_MAGIC	'i'

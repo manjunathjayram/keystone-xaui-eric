@@ -1051,6 +1051,39 @@ static int maint_port_idx_get(struct mport_cdev_priv *priv, void __user *arg)
 }
 
 /*
+ * mport_query_device() - Get the port index of the mport instance
+ * @priv: driver private data
+ * @arg:  ptr to query response data structure
+ */
+static int mport_query_device(struct mport_cdev_priv *priv, void __user *arg)
+{
+	struct rio_mport *mport = priv->md->mport;
+	struct rio_mport_attr attr;
+	struct rio_mport_query_resp resp;
+	int ret;
+
+	ret = rio_query_mport(mport, &attr);
+	if (ret)
+		return ret;
+
+	resp.hdid = mport->host_deviceid;
+	resp.id = mport->id;
+	resp.index = mport->index;
+	resp.sys_size = mport->sys_size;
+
+	resp.flags = attr.flags;
+	resp.link_speed = attr.link_speed;
+	resp.link_width = attr.link_width;
+	resp.dma_max_sge = attr.dma_max_sge;
+	resp.dma_max_size = attr.dma_max_size;
+	resp.dma_align = attr.dma_align;
+
+	if (copy_to_user(arg, &resp, sizeof(resp)))
+		return -EFAULT;
+	return 0;
+}
+
+/*
  * Mport cdev management
  */
 
@@ -1157,6 +1190,9 @@ static long mport_cdev_ioctl(struct file *filp,
 		break;
 	case RIO_MPORT_MAINT_PORT_IDX_GET:
 		err = maint_port_idx_get(data, (void __user *)arg);
+		break;
+	case RIO_MPORT_QUERY_DEVICE:
+		err = mport_query_device(data, (void __user *)arg);
 		break;
 	case RIO_MPORT_INBOUND_ALLOC:
 		err = ibw_map_alloc(data, (void __user *)arg);
