@@ -938,6 +938,49 @@ static int khwq_qos_free_drop_queue(struct khwq_qos_info *info, int idx)
 	return khwq_qos_free(info, QOS_DROP_QUEUE_CFG, idx);
 }
 
+#define	is_even(x)	(((x) & 1) == 0)
+
+static inline int khwq_qos_alloc_sched_port(struct khwq_qos_info *info,
+			  int parent_port_idx, bool port_pair)
+{
+	struct khwq_pdsp_info *pdsp = info->pdsp;
+	struct khwq_qos_shadow *shadow = &info->shadows[QOS_SCHED_PORT_CFG];
+	int parent_idx, idx, idx_odd;
+
+	parent_idx = (parent_port_idx < 0) ? shadow->count :
+			khwq_qos_id_to_idx(parent_port_idx);
+
+	spin_lock_bh(&info->lock);
+
+	idx = find_last_bit(shadow->avail, parent_idx);
+	if (idx >= parent_idx)
+		goto fail;
+
+	if (port_pair) {
+		do {
+			idx_odd = idx;
+			idx = find_last_bit(shadow->avail, idx_odd);
+			if (idx >= idx_odd)
+				goto fail;
+		} while (!is_even(idx) || (idx_odd != (idx + 1)));
+		clear_bit(idx_odd, shadow->avail);
+	}
+
+	clear_bit(idx, shadow->avail);
+	spin_unlock_bh(&info->lock);
+	return khwq_qos_make_id(pdsp->id, idx);
+
+fail:
+	spin_unlock_bh(&info->lock);
+	dev_err(info->kdev->dev, "QoS port allocation failure\n");
+	return -ENOSPC;
+}
+
+static int khwq_qos_free_sched_port(struct khwq_qos_info *info, int idx)
+{
+	return khwq_qos_free(info, QOS_SCHED_PORT_CFG, idx);
+}
+
 static int khwq_qos_sched_port_enable(struct khwq_qos_shadow *shadow, int idx,
 				       bool enable)
 {
@@ -966,7 +1009,7 @@ static int khwq_qos_sched_port_enable(struct khwq_qos_shadow *shadow, int idx,
 				 shadow->name, idx);
 		}
 		if (!enable && !test_bit(idx, shadow->running)) {
-			dev_warn(kdev->dev, "forced disable on halted %s %d\n",
+			dev_dbg(kdev->dev, "forced disable on halted %s %d\n",
 				 shadow->name, idx);
 		}
 		command = (QOS_CMD_ENABLE_PORT			|
@@ -1262,7 +1305,17 @@ static int khwq_qos_prio_check(struct ktree_node *child, void *arg)
 	struct khwq_qos_tree_node *node = arg;
 	struct khwq_qos_tree_node *sibling = to_qnode(child);
 
-	return (sibling->priority == node->priority) ? -EINVAL : 0;
+	return ((sibling->priority != -1) &&
+		(sibling->priority == node->priority)) ? -EINVAL : 0;
+}
+
+static int khwq_qos_lowprio_check(struct ktree_node *child, void *arg)
+{
+	struct khwq_qos_tree_node *node = arg;
+	struct khwq_qos_tree_node *sibling = to_qnode(child);
+
+	return ((sibling->low_priority != -1) &&
+		(sibling->low_priority == node->low_priority)) ? -EINVAL : 0;
 }
 
 struct khwq_qos_drop_policy *
@@ -1340,7 +1393,7 @@ static ssize_t qnode_weight_store(struct khwq_qos_tree_node *qnode,
 	int inputs, i, error, val, idx;
 	u64 scale, tmp;
 
-	if (!parent || parent->type != QOS_NODE_WRR)
+	if (!parent || (parent->wrr_children == 0))
 		return -EINVAL;
 
 	error = kstrtouint(buf, 0, &weight);
@@ -1357,7 +1410,7 @@ static ssize_t qnode_weight_store(struct khwq_qos_tree_node *qnode,
 	parent->child_weight[qnode->parent_input] = weight;
 
 	inputs = parent->child_count;
-	scale = inputs * ((parent->acct == QOS_BYTE_ACCT) ?
+	scale = parent->wrr_children * ((parent->acct == QOS_BYTE_ACCT) ?
 				QOS_BYTE_NORMALIZATION_FACTOR :
 				QOS_PACKET_NORMALIZATION_FACTOR);
 	scale <<= 48;
@@ -1365,19 +1418,33 @@ static ssize_t qnode_weight_store(struct khwq_qos_tree_node *qnode,
 
 	idx = parent->sched_port_idx;
 	for (i = inputs - 1; i >= 0; --i) {
-		tmp = parent->child_weight[i];
-		tmp *= scale;
+		int port, queue;
 
-		if (parent->acct == QOS_BYTE_ACCT) {
-			tmp += 1ULL << (47 - QOS_CREDITS_BYTE_SHIFT);
-			tmp >>= (48 - QOS_CREDITS_BYTE_SHIFT);
+		if (parent->is_joint_port && (i >= info->inputs_per_port)) {
+			port = khwq_qos_id_odd(idx);
+			queue = i - info->inputs_per_port;
 		} else {
-			tmp += 1ULL << (47 - QOS_CREDITS_PACKET_SHIFT);
-			tmp >>= (48 - QOS_CREDITS_PACKET_SHIFT);
+			port = idx;
+			queue = i;
 		}
-		val = (u32)(tmp);
 
-		khwq_qos_set_sched_wrr_credit(info, idx, i, val, (i == 0));
+		val = 0;
+		if ((i >= parent->prio_children) &&
+		    (i < (parent->prio_children + parent->wrr_children))) {
+			tmp = parent->child_weight[i];
+			tmp *= scale;
+
+			if (parent->acct == QOS_BYTE_ACCT) {
+				tmp += 1ULL << (47 - QOS_CREDITS_BYTE_SHIFT);
+				tmp >>= (48 - QOS_CREDITS_BYTE_SHIFT);
+			} else {
+				tmp += 1ULL << (47 - QOS_CREDITS_PACKET_SHIFT);
+				tmp >>= (48 - QOS_CREDITS_PACKET_SHIFT);
+			}
+			val = (u32)(tmp);
+		}
+
+		khwq_qos_set_sched_wrr_credit(info, port, queue, val, (queue == 0));
 	}
 
 	return size;
@@ -1390,6 +1457,15 @@ static ssize_t qnode_priority_show(struct khwq_qos_tree_node *qnode,
 		return -EINVAL;
 
 	return snprintf(buf, PAGE_SIZE, "%d\n", qnode->priority);
+}
+
+static ssize_t qnode_lowprio_show(struct khwq_qos_tree_node *qnode,
+					     char *buf)
+{
+	if (qnode->low_priority == -1)
+		return -EINVAL;
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", qnode->low_priority);
 }
 
 static ssize_t qnode_output_rate_show(struct khwq_qos_tree_node *qnode,
@@ -1411,6 +1487,8 @@ static int qnode_output_rate_store_child(struct ktree_node *child, void *arg)
 
 	val = parent->output_rate;
 	val = (val + info->ticks_per_sec - 1) / info->ticks_per_sec;
+	if (val != 0)
+		++val;
 	khwq_qos_set_sched_out_throttle(info, idx, val, true);
 
 	return 0;
@@ -1455,7 +1533,9 @@ static ssize_t qnode_burst_size_store(struct khwq_qos_tree_node *qnode,
 {
 	struct khwq_qos_info *info = qnode->info;
 	int idx = qnode->sched_port_idx;
-	int error, val, field;
+	int error, field;
+	u64 cir_max;
+	u32 cir_credit;
 
 	error = kstrtouint(buf, 0, &field);
 	if (error)
@@ -1463,10 +1543,17 @@ static ssize_t qnode_burst_size_store(struct khwq_qos_tree_node *qnode,
 	
 	qnode->burst_size = field;
 
-	val = (qnode->acct == QOS_BYTE_ACCT) ?
+	error = khwq_qos_get_sched_cir_credit(info, idx, &cir_credit);
+	if (error)
+		return error;
+
+	cir_max = (qnode->acct == QOS_BYTE_ACCT) ?
 		(field << QOS_CREDITS_BYTE_SHIFT) :
 		(field << QOS_CREDITS_PACKET_SHIFT);
-	khwq_qos_set_sched_cir_max(info, idx, val, true);
+	if (cir_max > (S32_MAX - cir_credit))
+		return -EINVAL;
+
+	khwq_qos_set_sched_cir_max(info, idx, (u32)cir_max, true);
 
 	return size;
 }
@@ -1584,6 +1671,8 @@ static KHWQ_QOS_QNODE_ATTR(drop_policy, S_IRUGO, qnode_drop_policy_show,
 			   NULL);
 static KHWQ_QOS_QNODE_ATTR(priority, S_IRUGO,
 			   qnode_priority_show, NULL);
+static KHWQ_QOS_QNODE_ATTR(low_priority, S_IRUGO,
+			   qnode_lowprio_show, NULL);
 static KHWQ_QOS_QNODE_ATTR(output_queue, S_IRUGO,
 			   qnode_output_queue_show,
 			   NULL);
@@ -1624,6 +1713,17 @@ static struct attribute *khwq_qos_qnode_sysfs_wrr_attrs[] = {
 	&attr_qnode_stats_class.attr,
 	&attr_qnode_drop_policy.attr,
 	&attr_qnode_weight.attr,
+	&attr_qnode_output_rate.attr,
+	&attr_qnode_burst_size.attr,
+	&attr_qnode_overhead_bytes.attr,
+	&attr_qnode_input_queues.attr,
+	NULL
+};
+
+static struct attribute *khwq_qos_qnode_sysfs_lowprio_attrs[] = {
+	&attr_qnode_stats_class.attr,
+	&attr_qnode_drop_policy.attr,
+	&attr_qnode_low_priority.attr,
 	&attr_qnode_output_rate.attr,
 	&attr_qnode_burst_size.attr,
 	&attr_qnode_overhead_bytes.attr,
@@ -1678,6 +1778,13 @@ static struct kobj_type khwq_qos_qnode_priority_ktype = {
 	.default_attrs = khwq_qos_qnode_sysfs_priority_attrs,
 };
 
+static struct kobj_type khwq_qos_qnode_lowprio_ktype = {
+	.sysfs_ops = &(struct sysfs_ops) {
+		.show = khwq_qos_qnode_attr_show,
+		.store = khwq_qos_qnode_attr_store},
+	.default_attrs = khwq_qos_qnode_sysfs_lowprio_attrs,
+};
+
 static struct kobj_type khwq_qos_qnode_wrr_ktype = {
 	.sysfs_ops = &(struct sysfs_ops) {
 		.show = khwq_qos_qnode_attr_show,
@@ -1688,10 +1795,31 @@ static struct kobj_type khwq_qos_qnode_wrr_ktype = {
 static int khwq_qos_cmp(struct ktree_node *_a, struct ktree_node *_b,
 			void *arg)
 {
-	void *a = to_qnode(_a);
-	void *b = to_qnode(_b);
-	int offset = (int)arg;
-	return *((u32 *)(a + offset)) - *((u32 *)(b + offset));
+	struct khwq_qos_tree_node *a = to_qnode(_a);
+	struct khwq_qos_tree_node *b = to_qnode(_b);
+
+	if ((a->priority != -1) && (b->priority != -1))
+		return a->priority - b->priority;
+	if (a->priority != -1)
+		return -1;
+	if (b->priority != -1)
+		return 1;
+
+	if ((a->weight != -1) && (b->weight != -1))
+		return 0;
+	if (a->weight != -1)
+		return -1;
+	if (b->weight != -1)
+		return 1;
+
+	if ((a->low_priority != -1) && (b->low_priority != -1))
+		return a->low_priority - b->low_priority;
+	if (a->low_priority != -1)
+		return -1;
+	if (b->low_priority != -1)
+		return 1;
+
+	return 0;
 }
 
 static int khwq_qos_check_overflow(struct khwq_qos_tree_node *qnode,
@@ -1715,7 +1843,7 @@ static int khwq_qos_tree_parse(struct khwq_qos_info *info,
 {
 	struct khwq_qos_tree_node *qnode;
 	struct khwq_device *kdev = info->kdev;
-	int length, i, error = 0, elements;
+	int length, i, error = 0, elements, num_children;
 	struct device_node *child;
 	bool has_children;
 	const char *name;
@@ -1742,30 +1870,6 @@ static int khwq_qos_tree_parse(struct khwq_qos_info *info,
 	qnode->parent = parent;
 	qnode->name = node->name;
 
-	if (!parent)
-		error = kobject_init_and_add(&qnode->kobj,
-					     &khwq_qos_qnode_default_ktype,
-					     parent_kobj, qnode->name);
-	else {
-		if (parent->type == QOS_NODE_PRIO)
-			error = kobject_init_and_add(&qnode->kobj,
-					     &khwq_qos_qnode_priority_ktype,
-					     parent_kobj, qnode->name);
-		else if (parent->type == QOS_NODE_WRR)
-			error = kobject_init_and_add(&qnode->kobj,
-					     &khwq_qos_qnode_wrr_ktype,
-					     parent_kobj, qnode->name);
-		else
-			error = kobject_init_and_add(&qnode->kobj,
-					     &khwq_qos_qnode_default_ktype,
-					     parent_kobj, qnode->name);
-	}
-	if (error) {
-		dev_err(kdev->dev, "failed to create sysfs "
-			"entries for qnode %s\n", qnode->name);
-		goto error_destroy;
-	}
-
 	of_property_read_string(node, "label", &qnode->name);
 	dev_dbg(kdev->dev, "processing node %s, parent %s%s\n",
 		qnode->name, parent ? parent->name : "(none)",
@@ -1783,14 +1887,23 @@ static int khwq_qos_tree_parse(struct khwq_qos_info *info,
 		}
 		qnode->type = QOS_NODE_WRR;
 	}
+	if (of_find_property(node, "blended-scheduler", NULL)) {
+		if (qnode->type != QOS_NODE_DEFAULT) {
+			dev_err(kdev->dev, "multiple node types in %s\n",
+				qnode->name);
+			error = -EINVAL;
+			goto error_free;
+		}
+		qnode->type = QOS_NODE_BLENDED;
+	}
 	if (!parent && qnode->type == QOS_NODE_DEFAULT) {
-		dev_err(kdev->dev, "root node %s must be wrr/prio\n",
+		dev_err(kdev->dev, "root node %s must be wrr/prio/blended\n",
 			qnode->name);
 		error = -EINVAL;
 		goto error_free;
 	}
 	if (!has_children && qnode->type != QOS_NODE_DEFAULT) {
-		dev_err(kdev->dev, "leaf node %s must not be wrr/prio\n",
+		dev_err(kdev->dev, "leaf node %s must not be wrr/prio/blended\n",
 			qnode->name);
 		error = -EINVAL;
 		goto error_free;
@@ -1799,53 +1912,113 @@ static int khwq_qos_tree_parse(struct khwq_qos_info *info,
 	dev_dbg(kdev->dev, "node %s: type %d\n", qnode->name, qnode->type);
 
 	qnode->weight = -1;
-	of_property_read_u32(node, "weight", &qnode->weight);
-	if (qnode->weight != -1) {
+	if (!of_property_read_u32(node, "weight", &qnode->weight)) {
+		dev_dbg(kdev->dev, "node %s: weight %d\n",
+			qnode->name, qnode->weight);
 		if (qnode->weight == 0 || qnode->weight > QOS_MAX_WEIGHT) {
-			dev_err(kdev->dev, "weight must be between 1 and %d\n",
-				QOS_MAX_WEIGHT);
+			dev_err(kdev->dev,
+				"node %s: weight must be between 1 and %u\n",
+				qnode->name, QOS_MAX_WEIGHT);
 			error = -EINVAL;
 			goto error_free;
 		}
-		if (!parent || parent->type != QOS_NODE_WRR) {
-			dev_err(kdev->dev, "unexpected weight on node %s\n",
+		if (!parent ||
+		    ((parent->type != QOS_NODE_WRR) &&
+		     (parent->type != QOS_NODE_BLENDED))) {
+			dev_err(kdev->dev, "node %s: unexpected weight\n",
 				qnode->name);
 			error = -EINVAL;
 			goto error_free;
 		}
+		++parent->wrr_children;
 	} else if (parent && parent->type == QOS_NODE_WRR) {
-		dev_err(kdev->dev, "expected weight on wrr child node %s\n",
+		dev_err(kdev->dev, "node %s: missing weight on wrr child\n",
 			qnode->name);
 		error = -EINVAL;
 		goto error_free;
 	}
-	dev_dbg(kdev->dev, "node %s: weight %d\n", qnode->name, qnode->weight);
 
 	qnode->priority = -1;
-	of_property_read_u32(node, "priority", &qnode->priority);
-	if (qnode->priority != -1) {
-		if (!parent || parent->type != QOS_NODE_PRIO) {
-			dev_err(kdev->dev, "unexpected priority on node %s\n",
+	if (!of_property_read_u32(node, "priority", &qnode->priority)) {
+		dev_dbg(kdev->dev, "node %s: priority %d\n",
+			qnode->name, qnode->priority);
+		if (qnode->priority == -1) {
+			dev_err(kdev->dev,
+				"node %s: priority must be between 0 and %u\n",
+				qnode->name, U32_MAX - 1);
+			error = -EINVAL;
+			goto error_free;
+		}
+		if (!parent ||
+		    ((parent->type != QOS_NODE_PRIO) &&
+		     (parent->type != QOS_NODE_BLENDED))) {
+			dev_err(kdev->dev, "node %s: unexpected priority\n",
 				qnode->name);
 			error = -EINVAL;
 			goto error_free;
 		}
+		++parent->prio_children;
 		error = ktree_for_each_child(&parent->node,
-					     khwq_qos_prio_check, qnode);
+					     khwq_qos_prio_check,
+					     qnode);
 		if (error) {
-			dev_err(kdev->dev, "duplicate priority %d on node %s\n",
-				qnode->priority, qnode->name);
+			dev_err(kdev->dev, "node %s: duplicate priority %d\n",
+				qnode->name, qnode->priority);
 			error = -EINVAL;
 			goto error_free;
 		}
 	} else if (parent && parent->type == QOS_NODE_PRIO) {
-		dev_err(kdev->dev, "expected prio on strict prio child %s\n",
+		dev_err(kdev->dev,
+			"node %s: missing priority on strict-priority child\n",
 			qnode->name);
 		error = -EINVAL;
 		goto error_free;
 	}
-	dev_dbg(kdev->dev, "node %s: priority %d\n", qnode->name,
-		qnode->priority);
+
+	qnode->low_priority = -1;
+	if (!of_property_read_u32(node, "low-priority", &qnode->low_priority)) {
+		dev_dbg(kdev->dev, "node %s: low-priority %d\n",
+			qnode->name, qnode->low_priority);
+		if (qnode->low_priority == -1) {
+			dev_err(kdev->dev,
+				"node %s: low-priority must be between 0 and %u\n",
+				qnode->name, U32_MAX - 1);
+			error = -EINVAL;
+			goto error_free;
+		}
+		if (!parent ||
+		    (parent->type != QOS_NODE_BLENDED)) {
+			dev_err(kdev->dev,
+				"node %s: unexpected low-priority\n",
+				qnode->name);
+			error = -EINVAL;
+			goto error_free;
+		}
+		++parent->lowprio_children;
+		error = ktree_for_each_child(&parent->node,
+					     khwq_qos_lowprio_check,
+					     qnode);
+		if (error) {
+			dev_err(kdev->dev,
+				"node %s: duplicate low-priority %d\n",
+				qnode->name, qnode->low_priority);
+			error = -EINVAL;
+			goto error_free;
+		}
+	}
+
+	if (parent && (parent->type == QOS_NODE_BLENDED)) {
+		if ((qnode->weight == -1) &&
+		    (qnode->priority == -1) &&
+		    (qnode->low_priority == -1)) {
+			dev_err(kdev->dev,
+				"node %s: missing weight or priority on "
+				"blended-scheduler child\n",
+				qnode->name);
+			error = -EINVAL;
+			goto error_free;
+		}
+	}
 
 	qnode->acct = QOS_BYTE_ACCT;
 	if (of_find_property(node, "byte-units", NULL))
@@ -1986,11 +2159,46 @@ static int khwq_qos_tree_parse(struct khwq_qos_info *info,
 	}
 
 	if (!parent)
+		error = kobject_init_and_add(&qnode->kobj,
+					     &khwq_qos_qnode_default_ktype,
+					     parent_kobj, qnode->name);
+	else {
+		if ((parent->type == QOS_NODE_PRIO) ||
+		    ((parent->type == QOS_NODE_BLENDED) &&
+		     (qnode->priority != -1)))
+			error = kobject_init_and_add(&qnode->kobj,
+					     &khwq_qos_qnode_priority_ktype,
+					     parent_kobj, qnode->name);
+		else if ((parent->type == QOS_NODE_WRR) ||
+			 ((parent->type == QOS_NODE_BLENDED) &&
+			  (qnode->weight != -1)))
+			error = kobject_init_and_add(&qnode->kobj,
+					     &khwq_qos_qnode_wrr_ktype,
+					     parent_kobj, qnode->name);
+		else if ((parent->type == QOS_NODE_BLENDED) &&
+			 (qnode->low_priority != -1))
+			error = kobject_init_and_add(&qnode->kobj,
+					     &khwq_qos_qnode_lowprio_ktype,
+					     parent_kobj, qnode->name);
+		else
+			error = kobject_init_and_add(&qnode->kobj,
+					     &khwq_qos_qnode_default_ktype,
+					     parent_kobj, qnode->name);
+	}
+	if (error) {
+		dev_err(kdev->dev, "failed to create sysfs "
+			"entries for qnode %s\n", qnode->name);
+		goto error_destroy;
+	}
+
+	if (!parent)
 		ktree_set_root(&info->qos_tree, &qnode->node);
 	else
 		ktree_add_child_last(&parent->node, &qnode->node);
 
+	num_children = 0;
 	for_each_child_of_node(node, child) {
+		++num_children;
 		error = khwq_qos_tree_parse(info, child, qnode);
 		if (error)
 			goto error_destroy;
@@ -2004,10 +2212,29 @@ static int khwq_qos_tree_parse(struct khwq_qos_info *info,
 			goto error_destroy;
 	}
 
-	if (qnode->type == QOS_NODE_PRIO) {
-		int o = offsetof(struct khwq_qos_tree_node, priority);
-		ktree_sort_children(&qnode->node, khwq_qos_cmp, (void *)o);
+	if (num_children <= info->inputs_per_port)
+		qnode->is_joint_port = false;
+	else {
+		if (num_children <= (info->inputs_per_port * 2)) {
+			qnode->is_joint_port = true;
+			dev_dbg(kdev->dev, "node %s needs a joint port\n",
+				 qnode->name);
+		} else {
+			dev_err(kdev->dev, "node %s has too many children\n",
+				qnode->name);
+			error = -EINVAL;
+			goto error_destroy;
+		}
 	}
+	if (qnode->is_joint_port && qnode->type == QOS_NODE_DEFAULT) {
+		dev_err(kdev->dev, "joint port node %s must be wrr/prio\n",
+			qnode->name);
+		error = -EINVAL;
+		goto error_destroy;
+	}
+
+	if (num_children > 1)
+		ktree_sort_children(&qnode->node, khwq_qos_cmp, NULL);
 
 	return 0;
 
@@ -2028,6 +2255,7 @@ static int khwq_qos_tree_map_nodes(struct ktree_node *node, void *arg)
 	struct khwq_qos_tree_node *parent = qnode->parent;
 	struct khwq_qos_info *info = arg;
 	struct khwq_device *kdev = info->kdev;
+	int max_inputs;
 
 	qnode->child_port_count	=  0;
 	qnode->child_count	=  0;
@@ -2054,14 +2282,19 @@ static int khwq_qos_tree_map_nodes(struct ktree_node *node, void *arg)
 
 	ktree_for_each_child(&qnode->node, khwq_qos_tree_map_nodes, info);
 
-	qnode->has_sched_port = (qnode->type == QOS_NODE_PRIO	||
-				 qnode->type == QOS_NODE_WRR	||
+	qnode->has_sched_port = (qnode->type == QOS_NODE_PRIO	 ||
+				 qnode->type == QOS_NODE_WRR	 ||
+				 qnode->type == QOS_NODE_BLENDED ||
 				 qnode->child_port_count);
 
 	if (qnode->has_sched_port && parent)
 		parent->child_port_count ++;
 
-	if (qnode->child_count > info->inputs_per_port) {
+	max_inputs = (qnode->is_joint_port) ?
+			info->inputs_per_port * 2 :
+			info->inputs_per_port;
+
+	if (qnode->child_count > max_inputs) {
 		dev_err(kdev->dev, "too many input_queues (%d) to node %s\n",
 			qnode->child_count, qnode->name);
 		return -EOVERFLOW;
@@ -2078,7 +2311,16 @@ static int khwq_qos_tree_alloc_nodes(struct ktree_node *node, void *arg)
 	int error, i;
 
 	if (qnode->has_sched_port) {
-		error = khwq_qos_alloc_sched_port(info);
+		error = khwq_qos_alloc_sched_port(info, 
+				parent ? parent->sched_port_idx : -1,
+				qnode->is_joint_port);
+		if (error < 0) {
+			error = khwq_qos_alloc_sched_port(info, -1,
+					qnode->is_joint_port);
+			if (error >= 0)
+				dev_warn(kdev->dev, "node %s: non-optimal port"
+					 " allocation\n", qnode->name);
+		}
 		if (error < 0) {
 			dev_err(kdev->dev, "node %s: failed to alloc sched port [%d]\n",
 				qnode->name, error);
@@ -2086,17 +2328,24 @@ static int khwq_qos_tree_alloc_nodes(struct ktree_node *node, void *arg)
 		}
 		qnode->sched_port_idx = error;
 	} else
-		qnode->sched_port_idx = qnode->parent->sched_port_idx;
+		qnode->sched_port_idx = parent->sched_port_idx;
 
 
 	if (parent) {
 		if (WARN_ON(qnode->output_queue != -1))
 			return -EINVAL;
 		if (parent->type == QOS_NODE_DEFAULT)
-			qnode->parent_input = qnode->parent->parent_input;
-		error = khwq_qos_control_sched_port(info, QOS_CONTROL_GET_INPUT,
-						    parent->sched_port_idx,
-						    qnode->parent_input);
+			qnode->parent_input = parent->parent_input;
+		if (parent->is_joint_port && (qnode->parent_input >= info->inputs_per_port))
+			error = khwq_qos_control_sched_port(info,
+					QOS_CONTROL_GET_INPUT,
+					khwq_qos_id_odd(parent->sched_port_idx),
+					qnode->parent_input - info->inputs_per_port);
+		else
+			error = khwq_qos_control_sched_port(info,
+					QOS_CONTROL_GET_INPUT,
+					parent->sched_port_idx,
+					qnode->parent_input);
 		if (WARN_ON(error < 0))
 			return error;
 		qnode->output_queue = error;
@@ -2152,8 +2401,9 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 	int error, val, idx = qnode->sched_port_idx;
 	struct khwq_device *kdev = info->kdev;
 	bool sync = false;
-	int inputs, i;
+	int inputs, i, cir_credit;
 	u64 scale = 0ULL, tmp;
+	u64 cir_max;
 
 	if (!qnode->has_sched_port)
 		return 0;
@@ -2167,6 +2417,8 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 			 QOS_SCHED_FLAG_CONG_BYTES) : 0;
 	if (parent && (parent->acct == QOS_BYTE_ACCT))
 		val |= QOS_SCHED_FLAG_THROTL_BYTES;
+	if (qnode->is_joint_port)
+		val |= QOS_SCHED_FLAG_IS_JOINT;
 	error = khwq_qos_set_sched_unit_flags(info, idx, val, sync);
 	if (WARN_ON(error))
 		return error;
@@ -2192,23 +2444,30 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 
 	val = parent ? parent->output_rate : 0;
 	val = (val + info->ticks_per_sec - 1) / info->ticks_per_sec;
+	if (val != 0)
+		++val;
 	error = khwq_qos_set_sched_out_throttle(info, idx, val, sync);
 	if (WARN_ON(error))
 		return error;
 
-	val = qnode->output_rate / info->ticks_per_sec;
-	val <<= (qnode->acct == QOS_BYTE_ACCT) ?
+	cir_credit = qnode->output_rate / info->ticks_per_sec;
+	cir_credit <<= (qnode->acct == QOS_BYTE_ACCT) ?
 			QOS_CREDITS_BYTE_SHIFT :
 			QOS_CREDITS_PACKET_SHIFT;
-	error = khwq_qos_set_sched_cir_credit(info, idx, val, sync);
+	error = khwq_qos_set_sched_cir_credit(info, idx, cir_credit, sync);
 	if (WARN_ON(error))
 		return error;
 
-	val = qnode->burst_size;
-	val <<= (qnode->acct == QOS_BYTE_ACCT) ?
+	cir_max = qnode->burst_size;
+	cir_max <<= (qnode->acct == QOS_BYTE_ACCT) ?
 			QOS_CREDITS_BYTE_SHIFT :
 			QOS_CREDITS_PACKET_SHIFT;
-	error = khwq_qos_set_sched_cir_max(info, idx, val, sync);
+	if (cir_max > (S32_MAX - cir_credit)) {
+		dev_warn(kdev->dev, "node %s burst-size is too large.\n",
+				qnode->name);
+		cir_max = S32_MAX - cir_credit;
+	}
+	error = khwq_qos_set_sched_cir_max(info, idx, (u32)cir_max, sync);
 	if (WARN_ON(error))
 		return error;
 
@@ -2218,18 +2477,18 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 	if (WARN_ON(error))
 		return error;
 
-	val = (qnode->type == QOS_NODE_PRIO) ? inputs : 0;
-	error = khwq_qos_set_sched_sp_q_count(info, idx, val, sync);
+	error = khwq_qos_set_sched_sp_q_count(info, idx, qnode->prio_children,
+						sync);
 	if (WARN_ON(error))
 		return error;
 
-	val = (qnode->type == QOS_NODE_WRR) ? inputs : 0;
-	error = khwq_qos_set_sched_wrr_q_count(info, idx, val, sync);
+	error = khwq_qos_set_sched_wrr_q_count(info, idx, qnode->wrr_children,
+						sync);
 	if (WARN_ON(error))
 		return error;
 
-	if (qnode->type == QOS_NODE_WRR) {
-		scale = inputs * ((qnode->acct == QOS_BYTE_ACCT) ?
+	if (qnode->wrr_children > 0) {
+		scale = qnode->wrr_children * ((qnode->acct == QOS_BYTE_ACCT) ?
 					QOS_BYTE_NORMALIZATION_FACTOR :
 					QOS_PACKET_NORMALIZATION_FACTOR);
 		scale <<= 48;
@@ -2237,13 +2496,24 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 	}
 
 	for (i = 0; i < inputs; i++) {
+		int port, queue;
+
+		if (qnode->is_joint_port && (i >= info->inputs_per_port)) {
+			port = khwq_qos_id_odd(idx);
+			queue = i - info->inputs_per_port;
+		} else {
+			port = idx;
+			queue = i;
+		}
+
 		val = 0;
-		error = khwq_qos_set_sched_cong_thresh(info, idx, i, val, sync);
+		error = khwq_qos_set_sched_cong_thresh(info, port, queue, val, sync);
 		if (WARN_ON(error))
 			return error;
 
 		val = 0;
-		if (qnode->type == QOS_NODE_WRR) {
+		if ((i >= qnode->prio_children) &&
+		    (i < (qnode->prio_children + qnode->wrr_children))) {
 			tmp = qnode->child_weight[i];
 			tmp *= scale;
 
@@ -2256,11 +2526,12 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 			}
 			val = (u32)(tmp);
 
-			dev_dbg(kdev->dev, "node %d weight = %d, credits = %d\n",
-					i, qnode->child_weight[i], val);
+			dev_dbg(kdev->dev, "node %s input %d "
+				"weight = %d, credits = %d\n",
+				qnode->name, i, qnode->child_weight[i], val);
 		}
 
-		error = khwq_qos_set_sched_wrr_credit(info, idx, i, val, sync);
+		error = khwq_qos_set_sched_wrr_credit(info, port, queue, val, sync);
 		if (WARN_ON(error))
 			return error;
 	}
@@ -2279,6 +2550,53 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 			qnode->name);
 		return error;
 	}
+
+	/* If this is a Lite-Joint port pair, configure the Odd port here */
+	if (qnode->is_joint_port) {
+		int odd_idx = khwq_qos_id_odd(idx);
+
+		error = khwq_qos_set_sched_unit_flags(info, odd_idx,
+					QOS_SCHED_FLAG_IS_JOINT, sync);
+		if (WARN_ON(error))
+			return error;
+
+		val = (inputs <= info->inputs_per_port) ? 0 :
+				inputs - info->inputs_per_port;
+		error = khwq_qos_set_sched_total_q_count(info, odd_idx,
+							 val, sync);
+		if (WARN_ON(error))
+			return error;
+
+		val = (qnode->prio_children <= info->inputs_per_port) ? 0 :
+				qnode->prio_children - info->inputs_per_port;
+		error = khwq_qos_set_sched_sp_q_count(info, odd_idx, val, sync);
+		if (WARN_ON(error))
+			return error;
+
+		val = ((qnode->prio_children + qnode->wrr_children)
+					<= info->inputs_per_port) ? 0 :
+			qnode->wrr_children -
+				(info->inputs_per_port - qnode->prio_children);
+		error = khwq_qos_set_sched_wrr_q_count(info, odd_idx, val, sync);
+		if (WARN_ON(error))
+			return error;
+
+		error = khwq_qos_sync_sched_port(info, odd_idx);
+		if (error) {
+			dev_err(kdev->dev, "error writing sched config for %s\n",
+				qnode->name);
+			return error;
+		}
+
+		error = khwq_qos_control_sched_port(info, QOS_CONTROL_ENABLE,
+						    odd_idx, false);
+		if (error) {
+			dev_err(kdev->dev, "error disabling sched port for %s\n",
+				qnode->name);
+			return error;
+		}
+	}
+
 	return 0;
 }
 
@@ -2561,6 +2879,8 @@ static int khwq_qos_stop_sched_port_queues(struct khwq_qos_info *info)
 								&queues);
 			if (WARN_ON(error))
 				return error;
+			if (queues > info->inputs_per_port)
+				queues = info->inputs_per_port;
 
 			for (j = 0; j < queues; j++) {
 				error = khwq_qos_set_sched_cong_thresh(info,
