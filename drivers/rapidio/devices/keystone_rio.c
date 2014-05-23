@@ -1600,6 +1600,7 @@ static int keystone_rio_test_link(u8 port, struct keystone_rio_data *krio_priv)
 static int keystone_rio_port_error_recovery(int port, struct keystone_rio_data *krio_priv)
 {
 	int res = 0;
+	int rport;
 	u32 err_stat, err_det;
 
 	if (port >= KEYSTONE_RIO_MAX_PORT)
@@ -1657,12 +1658,18 @@ static int keystone_rio_port_error_recovery(int port, struct keystone_rio_data *
 		ackid = (((ackid + 1) & 0x1f) << 24)
 			| ((ackid_stat & 0x1f000000) >> 24);
 
+		/* Get the link partner port for our port */
+		rport = krio_priv->board_rio_cfg.ports_remote[port];
+
 		res = keystone_rio_maint_write(krio_priv, port, 0xffff,
 					       krio_priv->board_rio_cfg.size,
-					       0, 0x100 + RIO_PORT_N_ACK_STS_CSR(port),
+					       0, 0x100 + RIO_PORT_N_ACK_STS_CSR(rport),
 					       4, ackid);
+
 		if (res < 0) {
-			dev_err(krio_priv->dev,	"failed to align ackIDs with link partner\n");
+			dev_err(krio_priv->dev,
+				"port%d: failed to align ackIDs with link partner port %d\n",
+				port, rport);
 		}
 	}
 	return res;
@@ -1694,7 +1701,12 @@ static int keystone_rio_port_status(int port, struct keystone_rio_data *krio_pri
 		if (value & KEYSTONE_RIO_PORT_ERRORS) {
 			dev_info(krio_priv->dev,
 				 "performing error recovery on port %d\n", port);
-			keystone_rio_port_error_recovery(port, krio_priv);
+			res = keystone_rio_port_error_recovery(port, krio_priv);
+			if (res != 0) {
+				dev_err(krio_priv->dev,
+					"port error recovery failed on port %d\n", port);
+				return -EIO;
+			}
 		}
 
 		res = keystone_rio_test_link(port, krio_priv);
@@ -3090,6 +3102,15 @@ static void keystone_rio_get_controller_defaults(struct device_node *node,
 
 	if (of_property_read_u32 (node, "ports", &c->ports))
 		dev_err(krio_priv->dev, "Could not get default ports\n");
+
+	if (of_property_read_u32_array(node, "ports_remote",
+				       c->ports_remote, KEYSTONE_RIO_MAX_PORT)) {
+		/* Assume by default that remote ports are same as local ports */
+		for (i = 0; i < KEYSTONE_RIO_MAX_PORT; i++)
+			c->ports_remote[i] = i;
+
+		dev_warn(krio_priv->dev, "missing \"remote_ports\" parameter\n");
+	}
 
 	/* SerDes config */
 	if (!of_find_property(node, "keystone2-serdes", NULL)) {

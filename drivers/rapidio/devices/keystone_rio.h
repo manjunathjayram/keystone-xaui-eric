@@ -239,6 +239,7 @@ struct keystone_rio_board_controller_info {
 	u32		serdes_cfg_regs_size;
 
 	u32             ports;  /* bitfield of port(s) to probe on this controller */
+	u32             ports_remote[KEYSTONE_RIO_MAX_PORT]; /* remote link partner port numbers */
 	u32             mode;   /* hw mode (default serdes cfg). idx into serdes_config[] */
 	u32             id;     /* host id */
 	u32             size;   /* RapidIO common transport system size.
