@@ -192,7 +192,12 @@
  * DMA engine definition
  */
 #define KEYSTONE_RIO_DMA_MAX_CHANNEL    8    /* Number of (virtual) DMA channel */
-#define KEYSTONE_RIO_DMA_MAX_DESC       128  /* Max number of (virtual) DMA descriptors */
+
+#ifdef ARCH_HAS_SG_CHAIN
+#define KEYSTONE_RIO_DMA_MAX_DESC       1024 /* Max number of (virtual) DMA descriptors */
+#else
+#define KEYSTONE_RIO_DMA_MAX_DESC       SG_MAX_SINGLE_ALLOC
+#endif
 
 /*
  * Dev Id and dev revision
@@ -207,6 +212,7 @@
 #define KEYSTONE_RIO_EXT_FEAT_PTR	(0x00000100)
 
 #define KEYSTONE_RIO_MAX_DIO_PKT_SIZE   0x100000 /* hardware support up to 1MB */
+#define KEYSTONE_RIO_DIO_ALIGNMENT      8        /* hardware required alignment */
 
 /*
  * RIO error, reset and special event interrupt defines
