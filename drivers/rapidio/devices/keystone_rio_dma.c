@@ -461,7 +461,7 @@ keystone_rio_dma_prep_slave_sg(struct dma_chan *dchan,
 		return NULL;
 	}
 
-	if (sg_len >= KEYSTONE_RIO_DMA_MAX_DESC) {
+	if (sg_len > KEYSTONE_RIO_DMA_MAX_DESC) {
 		dev_err(chan_dev(chan), "%s: SG list is too long (%d)\n", __func__, sg_len);
 		return NULL;
 	}
