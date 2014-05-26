@@ -1185,6 +1185,7 @@ static int keystone_rio_hw_init(u32 baud, struct keystone_rio_data *krio_priv)
 	u32 val;
 	u32 block;
 	u32 lsu_mask = 0;
+	u32 port;
 	int res = 0;
 	int i;
 
@@ -1214,7 +1215,7 @@ static int keystone_rio_hw_init(u32 baud, struct keystone_rio_data *krio_priv)
 
 	/* Set control register */
 	__raw_writel(krio_priv->board_rio_cfg.serdes_config.cfg_cntl,
-		&krio_priv->regs->per_set_cntl);
+		     &krio_priv->regs->per_set_cntl);
 
 	/* SerDes main configuration */
 	res = keystone_rio_serdes_config(baud, krio_priv);
@@ -1325,7 +1326,15 @@ static int keystone_rio_hw_init(u32 baud, struct keystone_rio_data *krio_priv)
 	/* Clear err captured packet info */
 	__raw_writel(0x00000000, &krio_priv->err_mgmt_regs->ctrl_capt);
 
-	__raw_writel(0x41004141, &krio_priv->phy_regs->phy_sp[0].__rsvd[3]);
+	/* Set per port information */
+	for (port = 0; port < KEYSTONE_RIO_MAX_PORT; port++) {
+		__raw_writel(0x41004141, &krio_priv->phy_regs->phy_sp[port].__rsvd[3]);
+
+		/* Set the baud rate of the port information */
+		val = __raw_readl(&krio_priv->serial_port_regs->sp[port].ctl2);
+		val |= BIT(24 - (baud << 1));
+		__raw_writel(val, &krio_priv->serial_port_regs->sp[port].ctl2);
+	}
 
 	/* Disable LSU to perform LSU configuration */
 	__raw_writel(0, &(krio_priv->regs->blk[KEYSTONE_RIO_BLK_LSU_ID].enable));
@@ -2893,6 +2902,40 @@ static int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 
 /*------------------------ Main Linux driver functions -----------------------*/
 
+static int keystone_rio_query_mport(struct rio_mport *mport,
+				    struct rio_mport_attr *attr)
+{
+	struct keystone_rio_data *krio_priv = mport->priv;
+	u32 port = mport->index;
+	u32 rval;
+
+	if (!attr)
+		return -EINVAL;
+
+	rval = __raw_readl(&krio_priv->serial_port_regs->sp[port].err_stat);
+	if (rval & RIO_PORT_N_ERR_STS_PORT_OK) {
+		rval = __raw_readl(&krio_priv->serial_port_regs->sp[port].ctl2);
+		attr->link_speed = (rval & RIO_PORT_N_CTL2_SEL_BAUD) >> 28;
+		rval = __raw_readl(&krio_priv->serial_port_regs->sp[port].ctl);
+		attr->link_width = (rval & RIO_PORT_N_CTL_IPW) >> 27;
+	} else
+		attr->link_speed = RIO_LINK_DOWN;
+
+#ifdef CONFIG_RAPIDIO_DMA_ENGINE
+	attr->flags        = RIO_MPORT_DMA; /* Supporting DMA but not HW SG mode*/
+	attr->dma_max_sge  = KEYSTONE_RIO_DMA_MAX_DESC - 1;
+	attr->dma_max_size = KEYSTONE_RIO_MAX_DIO_PKT_SIZE;
+	attr->dma_align    = KEYSTONE_RIO_DIO_ALIGNMENT;
+#else
+	attr->flags        = 0;
+	attr->dma_max_sge  = 0;
+	attr->dma_max_size = 0;
+	attr->dma_align    = 0;
+#endif
+
+	return 0;
+}
+
 struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 					      struct keystone_rio_data *krio_priv)
 {
@@ -2914,6 +2957,7 @@ struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 	ops->add_outb_message = keystone_rio_hw_add_outb_message;
 	ops->add_inb_buffer   = keystone_rio_hw_add_inb_buffer;
 	ops->get_inb_message  = keystone_rio_hw_get_inb_message;
+	ops->query_mport      = keystone_rio_query_mport;
 
 	mport = kzalloc(sizeof(struct rio_mport), GFP_KERNEL);
 
