@@ -69,38 +69,24 @@ struct dbell_cell {
 };
 
 struct rio_dev_private {
-	struct rio_dev  *rdev;
-	struct dma_chan *dma_chan;
-	u16              write_mode;
-	u64              base_offset;
+	struct rio_dev        *rdev;
+	struct dma_chan       *dma_chan;
+	u16                    write_mode;
+	u64                    base_offset;
+	struct rio_mport_attr  attr;
 };
-
-/*
- * Maximal number of DMA descriptors available for a DMA based transfer
- */
-#define MAX_DMA_TRANSFER_DESC 128
-
-/*
- * Maximal size for a single DMA transfer
- */
-#define MAX_DMA_TRANSFER_SIZE 0x100000
-
-#ifndef ARCH_HAS_SG_CHAIN
-#define MAX_DMA_TRANSFER(s)   ((MIN(SG_MAX_SINGLE_ALLOC, (s)) - 1) * PAGE_SIZE)
-#else
-#define MAX_DMA_TRANSFER(s)   (((s) - 1) * PAGE_SIZE)
-#endif
-#define MIN(a, b)             ((a) < (b) ? (a) : (b))
 
 /* DMA transfer timeout in msec */
 static int timeout = 3000;
 module_param(timeout, int, S_IRUGO);
 MODULE_PARM_DESC(timeout, "DMA Transfer Timeout in msec (default: 3000)");
 
-/* Indicates if DMA has hw scatter-gather */
-static bool dma_has_sg = 0;
-module_param(dma_has_sg, bool, S_IRUGO);
-MODULE_PARM_DESC(timeout, "DMA has hardware scatter-gather (default: 0)");
+/* Use DMA scatter-gather (even if driver has not hw support for SG) */
+static bool dma_use_sg = 0;
+module_param(dma_use_sg, bool, S_IRUGO);
+MODULE_PARM_DESC(dma_use_sg, "DMA Use DMA scatter-gather (default: 0)");
+
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
 
 static void rio_dev_dma_callback(void *completion)
 {
@@ -190,15 +176,19 @@ static int rio_dev_do_dma_request(struct dma_chan *chan, struct rio_mport *mport
 	tmo = wait_for_completion_interruptible_timeout(&cmp, tmo);
 	status = dma_async_is_tx_complete(chan, cookie, NULL, NULL);
 
-	if (tmo == 0) {
+	if (tmo == -ERESTARTSYS) {
+		ret = tmo;
+	} else	if (tmo == 0) {
 		pr_err(DRV_PREFIX "%s: timed out waiting for DMA\n", __func__);
 		ret = -ETIMEDOUT;
 	} else if (status != DMA_SUCCESS) {
 		pr_warn(DRV_PREFIX "%s: DMA completion with status %d\n",
 			__func__, status);
-		dmaengine_terminate_all(chan);
 		ret = -EIO;
 	}
+
+	if (ret)
+		dmaengine_terminate_all(chan);
 
 err_out:
 	dma_unmap_sg(chan->device->dev, sgt->sgl, sgt->nents, direction);
@@ -208,7 +198,7 @@ err_out:
 
 static int rio_dev_dma_transfer(struct dma_chan *chan, struct rio_mport *mport,
 				void __user *addr, u64 tgt_addr, u16 mode,
-				u16 dest_id, u32 length,
+				u16 dest_id, u32 length, int dma_has_sg,
 				enum dma_transfer_direction direction)
 {
 	unsigned int nr_pages = 0;
@@ -299,6 +289,7 @@ static ssize_t rio_dev_write(struct file *filp, const char __user *buf,
 {
 	struct rio_dev_private *rio_dev = filp->private_data;
 	struct rio_dev *rdev = rio_dev->rdev;
+	int dma_has_sg = rio_dev->attr.flags & RIO_MPORT_DMA_SG;
 	int res;
 	int write_pos = 0;
 	size_t count = size;
@@ -315,11 +306,11 @@ static ssize_t rio_dev_write(struct file *filp, const char __user *buf,
 
 	if (dma_has_sg) {
 		/* User zero-copy and scatter-gather user buffers */
-		transfer_size = MAX_DMA_TRANSFER(MAX_DMA_TRANSFER_DESC);
+		transfer_size = rio_dev->attr.dma_max_sge * PAGE_SIZE;
 		p = (char *) buf;
 	} else {
 		/* Use a kernel copy and maximal DMA transfer size */
-		transfer_size = MAX_DMA_TRANSFER_SIZE;
+		transfer_size = rio_dev->attr.dma_max_size;
 		p = src_buf = kmalloc(MIN(transfer_size, size), GFP_KERNEL);
 		if (p == NULL)
 			return -ENOMEM;
@@ -348,6 +339,7 @@ static ssize_t rio_dev_write(struct file *filp, const char __user *buf,
 					   rio_dev->write_mode,
 					   rdev->destid,
 					   write_sz,
+					   rio_dev->attr.flags & RIO_MPORT_DMA_SG,
 					   DMA_MEM_TO_DEV);
 		if (res) {
 			pr_debug(DRV_PREFIX "%s: write transfer failed (%d)\n",
@@ -378,6 +370,7 @@ static ssize_t rio_dev_read(struct file *filp, char __user *buf,
 {
 	struct rio_dev_private *rio_dev = filp->private_data;
 	struct rio_dev *rdev = rio_dev->rdev;
+	int dma_has_sg = rio_dev->attr.flags & RIO_MPORT_DMA_SG;
 	int res;
 	int read_pos = 0;
 	size_t count = size;
@@ -394,11 +387,11 @@ static ssize_t rio_dev_read(struct file *filp, char __user *buf,
 
 	if (dma_has_sg) {
 		/* User zero-copy and scatter-gather user buffers */
-		transfer_size = MAX_DMA_TRANSFER(MAX_DMA_TRANSFER_DESC);
+		transfer_size = rio_dev->attr.dma_max_sge * PAGE_SIZE;
 		p = (char *) buf;
 	} else {
 		/* Use a kernel copy and maximal DMA transfer size */
-		transfer_size = MAX_DMA_TRANSFER_SIZE;
+		transfer_size = rio_dev->attr.dma_max_size;
 		p = dst_buf = kmalloc(MIN(transfer_size, size), GFP_KERNEL);
 		if (p == NULL)
 			return -ENOMEM;
@@ -420,6 +413,7 @@ static ssize_t rio_dev_read(struct file *filp, char __user *buf,
 					   rio_dev->write_mode,
 					   rdev->destid,
 					   read_sz,
+					   rio_dev->attr.flags & RIO_MPORT_DMA_SG,
 					   DMA_DEV_TO_MEM);
 		if (res) {
 			pr_debug(DRV_PREFIX "%s: write transfer failed (%d)\n",
@@ -663,6 +657,7 @@ static long rio_dev_ioctl(struct file *filp,
 static int rio_dev_open(struct inode *inode, struct file *filp)
 {
 	struct rio_dev_private *rio_dev;
+	struct rio_mport *mport;
 	struct rio_dev *rdev;
 
 	rdev = rio_get_devt(inode->i_rdev, NULL);
@@ -673,19 +668,41 @@ static int rio_dev_open(struct inode *inode, struct file *filp)
 	if (rdev == NULL)
 		return -ENXIO;
 
+	mport = rdev->net->hport;
+
 	rio_dev = (struct rio_dev_private *) kmalloc(sizeof(*rio_dev), GFP_KERNEL);
 	if (rio_dev == NULL) {
 		rio_dev_put(rdev);
 		return -ENOMEM;
 	}
 
+	if (rio_query_mport(mport, &rio_dev->attr)) {
+		dev_err(&rdev->dev, "cannot get mport device attributes\n");
+		rio_dev_put(rdev);
+		kfree(rio_dev);
+		return -ENOTSUPP;
+	}
+
+	if (!rio_dev->attr.flags & RIO_MPORT_DMA) {
+		dev_err(&rdev->dev, "mport device does not support DMA\n");
+		rio_dev_put(rdev);
+		kfree(rio_dev);
+		return -ENOTSUPP;
+	}
+
+	/* If want to use SG and we have support SG list entries, force HW SG mode */
+	if (dma_use_sg && (rio_dev->attr.dma_max_sge != 1))
+		rio_dev->attr.flags |= RIO_MPORT_DMA_SG;
+
 	rio_dev->rdev        = rdev;
 	rio_dev->base_offset = 0;
 	rio_dev->write_mode  = RIO_DIO_MODE_WRITER;
-	rio_dev->dma_chan    = rio_request_dma(rdev->net->hport);
+
+	rio_dev->dma_chan    = rio_request_dma(mport);
 	if (rio_dev->dma_chan == NULL) {
 		dev_err(&rdev->dev, "cannot get DMA channel\n");
 		rio_dev_put(rdev);
+		kfree(rio_dev);
 		return -ENXIO;
 	}
 
