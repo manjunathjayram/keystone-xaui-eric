@@ -1,7 +1,7 @@
 /*
- * Texas Instruments 3-Port Ethernet Switch Address Lookup Engine
+ * Texas Instruments N-Port Ethernet Switch Address Lookup Engine
  *
- * Copyright (C) 2012 Texas Instruments
+ * Copyright (C) 2012-2014 Texas Instruments
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -31,8 +31,10 @@
 #define ALE_ENTRY_BITS		68
 #define ALE_ENTRY_WORDS	DIV_ROUND_UP(ALE_ENTRY_BITS, 32)
 
-#define ALE_VERSION_MAJOR(rev)	((rev >> 8) & 0xff)
+#define ALE_VERSION_MAJOR(rev)	((rev >> 8) & 0x7)
 #define ALE_VERSION_MINOR(rev)	(rev & 0xff)
+#define ALE_VERSION_1R3		0x0103
+#define ALE_VERSION_1R4		0x0104
 
 /* ALE Registers */
 #define ALE_IDVER		0x00
@@ -42,6 +44,12 @@
 #define ALE_TABLE_CONTROL	0x20
 #define ALE_TABLE		0x34
 #define ALE_PORTCTL		0x40
+/* ALE Rev 1.4 Specific Registers */
+#define ALE_UNKNOWNVLAN_MEMBER			0x90
+#define ALE_UNKNOWNVLAN_UNREG_MCAST_FLOOD	0x94
+#define ALE_UNKNOWNVLAN_REG_MCAST_FLOOD		0x98
+#define ALE_UNKNOWNVLAN_FORCE_UNTAG_EGRESS	0x9C
+#define ALE_VLAN_MASK_MUX(reg)			(0xc0 + (0x4 * reg))
 
 #define ALE_TABLE_WRITE		BIT(31)
 
@@ -60,8 +68,8 @@
 
 /* These bit lengths depend on the version of CPSW */
 #ifdef CONFIG_ARCH_KEYSTONE
-#define ALE_ENTRY_PORT_MASK_BITS	5
-#define ALE_ENTRY_PORT_NUM_BITS		3
+#define ALE_ENTRY_PORT_MASK_BITS	9
+#define ALE_ENTRY_PORT_NUM_BITS		4
 #define ALE_ENTRY_VLAN_FILED_BITS	5
 #define ALE_PORTCTL_BCAST_BITS		8
 #define ALE_UNKNOWN_VLAN_FIELD_BITS	5
@@ -120,6 +128,10 @@ DEFINE_ALE_FIELD(vlan_reg_mcast,	16,	ALE_ENTRY_VLAN_FILED_BITS)
 DEFINE_ALE_FIELD(vlan_unreg_mcast,	8,	ALE_ENTRY_VLAN_FILED_BITS)
 DEFINE_ALE_FIELD(vlan_member_list,	0,	ALE_ENTRY_VLAN_FILED_BITS)
 DEFINE_ALE_FIELD(mcast,			40,	1)
+/* ALE Rev 1.4 specific */
+DEFINE_ALE_FIELD(vlan_unreg_mcast_idx,	20,	3)
+DEFINE_ALE_FIELD(vlan_reg_mcast_idx,	44,	3)
+
 
 /* The MAC address field in the ALE entry cannot be macroized as above */
 static inline void cpsw_ale_get_addr(u32 *ale_entry, u8 *addr)
@@ -417,6 +429,38 @@ int cpsw_ale_del_mcast(struct cpsw_ale *ale, u8 *addr, int port_mask,
 	return 0;
 }
 
+/* ALE Rev 1.4 specific vlan functions */
+static void cpsw_ale_set_vlan_mcast(struct cpsw_ale *ale, u32 *ale_entry,
+				    int reg_mcast, int unreg_mcast)
+{
+	int idx;
+
+	/* Set VLAN registered multicast flood mask */
+	idx = cpsw_ale_get_vlan_reg_mcast_idx(ale_entry);
+	__raw_writel(reg_mcast, ale->params.ale_regs + ALE_VLAN_MASK_MUX(idx));
+
+	/* Set VLAN unregistered multicast flood mask */
+	idx = cpsw_ale_get_vlan_unreg_mcast_idx(ale_entry);
+	__raw_writel(unreg_mcast, ale->params.ale_regs +
+		     ALE_VLAN_MASK_MUX(idx));
+}
+
+static void cpsw_ale_get_vlan_mcast(struct cpsw_ale *ale, u32 *ale_entry,
+				    int *reg_mcast, int *unreg_mcast)
+{
+	int idx;
+
+	/* Get VLAN registered multicast flood mask */
+	idx = cpsw_ale_get_vlan_reg_mcast_idx(ale_entry);
+	*reg_mcast = __raw_readl(ale->params.ale_regs +
+				 ALE_VLAN_MASK_MUX(idx));
+
+	/* Get VLAN unregistered multicast flood mask */
+	idx = cpsw_ale_get_vlan_unreg_mcast_idx(ale_entry);
+	*unreg_mcast = __raw_readl(ale->params.ale_regs +
+				   ALE_VLAN_MASK_MUX(idx));
+}
+
 int cpsw_ale_add_vlan(struct cpsw_ale *ale, u16 vid, int port, int untag,
 		      int reg_mcast, int unreg_mcast)
 {
@@ -431,8 +475,11 @@ int cpsw_ale_add_vlan(struct cpsw_ale *ale, u16 vid, int port, int untag,
 	cpsw_ale_set_vlan_id(ale_entry, vid);
 
 	cpsw_ale_set_vlan_untag_force(ale_entry, untag);
-	cpsw_ale_set_vlan_reg_mcast(ale_entry, reg_mcast);
-	cpsw_ale_set_vlan_unreg_mcast(ale_entry, unreg_mcast);
+	if (ale->revision < ALE_VERSION_1R4) {
+		cpsw_ale_set_vlan_reg_mcast(ale_entry, reg_mcast);
+		cpsw_ale_set_vlan_unreg_mcast(ale_entry, unreg_mcast);
+	} else
+		cpsw_ale_set_vlan_mcast(ale, ale_entry, reg_mcast, unreg_mcast);
 	cpsw_ale_set_vlan_member_list(ale_entry, port);
 
 	if (idx < 0)
@@ -658,6 +705,39 @@ static const struct ale_control_info ale_controls[ALE_NUM_CONTROLS] = {
 		.port_shift	= 0,
 		.bits		= ALE_UNKNOWN_VLAN_FIELD_BITS,
 	},
+	/* ALE Rev 1.4 specific ALE controls */
+	[ALE_PORT_UNKNOWN_VLAN_MEMBER_1R4] = {
+		.name		= "unknown_vlan_member_1r4",
+		.offset		= ALE_UNKNOWNVLAN_MEMBER,
+		.port_offset	= 0,
+		.shift		= 0,
+		.port_shift	= 0,
+		.bits		= 9,
+	},
+	[ALE_PORT_UNKNOWN_MCAST_FLOOD_1R4] = {
+		.name		= "unknown_mcast_flood_1r4",
+		.offset		= ALE_UNKNOWNVLAN_UNREG_MCAST_FLOOD,
+		.port_offset	= 0,
+		.shift		= 0,
+		.port_shift	= 0,
+		.bits		= 9,
+	},
+	[ALE_PORT_UNKNOWN_REG_MCAST_FLOOD_1R4] = {
+		.name		= "unknown_reg_flood_1r4",
+		.offset		= ALE_UNKNOWNVLAN_REG_MCAST_FLOOD,
+		.port_offset	= 0,
+		.shift		= 0,
+		.port_shift	= 0,
+		.bits		= 9,
+	},
+	[ALE_PORT_UNTAGGED_EGRESS_1R4] = {
+		.name		= "unknown_force_untag_egress_1r4",
+		.offset		= ALE_UNKNOWNVLAN_FORCE_UNTAG_EGRESS,
+		.port_offset	= 0,
+		.shift		= 0,
+		.port_shift	= 0,
+		.bits		= 9,
+	},
 };
 
 int cpsw_ale_control_set(struct cpsw_ale *ale, int port, int control,
@@ -754,13 +834,21 @@ static int cpsw_ale_dump_ucast(u32 *ale_entry, char *buf, int len)
 	return outlen;
 }
 
-static int cpsw_ale_dump_vlan(u32 *ale_entry, char *buf, int len)
+static int cpsw_ale_dump_vlan(struct cpsw_ale *ale, u32 *ale_entry,
+			      char *buf, int len)
 {
 	int outlen = 0;
 	int force_utag_egress	= cpsw_ale_get_vlan_untag_force(ale_entry);
-	int reg_mc_fld		= cpsw_ale_get_vlan_reg_mcast(ale_entry);
-	int unreg_mc_fld	= cpsw_ale_get_vlan_unreg_mcast(ale_entry);
+	int reg_mc_fld;
+	int unreg_mc_fld;
 	int mem_list		= cpsw_ale_get_vlan_member_list(ale_entry);
+
+	if (ale->revision < ALE_VERSION_1R4) {
+		reg_mc_fld = cpsw_ale_get_vlan_reg_mcast(ale_entry);
+		unreg_mc_fld = cpsw_ale_get_vlan_unreg_mcast(ale_entry);
+	} else
+		cpsw_ale_get_vlan_mcast(ale, ale_entry, &reg_mc_fld,
+					&unreg_mc_fld);
 
 	outlen += snprintf(buf + outlen, len - outlen,
 			   "force_untag_egress: %02x, ", force_utag_egress);
@@ -773,7 +861,8 @@ static int cpsw_ale_dump_vlan(u32 *ale_entry, char *buf, int len)
 	return outlen;
 }
 
-static int cpsw_ale_dump_entry(int idx, u32 *ale_entry, char *buf, int len)
+static int cpsw_ale_dump_entry(struct cpsw_ale *ale, int idx, u32 *ale_entry,
+			       char *buf, int len)
 {
 	int type, outlen = 0;
 	u8 addr[6];
@@ -810,7 +899,7 @@ static int cpsw_ale_dump_entry(int idx, u32 *ale_entry, char *buf, int len)
 	}
 
 	if (type == ALE_TYPE_VLAN)
-		outlen += cpsw_ale_dump_vlan(ale_entry,
+		outlen += cpsw_ale_dump_vlan(ale, ale_entry,
 				buf + outlen, len - outlen);
 	else
 		outlen += cpsw_ale_get_mcast(ale_entry) ?
@@ -936,7 +1025,7 @@ static ssize_t cpsw_ale_table_show(struct device *dev,
 	for (idx = start; (idx < ale->params.ale_entries) &&
 			(len > total_outlen); idx++) {
 		cpsw_ale_read(ale, idx, ale_entry);
-		outlen = cpsw_ale_dump_entry(idx, ale_entry,
+		outlen = cpsw_ale_dump_entry(ale, idx, ale_entry,
 				buf + total_outlen, len - total_outlen);
 		if (outlen == 0) {
 			type = cpsw_ale_get_entry_type(ale_entry);
@@ -1472,6 +1561,7 @@ void cpsw_ale_start(struct cpsw_ale *ale)
 	rev = __raw_readl(ale->params.ale_regs + ALE_IDVER);
 	dev_dbg(ale->params.dev, "initialized cpsw ale revision %d.%d\n",
 		ALE_VERSION_MAJOR(rev), ALE_VERSION_MINOR(rev));
+	ale->revision = (ALE_VERSION_MAJOR(rev) << 8) | ALE_VERSION_MINOR(rev);
 	cpsw_ale_control_set(ale, 0, ALE_ENABLE, 1);
 	cpsw_ale_control_set(ale, 0, ALE_CLEAR, 1);
 
