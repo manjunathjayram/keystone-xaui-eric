@@ -376,8 +376,7 @@ int keystone_rio_lsu_start_transfer(int lsu,
 
 	/*
 	 * LSU Reg 5 -
-	 * doorbell info = packet_type[16-31]
-	 * hop count = 0 for this packet type
+	 * doorbell info = packet_type[16-31], hop count = packet_type [8-15]
 	 * FType = packet_type[4-7], TType = packet_type[0-3]
 	 * Writing this register will initiate the transfer
 	 */
@@ -665,12 +664,13 @@ static inline int keystone_rio_maint_request(int port_id,
 					     dma_addr_t buff,
 					     int buff_len,
 					     u16 size,
-					     u16 type,
+					     u16 packet_type,
 					     struct keystone_rio_data *krio_priv)
 {
 	int res;
 	u32 lsu_context;
 	u32 count = 0;
+	u32 type = ((hopcount & 0xff) << 8) | (packet_type & 0xff);
 
 	mutex_lock(&krio_priv->lsu_lock_maint);
 
@@ -1423,8 +1423,9 @@ static void keystone_rio_reset_dpc(struct work_struct *work)
 	u32 port;
 
 	ports_rst = __raw_readl(&krio_priv->evt_mgmt_regs->evt_mgmt_rst_port_stat);
-	dev_dbg(krio_priv->dev,
-		"reset device request received on ports: 0x%x\n", ports_rst);
+
+	dev_info(krio_priv->dev,
+		 "reset device request received on ports: 0x%x\n", ports_rst);
 
 	/* Acknowledge reset */
 	ports = ports_rst;
@@ -3152,7 +3153,8 @@ static int keystone_rio_get_controller_defaults(struct device_node *node,
 		for (i = 0; i < KEYSTONE_RIO_MAX_PORT; i++)
 			c->ports_remote[i] = i;
 
-		dev_warn(krio_priv->dev, "missing \"remote_ports\" parameter\n");
+		dev_warn(krio_priv->dev, "missing \"remote_ports\" parameter, "
+			 "using default mapping\n");
 	}
 
 	/* SerDes config */
