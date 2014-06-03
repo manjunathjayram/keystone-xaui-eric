@@ -40,6 +40,8 @@
 				0x02620328 4>;	/* rstmux8 register */
 		};
 
+		/include/ "keystone-clocks.dtsi"
+
 		gic: interrupt-controller@02560000 {
 			compatible = "arm,cortex-a15-gic";
 			#interrupt-cells = <3>;
