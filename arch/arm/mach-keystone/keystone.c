@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2012 Texas Instruments, Inc.
+ * Copyright 2010-2014 Texas Instruments, Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -195,8 +195,7 @@ static int __init keystone_init_misc(void)
 postcore_initcall(keystone_init_misc);
 
 static const char *keystone2_match[] __initconst = {
-	"ti,keystone-evm",
-	"ti,tci6638-evm",
+	"ti,keystone",
 	NULL,
 };
 
