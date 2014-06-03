@@ -37,7 +37,7 @@
 /include/ "k2hk.dtsi"
 
 / {
-	compatible = "ti,tci6638-evm";
+	compatible = "ti,k2hk-evm", "ti,keystone";
 
 	aliases {
 		ethernet1 = &interface1;
