@@ -28,8 +28,6 @@
 		reg = <0x00000000 0x80000000 0x00000000 0x20000000>;
 	};
 
-	/include/ "keystone-qostree.dtsi"
-
 	soc {
 		#address-cells = <1>;
 		#size-cells = <1>;
@@ -345,34 +343,6 @@
 					accumulator = <0 39 16 2 50>;
 					interrupts = <0 218 0xf01>;
 					multi-queue;
-				};
-				qos-inputs-1 {
-					values			= <8000 192>;
-					pdsp-id			= <3>;
-					ticks-per-sec		= <10000>;
-					qos-cfg			= <4 50 1 1 0xf00 0 0>;
-					sched-port-configs	= <0 20 0x1c8>;
-					drop-out-profiles	= <0 36 0xc>;
-					drop-cfg-profiles	= <0 8 0x14>;
-					drop-queue-configs	= <0 80 0x4>;
-					statistics-profiles	= <0 48>;
-					drop-policies		= <&droppolicies>;
-					qos-tree		= <&qostree>;
-					reserved;
-				};
-				qos-inputs-2 {
-					values			= <6400 192>;
-					pdsp-id			= <7>;
-					ticks-per-sec		= <10000>;
-					qos-cfg			= <4 50 1 1 0xf00 0 0>;
-					sched-port-configs	= <0 20 0x1c8>;
-					drop-out-profiles	= <0 36 0xc>;
-					drop-cfg-profiles	= <0 8 0x14>;
-					drop-queue-configs	= <0 80 0x4>;
-					statistics-profiles	= <0 48>;
-					drop-policies		= <&droppolicies>;
-					qos-tree		= <&qostree2>;
-					reserved;
 				};
 			};
 			regions {
