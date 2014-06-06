@@ -104,7 +104,22 @@ fw-shipped-$(CONFIG_TI_KEYSTONE) += keystone/sa_pdsp0_1_0_2_1.fw \
 				    keystone/pa_pdsp3_classify2.fw \
 				    keystone/pa_pdsp45_pam.fw \
 				    keystone/qmss_pdsp_acc48_k2_le_1_0_0_8.fw \
-				    keystone/qmss_pdsp_qos_k2_le_2_0_1_7.fw
+				    keystone/qmss_pdsp_qos_k2_le_2_0_1_7.fw \
+				    keystone/pa_in0_pdsp0.fw \
+				    keystone/pa_in0_pdsp1.fw \
+				    keystone/pa_in1_pdsp0.fw \
+				    keystone/pa_in1_pdsp1.fw \
+				    keystone/pa_in2_pdsp0.fw \
+				    keystone/pa_in3_pdsp0.fw \
+				    keystone/pa_in4_pdsp0.fw \
+				    keystone/pa_in4_pdsp1.fw \
+				    keystone/pa_post_pdsp0.fw \
+				    keystone/pa_post_pdsp1.fw \
+				    keystone/pa_eg0_pdsp0.fw \
+				    keystone/pa_eg0_pdsp1.fw \
+				    keystone/pa_eg0_pdsp2.fw \
+				    keystone/pa_eg1_pdsp0.fw \
+				    keystone/pa_eg2_pdsp0.fw
 fw-shipped-$(CONFIG_TYPHOON) += 3com/typhoon.bin
 fw-shipped-$(CONFIG_USB_EMI26) += emi26/loader.fw emi26/firmware.fw \
 				  emi26/bitstream.fw
