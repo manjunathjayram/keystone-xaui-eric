@@ -38,6 +38,7 @@ struct cpsw_ale {
 	container_of(attr, struct cpsw_ale, ale_table_raw_attr)
 	int show_next;
 	int raw_show_next;
+	u32 revision;
 };
 
 enum cpsw_ale_control {
@@ -66,6 +67,11 @@ enum cpsw_ale_control {
 	ALE_PORT_UNTAGGED_EGRESS,
 	ALE_PORT_BCAST_LIMIT,
 	ALE_PORT_MCAST_LIMIT,
+	/* ALE Rev 1.4 specific port controls */
+	ALE_PORT_UNKNOWN_VLAN_MEMBER_1R4,
+	ALE_PORT_UNKNOWN_MCAST_FLOOD_1R4,
+	ALE_PORT_UNKNOWN_REG_MCAST_FLOOD_1R4,
+	ALE_PORT_UNTAGGED_EGRESS_1R4,
 	ALE_NUM_CONTROLS,
 };
 
