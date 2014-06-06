@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 Texas Instruments Incorporated
+ * Copyright (C) 2012 - 2014 Texas Instruments Incorporated
  * Authors: Sandeep Paulraj <s-paulraj@ti.com>
  *
  * This program is free software; you can redistribute it and/or
@@ -19,15 +19,6 @@
 #include <linux/delay.h>
 
 #include "keystone_net.h"
-
-#define SGMII_REG_BASE                  0x02090100
-#define SGMII_SERDES_BASE		0x02620340
-#define SGMII_SERDES_CFGPLL		0x0
-#define SGMII_SERDES_CFGRX0		0x4
-#define SGMII_SERDES_CFGTX0		0x8
-#define SGMII_SERDES_CFGRX1		0xC
-#define SGMII_SERDES_CFGTX1		0x10
-#define SGMII_SERDES_SIZE		0x14
 
 #define SGMII_SRESET_RESET		0x1
 #define SGMII_SRESET_RTRESET		0x2
@@ -68,29 +59,6 @@ static inline void sgmii_write_reg_bit(void __iomem *base, int reg, u32 val)
 {
 	__raw_writel((__raw_readl(base + reg) | val),
 			base + reg);
-}
-
-int serdes_init(void)
-{
-	void __iomem *sgmii_serdes;
-
-	sgmii_serdes = ioremap(SGMII_SERDES_BASE, SGMII_SERDES_SIZE);
-
-	sgmii_write_reg(sgmii_serdes, SGMII_SERDES_CFGPLL, 0x00000041);
-
-	udelay(2000);
-
-	sgmii_write_reg(sgmii_serdes, SGMII_SERDES_CFGRX0, 0x00700621);
-	sgmii_write_reg(sgmii_serdes, SGMII_SERDES_CFGRX1, 0x00700621);
-
-	sgmii_write_reg(sgmii_serdes, SGMII_SERDES_CFGTX0, 0x000108a1);
-	sgmii_write_reg(sgmii_serdes, SGMII_SERDES_CFGTX1, 0x000108a1);
-
-	udelay(2000);
-
-	iounmap(sgmii_serdes);
-
-	return 0;
 }
 
 /* port is 0 based */
@@ -199,128 +167,3 @@ int keystone_sgmii_config(void __iomem *sgmii_ofs,
 	return 0;
 }
 
-#define reg_rmw(addr, value, mask) \
-	__raw_writel(((__raw_readl(addr) & (~(mask))) | (value) ), (addr) )
-
-void serdes_init_6638_156p25Mhz()
-{
-	void __iomem *regs;
-	unsigned int cnt;
-
-	regs = ioremap(0x0232a000, 0x2000);
-
-	reg_rmw(regs + 0x0000, 0x00800000, 0xffff0000);
-	reg_rmw(regs + 0x0014, 0x00008282, 0x0000ffff);
-	reg_rmw(regs + 0x0060, 0x00142438, 0x00ffffff);
-	reg_rmw(regs + 0x0064, 0x00c3c700, 0x00ffff00);
-	reg_rmw(regs + 0x0078, 0x0000c000, 0x0000ff00);
-
-	reg_rmw(regs + 0x0204, 0x38000080, 0xff0000ff);
-	reg_rmw(regs + 0x0208, 0x00000000, 0x000000ff);
-	reg_rmw(regs + 0x020c, 0x02000000, 0xff000000);
-	reg_rmw(regs + 0x0210, 0x1b000000, 0xff000000);
-	reg_rmw(regs + 0x0214, 0x00006fb8, 0x0000ffff);
-	reg_rmw(regs + 0x0218, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs + 0x02ac, 0x00004400, 0x0000ff00);
-	reg_rmw(regs + 0x022c, 0x00200800, 0x00ffff00);
-	reg_rmw(regs + 0x0280, 0x00820082, 0x00ff00ff);
-	reg_rmw(regs + 0x0284, 0x1d0f0385, 0xffffffff);
-
-	reg_rmw(regs + 0x0404, 0x38000080, 0xff0000ff);
-	reg_rmw(regs + 0x0408, 0x00000000, 0x000000ff);
-	reg_rmw(regs + 0x040c, 0x02000000, 0xff000000);
-	reg_rmw(regs + 0x0410, 0x1b000000, 0xff000000);
-	reg_rmw(regs + 0x0414, 0x00006fb8, 0x0000ffff);
-	reg_rmw(regs + 0x0418, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs + 0x04ac, 0x00004400, 0x0000ff00);
-	reg_rmw(regs + 0x042c, 0x00200800, 0x00ffff00);
-	reg_rmw(regs + 0x0480, 0x00820082, 0x00ff00ff);
-	reg_rmw(regs + 0x0484, 0x1d0f0385, 0xffffffff);
-
-	reg_rmw(regs + 0x0604, 0x38000080, 0xff0000ff);
-	reg_rmw(regs + 0x0608, 0x00000000, 0x000000ff);
-	reg_rmw(regs + 0x060c, 0x02000000, 0xff000000);
-	reg_rmw(regs + 0x0610, 0x1b000000, 0xff000000);
-	reg_rmw(regs + 0x0614, 0x00006fb8, 0x0000ffff);
-	reg_rmw(regs + 0x0618, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs + 0x06ac, 0x00004400, 0x0000ff00);
-	reg_rmw(regs + 0x062c, 0x00200800, 0x00ffff00);
-	reg_rmw(regs + 0x0680, 0x00820082, 0x00ff00ff);
-	reg_rmw(regs + 0x0684, 0x1d0f0385, 0xffffffff);
-
-	reg_rmw(regs + 0x0804, 0x38000080, 0xff0000ff);
-	reg_rmw(regs + 0x0808, 0x00000000, 0x000000ff);
-	reg_rmw(regs + 0x080c, 0x02000000, 0xff000000);
-	reg_rmw(regs + 0x0810, 0x1b000000, 0xff000000);
-	reg_rmw(regs + 0x0814, 0x00006fb8, 0x0000ffff);
-	reg_rmw(regs + 0x0818, 0x758000e4, 0xffff00ff);
-	reg_rmw(regs + 0x08ac, 0x00004400, 0x0000ff00);
-	reg_rmw(regs + 0x082c, 0x00200800, 0x00ffff00);
-	reg_rmw(regs + 0x0880, 0x00820082, 0x00ff00ff);
-	reg_rmw(regs + 0x0884, 0x1d0f0385, 0xffffffff);
-
-	reg_rmw(regs + 0x0a00, 0x00000800, 0x0000ff00);
-	reg_rmw(regs + 0x0a08, 0x38a20000, 0xffff0000);
-	reg_rmw(regs + 0x0a30, 0x008a8a00, 0x00ffff00);
-	reg_rmw(regs + 0x0a84, 0x00000600, 0x0000ff00);
-	reg_rmw(regs + 0x0a94, 0x10000000, 0xff000000);
-	reg_rmw(regs + 0x0aa0, 0x81000000, 0xff000000);
-	reg_rmw(regs + 0x0abc, 0xff000000, 0xff000000);
-	reg_rmw(regs + 0x0ac0, 0x0000008b, 0x000000ff);
-	reg_rmw(regs + 0x0b08, 0x583f0000, 0xffff0000);
-	reg_rmw(regs + 0x0b0c, 0x0000004e, 0x000000ff);
-	reg_rmw(regs + 0x0000, 0x00000003, 0x000000ff);
-	reg_rmw(regs + 0x0a00, 0x0000005f, 0x000000ff);
-	reg_rmw(regs + 0x0a48, 0x00fd8c00, 0x00ffff00);
-	reg_rmw(regs + 0x0a54, 0x002fec72, 0x00ffffff);
-	reg_rmw(regs + 0x0a58, 0x00f92100, 0xffffff00);
-	reg_rmw(regs + 0x0a5c, 0x00040060, 0xffffffff);
-	reg_rmw(regs + 0x0a60, 0x00008000, 0xffffffff);
-	reg_rmw(regs + 0x0a64, 0x0c581220, 0xffffffff);
-	reg_rmw(regs + 0x0a68, 0xe13b0602, 0xffffffff);
-	reg_rmw(regs + 0x0a6c, 0xb8074cc1, 0xffffffff);
-	reg_rmw(regs + 0x0a70, 0x3f02e989, 0xffffffff);
-	reg_rmw(regs + 0x0a74, 0x00000001, 0x000000ff);
-	reg_rmw(regs + 0x0b20, 0x00370000, 0x00ff0000);
-	reg_rmw(regs + 0x0b1c, 0x37000000, 0xff000000);
-	reg_rmw(regs + 0x0b20, 0x0000005d, 0x000000ff);
-
-	/*Bring SerDes out of Reset if SerDes is Shutdown & is in Reset Mode*/
-	reg_rmw(regs + 0x0010, 0x00000000, 1 << 28);
-
-	/* Enable TX and RX via the LANExCTL_STS 0x0000 + x*4 */
-	reg_rmw(regs + 0x0228, 0x00000000, 1 << 29);
-	writel(0xF800f8c0, regs + 0x1fe0);
-	reg_rmw(regs + 0x0428, 0x00000000, 1 << 29);
-	writel(0xF800f8c0, regs + 0x1fe4);
-	reg_rmw(regs + 0x0628, 0x00000000, 1 << 29);
-	writel(0xF800f8c0, regs + 0x1fe8);
-	reg_rmw(regs + 0x0828, 0x00000000, 1 << 29);
-	writel(0xF800f8c0, regs + 0x1fec);
-
-	/*Enable pll via the pll_ctrl 0x0014*/
-	__raw_writel(0xe0000000, regs + 0x1ff4);
-
-	iounmap(regs);
-	regs = ioremap(0x02090000, 0x1000);
-
-	/*Waiting for SGMII Serdes PLL lock.*/
-	for (cnt = 10000;
-	     cnt > 0 && ((__raw_readl(regs + 0x114) & 0x10) == 0);
-	     cnt--);
-
-	for (cnt = 10000;
-	     cnt > 0 && ((__raw_readl(regs + 0x214) & 0x10) == 0);
-	     cnt--);
-
-	for (cnt = 10000;
-	     cnt > 0 && ((__raw_readl(regs + 0x414) & 0x10) == 0);
-	     cnt--);
-
-	for (cnt = 10000;
-	     cnt > 0 && ((__raw_readl(regs + 0x514) & 0x10) == 0);
-	     cnt--);
-
-	iounmap(regs);
-	udelay(200);
-}
