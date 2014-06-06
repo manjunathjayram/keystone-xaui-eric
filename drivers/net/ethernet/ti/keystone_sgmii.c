@@ -30,8 +30,9 @@
 #define SGMII_REG_STATUS_AUTONEG	BIT(2)
 #define SGMII_REG_CONTROL_AUTONEG	BIT(0)
 
-#define SGMII23_OFFSET(x)	((x - 2) * 0x100)
-#define SGMII_OFFSET(x)		((x <= 1) ? (x * 0x100) : (SGMII23_OFFSET(x)))
+#define SGMII23_OFFSET(x)	((x - 2) * SGMII_REGS_SIZE)
+#define SGMII_OFFSET(x)		((x <= 1) ? (x * SGMII_REGS_SIZE) : \
+					    (SGMII23_OFFSET(x)))
 /*
  * SGMII registers
  */
