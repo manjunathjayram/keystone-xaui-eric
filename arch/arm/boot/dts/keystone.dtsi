@@ -538,7 +538,7 @@
 			 * keystone soc code. Move rstctrl contents to this node
 			 */
 			compatible = "ti,keystone-sys";
-			interrupts = <0 24 0xf01>;
+			reg = <0x21010000 0x200>; /* DDR3 controller reg */
 		};
 
 		ssusb3_phy: ssusb3_phy {
