@@ -1,7 +1,7 @@
 /*
  * Copyright 2014 Texas Instruments, Inc.
  *
- * Keystone Hawking/Kepler SoC specific network driver device bindings
+ * Keystone 2 K2E SoC network node
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -9,14 +9,13 @@
  */
 
 netcp {
-	reg = <0x2090000 0xf00
+	reg = <0x24000000 0xf00
 		0x2620110 0x8>;
 	compatible = "ti,keystone-netcp";
-
 	clocks = <&paclk13>, <&clkcpgmac>, <&chipclk12>;
 	clock-names = "clk_pa", "clk_cpgmac", "cpsw_cpts_rft_clk";
 	dma-coherent;
-	streaming-regs = <0x02000604 0x4>;
+	streaming-regs = <0x24000500 0x40>;
 
 	interfaces {
 		interface0: interface-0 {
@@ -47,27 +46,72 @@ netcp {
 			efuse-mac = <0>;
 			/*local-mac-address = [02 18 31 7e 3e 7f]; */
 		};
+		interface4: interface-4 {
+			rx-channel = "netrx4";
+			rx-queue-depth = <128 128 0 0>;
+			rx-buffer-size = <1536 4096 0 0>;
+			efuse-mac = <0>;
+			/* local-mac-address = [02 18 31 7e 3e 80]; */
+		};
+		interface5: interface-5 {
+			rx-channel = "netrx5";
+			rx-queue-depth = <128 128 0 0>;
+			rx-buffer-size = <1536 4096 0 0>;
+			efuse-mac = <0>;
+			/* local-mac-address = [02 18 31 7e 3e 81]; */
+		};
+		interface6: interface-6 {
+			rx-channel = "netrx6";
+			rx-queue-depth = <128 128 0 0>;
+			rx-buffer-size = <1536 4096 0 0>;
+			efuse-mac = <0>;
+			/*local-mac-address = [02 18 31 7e 3e 82]; */
+		};
+		interface7: interface-7 {
+			rx-channel = "netrx7";
+			rx-queue-depth = <128 128 0 0>;
+			rx-buffer-size = <1536 4096 0 0>;
+			efuse-mac = <0>;
+			/*local-mac-address = [02 18 31 7e 3e 83]; */
+		};
 	};
 
-	cpsw: cpsw@2090000 {
-		label = "keystone-cpsw";
-		serdes_reg = <0x0232a000 0x2000>;
+	cpsw: cpsw@24200000 {
+		cpsw-ss-reg = <0x24200000 0x40000>;
+		label = "keystone-cpsw2";
+
+		/* serdes configuration registers */
+		serdes_reg = <0x0232a000 0x2000
+			      0x02324000 0x2000>;
 		serdes_at_probe = <1>;
+
+		/* Number of SerDes */
+		num-serdes = <2>;
+		/* Max number of lanes per each SerDes */
+		serdes-lanes = <4>;
+		/* SerDes reference clock 156.25 MHz */
+		serdes-ref-clk = <3>;
+		/* SerDes baud rate 5GBaud */
+		serdes-baud-rate = <1>;
+		/* SerDes quarter rate mode */
+		serdes-rate-mode = <2>;
+		/* SerDes loopback */
+		serdes-loopback = <0>;
+		/* SerDes PHY interface: SGMII */
+		serdes-phy-intf = <0>;
 
 		intf_tx_queues = <7>;
 
 		sgmii_module_ofs  = <0x100>;
-		sgmii_module34_ofs  = <0x400>;
-		switch_module_ofs = <0x800>;
-		host_port_reg_ofs = <0x834>;
-		slave_reg_ofs	  = <0x860>;
-		sliver_reg_ofs	  = <0x900>;
-				slave23_reg_ofs	  = <0xa00>;
-		hw_stats_reg_ofs  = <0xb00>;
-		cpts_reg_ofs	  = <0xd00>;
-		ale_reg_ofs	  = <0xe00>;
+		switch_module_ofs = <0x20000>;
+		host_port_reg_ofs = <0x21000>;
+		slave_reg_ofs	  = <0x22000>;
+		hw_stats_reg_ofs  = <0x3a000>;
+		cpts_reg_ofs	  = <0x3d000>;
+		ale_reg_ofs	  = <0x3e000>;
 
-		num_slaves  = <4>;
+		num_slaves  = <8>;
+
 		ale_ageout  = <30>;
 		ale_entries = <1024>;
 		ale_ports   = <5>;
@@ -106,6 +150,26 @@ netcp {
 				tx-channel = "nettx3";
 				tx_queue_depth = <32>;
 			};
+			interface-4 {
+				slave_port = <4>;
+				tx-channel = "nettx4";
+				tx_queue_depth = <32>;
+			};
+			interface-5 {
+				slave_port = <5>;
+				tx-channel = "nettx5";
+				tx_queue_depth = <32>;
+			};
+			interface-6 {
+				slave_port = <6>;
+				tx-channel = "nettx6";
+				tx_queue_depth = <32>;
+			};
+			interface-7 {
+				slave_port = <7>;
+				tx-channel = "nettx7";
+				tx_queue_depth = <32>;
+			};
 		};
 
 		slaves {
@@ -125,26 +189,43 @@ netcp {
 				label		= "slave3";
 				link-interface	= <2>;
 			};
+			slave4 {
+				label		= "slave4";
+				link-interface	= <2>;
+			};
+			slave5 {
+				label		= "slave5";
+				link-interface	= <2>;
+			};
+			slave6 {
+				label		= "slave6";
+				link-interface	= <2>;
+			};
+			slave7 {
+				label		= "slave7";
+				link-interface	= <2>;
+			};
 		};
 	};
 
-	pa: pa@2000000 {
-		label = "keystone-pa";
-		checksum-offload	= <1>; /* 1 - HW offload */
-		txhook-order		= <10>;
-		txhook-softcsum		= <40>;
-		rxhook-order		= <10>;
+	pa: pa@24000000 {
+		label = "keystone-pa2";
+		reg_base                = <0x24000000>;
+		checksum-offload        = <1>; /* 1 - HW offload */
+		txhook-order            = <10>;
+		txhook-softcsum         = <40>;
+		rxhook-order            = <10>;
 
-		tx_cmd_queue_depth	= <64>;
-		tx_data_queue_depth	= <1024>;
-		rx_pool_depth		= <64>;
-		rx_buffer_size		= <128>;
-		lut-ranges		= <0 43 56 63>;
+		tx_cmd_queue_depth      = <64>;
+		tx_data_queue_depth     = <1024>;
+		rx_pool_depth           = <64>;
+		rx_buffer_size          = <128>;
+		lut-ranges              = <0 43 56 63>;
 		/* mark_mcast_match	= <0x12345a00 0xffffff00>; */
 		/* force_no_hwtstamp; */
 	};
 
-	sa: sa@20c0000 {
+	sa: sa@24080000 {
 		label = "keystone-sa";
 		multi-interface;
 		interface-0;
@@ -315,3 +396,4 @@ netcpx: netcp@2f00000 {
 		};
 	};
 };
+

@@ -9,6 +9,10 @@
  */
 
 / {
+	aliases {
+		ethernet1 = &interface1;
+	};
+
 	cpus {
 		interrupt-parent = <&gic>;
 
@@ -655,6 +659,8 @@
 				};
 			};
 		};
+
+		/include/ "k2l-net.dtsi"
 
 		crypto: crypto@26080000 {
 			compatible = "ti,keystone-crypto";
