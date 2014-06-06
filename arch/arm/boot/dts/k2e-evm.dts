@@ -15,6 +15,16 @@
 / {
 	compatible = "ti,k2e-evm", "ti,keystone";
 
+	qostree: qos-tree {
+		output-queue = <910>;		/* allowed only on root node */
+	};
+
+	qostree2: qos-tree-2 {
+		output-queue = <910>;		/* allowed only on root node */
+	};
+
+	/include/ "keystone-qostree.dtsi"
+
 	soc {
 		clocks {
 			refclkmain: refclkmain {
@@ -79,6 +89,39 @@
 				partition@180000 {
 					label = "ubifs";
 					reg = <0x180000 0x1fe80000>;
+				};
+			};
+		};
+
+		hwqueue0: hwqueue@2a40000 {
+			queues {
+				qos-inputs-1 {
+					values			= <8000 192>;
+					pdsp-id			= <3>;
+					ticks-per-sec		= <10000>;
+					qos-cfg			= <4 50 1 1 0xf00 0 0>;
+					sched-port-configs	= <0 20 0x1c8>;
+					drop-out-profiles	= <0 36 0xc>;
+					drop-cfg-profiles	= <0 8 0x14>;
+					drop-queue-configs	= <0 80 0x4>;
+					drop-policies           = <&droppolicies>;
+					qos-tree                = <&qostree>;
+					statistics-profiles	= <0 48>;
+					reserved;
+				};
+				qos-inputs-2 {
+					values			= <6400 192>;
+					pdsp-id			= <7>;
+					ticks-per-sec		= <10000>;
+					qos-cfg			= <4 50 1 1 0xf00 0 0>;
+					sched-port-configs	= <0 20 0x1c8>;
+					drop-out-profiles	= <0 36 0xc>;
+					drop-cfg-profiles	= <0 8 0x14>;
+					drop-queue-configs	= <0 80 0x4>;
+					drop-policies           = <&droppolicies>;
+					qos-tree                = <&qostree2>;
+					statistics-profiles	= <0 48>;
+					reserved;
 				};
 			};
 		};

@@ -9,6 +9,10 @@
  */
 
 / {
+	aliases {
+		ethernet1 = &interface1;
+	};
+
 	cpus {
 		interrupt-parent = <&gic>;
 
@@ -473,6 +477,8 @@
 			logical-queue-managers	= <2>;
 			qm-base-address = <0x23a80000 0x23a90000>;
 		};
+
+		/include/ "k2e-net.dtsi"
 
 		crypto: crypto@24080000 {
 			compatible = "ti,keystone-crypto";
