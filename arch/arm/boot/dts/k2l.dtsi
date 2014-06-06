@@ -671,6 +671,11 @@
 			sc-id = <0x7000 0x71ff>;
 		};
 
+		sysctrl {
+			interrupts = <0 24 0xf01>, /* L1L2 ECC error interrupt */
+				     <0 448 0xf04>; /* DDR3 ECC error interrupt */
+		};
+
 		pmu {
 			compatible = "arm,cortex-a15-pmu";
 			interrupts = <0 20 0xf01>,
