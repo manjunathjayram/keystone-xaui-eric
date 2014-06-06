@@ -1,0 +1,87 @@
+/*
+ * Copyright 2014 Texas Instruments, Inc.
+ *
+ * Keystone 2 Edison EVM device tree file
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+/dts-v1/;
+
+/include/ "keystone.dtsi"
+/include/ "k2e.dtsi"
+
+/ {
+	compatible = "ti,k2e-evm", "ti,keystone";
+
+	soc {
+		clocks {
+			refclkmain: refclkmain {
+				#clock-cells = <0>;
+				compatible = "fixed-clock";
+				clock-frequency = <100000000>;
+				clock-output-names = "refclk-main";
+			};
+
+			refclkpass: refclkpass {
+				#clock-cells = <0>;
+				compatible = "fixed-clock";
+				clock-frequency = <100000000>;
+				clock-output-names = "refclk-pass";
+			};
+		};
+
+		aemif@30000000 {
+			nand_cs:cs2@30000000 {
+				compatible = "ti,davinci-cs";
+				#address-cells = <1>;
+				#size-cells = <1>;
+				/* all timings in nanoseconds */
+				ti,davinci-cs-ta = <12>;
+				ti,davinci-cs-rhold = <6>;
+				ti,davinci-cs-rstrobe = <23>;
+				ti,davinci-cs-rsetup = <9>;
+				ti,davinci-cs-whold = <8>;
+				ti,davinci-cs-wstrobe = <23>;
+				ti,davinci-cs-wsetup = <8>;
+			};
+
+			nand@2,0 {
+				compatible = "ti,davinci-nand";
+				reg = <2 0x0 0x8000000
+					6 0x0 0x100>;
+				#address-cells = <1>;
+				#size-cells = <1>;
+				ti,davinci-chipselect = <0>;
+				ti,davinci-mask-ale = <0x2000>;
+				ti,davinci-mask-cle = <0x4000>;
+				ti,davinci-mask-chipsel = <0>;
+				ti,davinci-ecc-mode = "hw";
+				ti,davinci-ecc-bits = <4>;
+				ti,davinci-nand-use-bbt;
+				ti,davinci-no-subpage-write;
+				clocks = <&clkaemif>;
+				clock-names = "aemif";
+
+				partition@0 {
+					label = "u-boot";
+					reg = <0x0 0x100000>;
+					read-only;
+				};
+
+				partition@100000 {
+					label = "params";
+					reg = <0x100000 0x80000>;
+					read-only;
+				};
+
+				partition@180000 {
+					label = "ubifs";
+					reg = <0x180000 0x1fe80000>;
+				};
+			};
+		};
+	};
+};
+
