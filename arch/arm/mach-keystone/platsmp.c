@@ -19,6 +19,7 @@
 #include <linux/init.h>
 #include <linux/smp.h>
 #include <linux/io.h>
+#include <linux/of.h>
 
 #include <asm/smp.h>
 #include <asm/smp_plat.h>
