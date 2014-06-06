@@ -555,6 +555,11 @@
 			};
 		};
 
+		sysctrl {
+			interrupts = <0 24 0xf01>, /* L1L2 ECC error interrupt */
+				     <0 388 0xf01>; /* DDR3 ECC error interrupt */
+		};
+
 		pmu {
 			compatible = "arm,cortex-a15-pmu";
 			interrupts = <0 20 0xf01>,
