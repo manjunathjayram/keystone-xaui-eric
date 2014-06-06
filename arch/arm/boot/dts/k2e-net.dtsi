@@ -208,6 +208,23 @@ netcp {
 		};
 	};
 
+	pa: pa@24000000 {
+		label = "keystone-pa2";
+		reg_base                = <0x24000000>;
+		checksum-offload        = <1>; /* 1 - HW offload */
+		txhook-order            = <10>;
+		txhook-softcsum         = <40>;
+		rxhook-order            = <10>;
+
+		tx_cmd_queue_depth      = <64>;
+		tx_data_queue_depth     = <1024>;
+		rx_pool_depth           = <64>;
+		rx_buffer_size          = <128>;
+		lut-ranges              = <0 43 56 63>;
+		/* mark_mcast_match	= <0x12345a00 0xffffff00>; */
+		/* force_no_hwtstamp; */
+	};
+
 	sa: sa@24080000 {
 		label = "keystone-sa";
 		multi-interface;
