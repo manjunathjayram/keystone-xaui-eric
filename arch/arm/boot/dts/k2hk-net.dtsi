@@ -51,6 +51,7 @@ netcp {
 
 	cpsw: cpsw@2090000 {
 		label = "keystone-cpsw";
+		serdes_reg = <0x0232a000 0x2000>;
 		serdes_at_probe = <1>;
 
 		intf_tx_queues = <7>;
