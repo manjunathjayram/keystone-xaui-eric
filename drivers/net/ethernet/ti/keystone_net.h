@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 Texas Instruments
+ * Copyright (C) 2012 - 2014 Texas Instruments
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -36,8 +36,6 @@
 #define XGMII_LINK_MAC_PHY		10
 #define XGMII_LINK_MAC_MAC_FORCED	11
 
-int serdes_init(void);
-void serdes_init_6638_156p25Mhz(void);
 int keystone_sgmii_reset(void __iomem *sgmii_ofs, int port);
 int keystone_sgmii_link_status(void __iomem *sgmii_ofs, int ports);
 int keystone_sgmii_get_port_link(void __iomem *sgmii_ofs, int port);
