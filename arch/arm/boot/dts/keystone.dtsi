@@ -210,8 +210,7 @@
 
 		gpio0: gpio@260bf00 {
 			compatible = "ti,keystone-gpio";
-			reg = <0x0260bf00 0x10
-				0x0260bf10 0x28>;
+			reg = <0x0260bf00 0x38>;
 			gpio-controller;
 			#gpio-cells = <2>;
 			/* HW Interrupts mapped to GPIO pins */
