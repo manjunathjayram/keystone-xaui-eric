@@ -350,23 +350,23 @@
 				ranges;
 				region-12 {
 					id = <12>;
-					values	= <10240 128>;	/* num_desc desc_size */
+					values	= <12288 128>;	/* num_desc desc_size */
 					link-index = <0x4000>;
 				};
 				region-13 {
 					id = <13>;
 					values	= <2048 256>;	/* num_desc desc_size */
-					link-index = <0x6800>;
+					link-index = <0x7000>;
 				};
 				region-14 {
 					id = <14>;
 					values	= <2048 128>;	/* num_desc desc_size */
-					link-index = <0x7000>;
+					link-index = <0x7800>;
 				};
 			};
 			descriptors {
 				pool-net {
-					values = <9216 128>;	/* num_desc desc_size */
+					values = <11264 128>;	/* num_desc desc_size */
 					region-id = <12>;
 				};
 				pool-rio {
