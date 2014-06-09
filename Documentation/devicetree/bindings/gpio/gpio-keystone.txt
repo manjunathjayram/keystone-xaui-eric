@@ -2,13 +2,8 @@ Keystone GPIO controller bindings
 
 Required properties:
 - compatible : Should be "ti,keystone-gpio"
-- reg : Address and length of the register set for the device. For
-	first bank, 2 reg entries required. At index 0 specify base
-	of common registers at the beginning of gpio address space that
-	includes BINTEN. This should have a size 0x10. At second index
-	specify base address of bank0 & 1. For subsequent bank, only
-	one reg entry should be specified and should be poiting to
-	base of the bank.
+- reg : Address and length of the register set for the device.
+	This is the base address of GPIO bank.
 - gpio-controller : Marks the device node as a gpio controller.
 - #gpio-cells : Should be 2.  First cell specify the pin number and
 	second is optional parameter (unused).
@@ -35,8 +30,7 @@ aliases {
 
 gpio0: gpio@2320000 {
 	compatible = "ti,keystone-gpio";
-	reg = <0x02320000 0x10
-		0x02320010 0x28>;
+	reg = <0x02320000 0x38>;
 	gpio-controller;
 	#gpio-cells = <2>;
 	interrupt-controller;
