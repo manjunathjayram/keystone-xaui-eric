@@ -149,7 +149,7 @@ netcp {
 		multi-interface;
 		interface-0;
 		interface-1;
-		tx_queue_depth = <32>;
+		tx_queue_depth = <1024>;
 	};
 
 	qos: qos@0 {
