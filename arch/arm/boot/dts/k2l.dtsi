@@ -11,6 +11,7 @@
 / {
 	aliases {
 		ethernet1 = &interface1;
+		gpio1   = &gpio1;
 	};
 
 	cpus {
@@ -27,6 +28,27 @@
 
 	soc {
 		/include/ "k2l-clocks.dtsi"
+
+		gpio1: gpio@2348000 {
+			compatible = "ti,keystone-gpio";
+			reg = <0x02348000 0x38>;
+			gpio-controller;
+			#gpio-cells = <2>;
+			/* HW Interrupts mapped to GPIO pins */
+			interrupts = <0 152 0xf01 0 153 0xf01 0 154 0xf01 0 155 0xf01 0 156 0xf01
+					0 157 0xf01 0 158 0xf01 0 159 0xf01 0 160 0xf01 0 161 0xf01
+					0 162 0xf01 0 163 0xf01 0 164 0xf01 0 165 0xf01 0 166 0xf01
+					0 167 0xf01 0 168 0xf01 0 169 0xf01 0 170 0xf01 0 171 0xf01
+					0 172 0xf01 0 173 0xf01 0 174 0xf01 0 175 0xf01 0 176 0xf01
+					0 177 0xf01 0 178 0xf01 0 179 0xf01 0 180 0xf01 0 181 0xf01
+					0 182 0xf01 0 183 0xf01>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+			clocks = <&clkgpio>;
+			clock-names = "gpio";
+			/* Pin Muxed. So enable only if pin muxed. */
+			status = "disabled";
+		};
 
 		ipcgpio1: gpio@2620244 {
 			compatible = "ti,keystone-ipc-gpio";
@@ -688,4 +710,18 @@
 				     <0 21 0xf01>;
 		};
 	};
+};
+
+&spi0 {
+	ti,davinci-spi-num-cs = <5>;
+};
+
+&spi1 {
+	ti,davinci-spi-num-cs = <3>;
+};
+
+&spi2 {
+	ti,davinci-spi-num-cs = <5>;
+	/* Pin muxed. Enable only if pin mux is configured for SPI2 */
+	status = "disabled";
 };
