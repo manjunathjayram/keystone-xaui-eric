@@ -682,6 +682,8 @@
 			};
 		};
 
+		/include/ "k2l-net.dtsi"
+
 		crypto: crypto@26080000 {
 			compatible = "ti,keystone-crypto";
 			dma-coherent;

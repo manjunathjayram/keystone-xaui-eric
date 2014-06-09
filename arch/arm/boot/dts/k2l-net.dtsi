@@ -1,0 +1,221 @@
+/*
+ * Copyright 2014 Texas Instruments, Inc.
+ *
+ * Keystone 2 K2L SoC network node
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+
+netcp {
+	reg = <0x26000000 0xf00
+		0x2620110 0x8>;
+	compatible = "ti,keystone-netcp";
+	clocks = <&paclk13>, <&clkcpgmac>, <&chipclk12>;
+	clock-names = "clk_pa", "clk_cpgmac", "cpsw_cpts_rft_clk";
+	dma-coherent;
+	streaming-regs = <0x26000500 0x40>;
+
+	interfaces {
+		interface0: interface-0 {
+			rx-channel = "netrx0";
+			rx-queue-depth = <128 128 0 0>;
+			rx-buffer-size = <1536 4096 0 0>;
+			efuse-mac = <1>;
+			/* local-mac-address = [02 18 31 7e 3e 6e]; */
+		};
+		interface1: interface-1 {
+			rx-channel = "netrx1";
+			rx-queue-depth = <128 128 0 0>;
+			rx-buffer-size = <1536 4096 0 0>;
+			efuse-mac = <0>;
+			local-mac-address = [02 18 31 7e 3e 6f];
+		};
+		interface2: interface-2 {
+			rx-channel = "netrx2";
+			rx-queue-depth = <128 128 0 0>;
+			rx-buffer-size = <1536 4096 0 0>;
+			efuse-mac = <0>;
+			/*local-mac-address = [02 18 31 7e 3e 7e]; */
+		};
+		interface3: interface-3 {
+			rx-channel = "netrx3";
+			rx-queue-depth = <128 128 0 0>;
+			rx-buffer-size = <1536 4096 0 0>;
+			efuse-mac = <0>;
+			/*local-mac-address = [02 18 31 7e 3e 7f]; */
+		};
+	};
+
+	cpsw: cpsw@26200000 {
+		cpsw-ss-reg = <0x26200000 0x40000>;
+		label = "keystone-cpsw2";
+
+		/* serdes configuration registers */
+		serdes_reg = <0x0232a000 0x2000
+			      0x02320000 0x2000>;
+		serdes_at_probe = <1>;
+
+		/* Number of SerDes */
+		num-serdes = <2>;
+		/* Max number of lanes per each SerDes */
+		serdes-lanes = <2>;
+		/* SerDes reference clock 156.25 MHz */
+		serdes-ref-clk = <3>;
+		/* SerDes baud rate 5GBaud */
+		serdes-baud-rate = <1>;
+		/* SerDes quarter rate mode */
+		serdes-rate-mode = <2>;
+		/* SerDes loopback */
+		serdes-loopback = <0>;
+		/* SerDes PHY interface: SGMII */
+		serdes-phy-intf = <0>;
+
+		intf_tx_queues = <7>;
+
+		sgmii_module_ofs  = <0x100>;
+		switch_module_ofs = <0x20000>;
+		host_port_reg_ofs = <0x21000>;
+		slave_reg_ofs	  = <0x22000>;
+		hw_stats_reg_ofs  = <0x3a000>;
+		cpts_reg_ofs	  = <0x3d000>;
+		ale_reg_ofs	  = <0x3e000>;
+
+		num_slaves  = <4>;
+
+		ale_ageout  = <30>;
+		ale_entries = <1024>;
+		ale_ports   = <5>;
+
+		cpts_rftclk_sel = <0>;
+		/*cpts_rftclk_freq = <399360000>;*/
+		cpts_ts_comp_length = <3>;
+		cpts_ts_comp_polarity = <1>;  /* 1 - assert high */
+		cpts_clock_mult = <5000>;
+		cpts_clock_shift = <10>;
+		cpts_clock_div = <3>;
+		/* force_no_hwtstamp; */
+
+		multi-interface;
+		num-interfaces = <4>;
+		slaves-per-interface = <1>;
+
+		interfaces {
+			interface-0 {
+				slave_port = <0>;
+				tx-channel = "nettx0";
+				tx_queue_depth = <32>;
+			};
+			interface-1 {
+				slave_port = <1>;
+				tx-channel = "nettx1";
+				tx_queue_depth = <32>;
+			};
+			interface-2 {
+				slave_port = <2>;
+				tx-channel = "nettx2";
+				tx_queue_depth = <32>;
+			};
+			interface-3 {
+				slave_port = <3>;
+				tx-channel = "nettx3";
+				tx_queue_depth = <32>;
+			};
+		};
+
+		slaves {
+			slave0 {
+				label		= "slave0";
+				link-interface	= <4>;
+			};
+			slave1 {
+				label		= "slave1";
+				link-interface	= <4>;
+			};
+			slave2 {
+				label		= "slave2";
+				link-interface	= <2>;
+			};
+			slave3 {
+				label		= "slave3";
+				link-interface	= <2>;
+			};
+		};
+	};
+
+	sa: sa@26080000 {
+		label = "keystone-sa";
+		multi-interface;
+		interface-0;
+		interface-1;
+		tx_queue_depth = <32>;
+	};
+
+	qos: qos@0 {
+		label = "keystone-qos";
+		multi-interface;
+
+		interface-0 {
+			chan-0 {
+				tx-channel = "qos-bypass-0";
+				tx_queue_depth = <1024>;
+			};
+			chan-1 {
+				tx-channel = "qos0";
+				tx_queue_depth = <64>;
+			};
+			chan-2 {
+				tx-channel = "qos1";
+				tx_queue_depth = <64>;
+			};
+			chan-3 {
+				tx-channel = "qos2";
+				tx_queue_depth = <64>;
+			};
+			chan-4 {
+				tx-channel = "qos3";
+				tx_queue_depth = <64>;
+			};
+			chan-5 {
+				tx-channel = "qos4";
+				tx_queue_depth = <64>;
+			};
+			chan-6 {
+				tx-channel = "qos5";
+				tx_queue_depth = <64>;
+			};
+		};
+		interface-1 {
+			chan-0 {
+				tx-channel = "qos-bypass-1";
+				tx_queue_depth = <1024>;
+			};
+			chan-1 {
+				tx-channel = "qos6";
+				tx_queue_depth = <64>;
+			};
+			chan-2 {
+				tx-channel = "qos7";
+				tx_queue_depth = <64>;
+			};
+			chan-3 {
+				tx-channel = "qos8";
+				tx_queue_depth = <64>;
+			};
+			chan-4 {
+				tx-channel = "qos9";
+				tx_queue_depth = <64>;
+			};
+			chan-5 {
+				tx-channel = "qos10";
+				tx_queue_depth = <64>;
+			};
+			chan-6 {
+				tx-channel = "qos11";
+				tx_queue_depth = <64>;
+			};
+		};
+	};
+};
+
