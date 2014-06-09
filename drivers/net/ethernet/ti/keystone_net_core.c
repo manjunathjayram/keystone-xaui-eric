@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 Texas Instruments Incorporated
+ * Copyright (C) 2012 - 2014 Texas Instruments Incorporated
  * Authors: Cyril Chemparathy <cyril@ti.com>
  *	    Sandeep Paulraj <s-paulraj@ti.com>
  *
@@ -47,6 +47,12 @@ static inline int emac_arch_get_mac_addr(char *x,
 
 	addr1 = __raw_readl(efuse_mac + 4);
 	addr0 = __raw_readl(efuse_mac);
+
+	/* tmp: workaround for MAC ID regs swapping issue */
+	if (!(addr0 & 0x00ff0000)) {
+		addr0 = addr1;
+		addr1 = __raw_readl(efuse_mac);
+	}
 
 	x[0] = (addr1 & 0x0000ff00) >> 8;
 	x[1] = addr1 & 0x000000ff;
@@ -1792,6 +1798,20 @@ u32 netcp_get_streaming_switch(struct netcp_device *netcp_device, int port)
 }
 EXPORT_SYMBOL(netcp_get_streaming_switch);
 
+u32 netcp_get_streaming_switch2(struct netcp_device *netcp_device, int port)
+{
+	u32 reg, offset = 0;
+	void __iomem *thread_map = netcp_device->streaming_switch;
+
+	if (port > 0)
+		/* each port has 8 priorities, which needs 8 bytes setting */
+		offset = (port - 1) * 8;
+
+	reg = readl(thread_map + offset) & 0xff;
+	return reg;
+}
+EXPORT_SYMBOL(netcp_get_streaming_switch2);
+
 u32 netcp_set_streaming_switch(struct netcp_device *netcp_device,
 				int port, u32 new_value)
 {
@@ -1816,6 +1836,36 @@ u32 netcp_set_streaming_switch(struct netcp_device *netcp_device,
 }
 EXPORT_SYMBOL(netcp_set_streaming_switch);
 
+u32 netcp_set_streaming_switch2(struct netcp_device *netcp_device,
+				   int port, u32 new_value)
+{
+	u32 reg, offset;
+	u32 old_value;
+	int i;
+	void __iomem *thread_map = netcp_device->streaming_switch;
+
+	reg = (new_value << 24) | (new_value << 16) |
+	      (new_value << 8) | (new_value);
+	if (port == 0) {
+		/* return 1st port priority 0 setting for all the ports */
+		old_value = readl(thread_map);
+		old_value &= 0xff;
+		for (i = 0; i < 16; i++, thread_map += 4)
+			writel(reg, thread_map);
+	} else {
+		/* each port has 8 priorities, which needs 8 bytes setting */
+		offset = (port - 1) * 8;
+
+		/* return priority 0 setting for the port */
+		old_value = readl(thread_map + offset);
+		old_value &= 0xff;
+		writel(reg, thread_map + offset);
+		writel(reg, thread_map + offset + 4);
+	}
+
+	return old_value;
+}
+EXPORT_SYMBOL(netcp_set_streaming_switch2);
 
 static const struct net_device_ops netcp_netdev_ops = {
 	.ndo_open		= netcp_ndo_open,
@@ -2186,6 +2236,8 @@ static struct platform_driver netcp_driver = {
 
 extern int  keystone_cpsw_init(void);
 extern void keystone_cpsw_exit(void);
+extern int  keystone_cpsw2_init(void);
+extern void keystone_cpsw2_exit(void);
 #ifdef CONFIG_TI_KEYSTONE_XGE
 extern int  keystone_cpswx_init(void);
 extern void keystone_cpswx_exit(void);
@@ -2210,6 +2262,10 @@ static int __init netcp_init(void)
 	if (err)
 		goto cpsw_fail;
 
+	err = keystone_cpsw2_init();
+	if (err)
+		goto cpsw_fail;
+
 #ifdef CONFIG_TI_KEYSTONE_XGE
 	err = keystone_cpswx_init();
 	if (err)
@@ -2230,6 +2286,7 @@ module_init(netcp_init);
 static void __exit netcp_exit(void)
 {
 	keystone_cpsw_exit();
+	keystone_cpsw2_exit();
 #ifdef CONFIG_TI_KEYSTONE_XGE
 	keystone_cpswx_exit();
 #endif
