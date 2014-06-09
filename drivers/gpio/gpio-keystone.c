@@ -31,6 +31,10 @@
 #define GPIO_IRQ_EN		(BIT(1) | BIT(0))
 
 struct gpio_regs {
+	u32	pid;
+	u32	pcr;
+	u32	binten;
+	u32	rsv;
 	u32	dir;
 	u32	out_data;
 	u32	set_data;
@@ -44,16 +48,20 @@ struct gpio_regs {
 };
 
 static struct gpio_regs gpio_bank_hw_reg = {
-	.dir		= 0x00,
-	.out_data	= 0x04,
-	.set_data	= 0x08,
-	.clr_data	= 0x0c,
-	.in_data	= 0x10,
-	.set_rise_trig	= 0x14,
-	.clr_rise_trig	= 0x18,
-	.set_fal_trig	= 0x1c,
-	.clr_fal_trig	= 0x20,
-	.intstat	= 0x24,
+	.pid		= 0,
+	.pcr		= 4,
+	.binten		= 8,
+	.rsv		= 0xc,
+	.dir		= 0x10,
+	.out_data	= 0x14,
+	.set_data	= 0x18,
+	.clr_data	= 0x1c,
+	.in_data	= 0x20,
+	.set_rise_trig	= 0x24,
+	.clr_rise_trig	= 0x28,
+	.set_fal_trig	= 0x2c,
+	.clr_fal_trig	= 0x30,
+	.intstat	= 0x34,
 };
 
 struct gpio_bank {
@@ -72,11 +80,6 @@ struct gpio_bank {
 	int hw_irqs[GPIOS_PER_BANK];
 };
 
-/* BINTEN is common to all banks */
-#define BINTEN_OFFSET		0x8
-
-static void __iomem *gpio_base;
-
 static const struct of_device_id keystone_gpio_dt_ids[] = {
 	{ .compatible = "ti,keystone-gpio", },
 	{ },
@@ -90,15 +93,15 @@ static int keystone_direction(struct gpio_bank *bank,
 	unsigned long flags;
 
 	spin_lock_irqsave(&bank->lock, flags);
-	temp = __raw_readl(bank->reg_base + regs->dir);
+	temp = readl(bank->reg_base + regs->dir);
 	if (out) {
 		temp &= ~mask;
-		__raw_writel(mask, value ? (bank->reg_base + regs->set_data) :
-					(bank->reg_base + regs->clr_data));
+		writel(mask, value ? (bank->reg_base + regs->set_data) :
+				(bank->reg_base + regs->clr_data));
 	} else {
 		temp |= mask;
 	}
-	__raw_writel(temp, bank->reg_base + regs->dir);
+	writel(temp, bank->reg_base + regs->dir);
 	spin_unlock_irqrestore(&bank->lock, flags);
 
 	return 0;
@@ -129,7 +132,7 @@ static int keystone_gpio_get(struct gpio_chip *chip, unsigned offset)
 	bank = container_of(chip, struct gpio_bank, chip);
 	regs = bank->regs;
 
-	return (1 << offset) & __raw_readl(bank->reg_base + regs->in_data);
+	return (1 << offset) & readl(bank->reg_base + regs->in_data);
 }
 
 static void
@@ -140,7 +143,7 @@ keystone_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
 
 	bank = container_of(chip, struct gpio_bank, chip);
 	regs = bank->regs;
-	__raw_writel((1 << offset), value ? (bank->reg_base + regs->set_data) :
+	writel((1 << offset), value ? (bank->reg_base + regs->set_data) :
 				(bank->reg_base + regs->clr_data));
 };
 
@@ -179,9 +182,9 @@ static void keystone_irq_handler(unsigned int irq, struct irq_desc *desc)
 	if (chip->irq_eoi)
 		chip->irq_eoi(&desc->irq_data);
 
-	status = __raw_readl(bank->reg_base + regs->intstat) & mask;
+	status = readl(bank->reg_base + regs->intstat) & mask;
 	if (status) {
-		__raw_writel(status, bank->reg_base + regs->intstat);
+		writel(status, bank->reg_base + regs->intstat);
 		virq = irq_linear_revmap(bank->irqdomain, gpio);
 		generic_handle_irq(virq);
 	}
@@ -200,6 +203,7 @@ static int keystone_gpio_to_irq(struct gpio_chip *chip, unsigned offset)
 
 static void keystone_setup_irq(struct gpio_bank *bank)
 {
+	struct gpio_regs *regs = bank->regs;
 	u32 val = 3 << bank->id;
 	int hw_irq;
 
@@ -208,7 +212,7 @@ static void keystone_setup_irq(struct gpio_bank *bank)
 		irq_set_chained_handler(bank->hw_irqs[hw_irq],
 					keystone_irq_handler);
 	}
-	__raw_writel(val, gpio_base + BINTEN_OFFSET);
+	writel(val, bank->reg_base + regs->binten);
 
 }
 
@@ -221,8 +225,8 @@ static void gpio_irq_disable(struct irq_data *d)
 
 	gpio = d->hwirq - bank->base;
 	mask = 1 << gpio;
-	__raw_writel(mask, bank->reg_base + regs->clr_fal_trig);
-	__raw_writel(mask, bank->reg_base + regs->clr_rise_trig);
+	writel(mask, bank->reg_base + regs->clr_fal_trig);
+	writel(mask, bank->reg_base + regs->clr_rise_trig);
 }
 
 static void gpio_irq_enable(struct irq_data *d)
@@ -236,9 +240,9 @@ static void gpio_irq_enable(struct irq_data *d)
 	mask = 1 << gpio;
 
 	if (status & IRQ_TYPE_EDGE_FALLING)
-		__raw_writel(mask, bank->reg_base + regs->set_fal_trig);
+		writel(mask, bank->reg_base + regs->set_fal_trig);
 	if (status & IRQ_TYPE_EDGE_RISING)
-		__raw_writel(mask, bank->reg_base + regs->set_rise_trig);
+		writel(mask, bank->reg_base + regs->set_rise_trig);
 }
 
 static int gpio_irq_type(struct irq_data *d, unsigned trigger)
@@ -352,36 +356,10 @@ static int keystone_gpio_probe(struct platform_device *pdev)
 		goto err_enable;
 	}
 
-	if (id == 0) {
-		/*
-		 * gpio base address is mapped for BINTEN register address
-		 * that is common across all banks
-		 */
-		gpio_base = keystone_gpio_iomap(pdev, IORESOURCE_MEM, 0, &ret);
-		if (!gpio_base) {
-			ret = -EINVAL;
-			goto err_enable;
-		}
-
-		/* map the bank base */
-		bank->reg_base = keystone_gpio_iomap(pdev, IORESOURCE_MEM, 1,
-							 &ret);
-		if (!bank->reg_base) {
-			ret = -EINVAL;
-			goto err_enable;
-		}
-	} else {
-		/*
-		 * bank0 should have been setup already and gpio_base to be
-		 * iomapped. For subsequent banks, just iomap the bank base
-		 */
-		bank->reg_base = keystone_gpio_iomap(pdev, IORESOURCE_MEM, 0,
-							&ret);
-		if (!bank->reg_base) {
-			ret = -EINVAL;
-			goto err_enable;
-		}
-	}
+	/* map the bank base */
+	bank->reg_base = keystone_gpio_iomap(pdev, IORESOURCE_MEM, 0, &ret);
+	if (!bank->reg_base)
+		goto err_enable;
 	bank->id = id;
 	bank->base = id * GPIOS_PER_BANK;
 	bank->dev = dev;
