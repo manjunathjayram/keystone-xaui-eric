@@ -868,7 +868,8 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 
 		sg_init_table(p_info->sg, NETCP_SGLIST_SIZE);
 		sg_set_buf(&p_info->sg[0], p_info->epib, sizeof(p_info->epib));
-		sg_set_buf(&p_info->sg[1], p_info->psdata, sizeof(p_info->psdata));
+		sg_set_buf(&p_info->sg[1], p_info->psdata,
+			   NETCP_MAX_RX_PSDATA_LEN * sizeof(u32));
 		sg_set_buf(&p_info->sg[2], data, size);
 
 		p_info->sg_ents = 2 + dma_map_sg(&netcp->pdev->dev, &p_info->sg[2],

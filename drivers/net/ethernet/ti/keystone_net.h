@@ -99,6 +99,8 @@ struct netcp_priv {
 	/* Common stuff first */
 	struct netcp_device		*netcp_device;
 	struct net_device		*ndev;
+	struct platform_device		*pdev;
+	struct device			*dev;
 	int				 cpsw_port;
 	/* Tx data path stuff */
 	struct netcp_hook_list		*txhook_list_array;
@@ -108,11 +110,8 @@ struct netcp_priv {
 	struct netcp_hook_list		*rxhook_list_array;
 	struct napi_struct		 napi;
 	/* Non data path stuff */
-	struct platform_device		*pdev;
-	struct device			*dev;
 	u32				 msg_enable;
 	spinlock_t			 lock;
-	struct net_device_stats		 stats;
 	int				 rx_packet_max;
 	const char			*rx_chan_name;
 	u32				 link_state;
@@ -127,6 +126,15 @@ struct netcp_priv {
 
 #define NETCP_SGLIST_SIZE	(MAX_SKB_FRAGS + 2)
 #define	NETCP_PSDATA_LEN	16
+
+/* Maximum number of psdata words that are used in the Rx direction.
+ * NOTE: this value should be updated if the drivers need to use more psdata.
+ * Current usage is:
+ * SA driver looks upto 4 words
+ * PA driver looks upto 6 words
+ */
+#define	NETCP_MAX_RX_PSDATA_LEN	6
+
 struct netcp_packet {
 	struct sk_buff			*skb;
 	struct netcp_priv		*netcp;
@@ -138,11 +146,13 @@ struct netcp_packet {
 						struct sk_buff *skb);
 	void				*primary_bufptr;
 	unsigned int			 primary_bufsiz;
-	int				 sg_ents;
-	struct scatterlist		 sg[NETCP_SGLIST_SIZE];
-	u32				 psdata[NETCP_PSDATA_LEN];
-	unsigned int			 psdata_len;
 	u32				 epib[4];
+	unsigned int			 psdata_len;
+	int				 sg_ents;
+	struct scatterlist		 sg[NETCP_SGLIST_SIZE]
+							____cacheline_aligned;
+	u32				 psdata[NETCP_PSDATA_LEN]
+							____cacheline_aligned;
 };
 
 static inline u32 *netcp_push_psdata(struct netcp_packet *p_info, unsigned bytes)
