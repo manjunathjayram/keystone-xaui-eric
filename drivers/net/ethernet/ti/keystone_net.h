@@ -146,6 +146,7 @@ struct netcp_packet {
 						struct sk_buff *skb);
 	void				*primary_bufptr;
 	unsigned int			 primary_bufsiz;
+	u32				 eflags;
 	u32				 epib[4];
 	unsigned int			 psdata_len;
 	int				 sg_ents;
