@@ -676,9 +676,9 @@ static void netcp_rx_complete(void *data)
 		netcp->rx_state != RX_STATE_POLL	&&
 		netcp->rx_state != RX_STATE_TEARDOWN);
 
-	/* sg[2] describes the primary buffer */
+	/* sg[3] describes the primary buffer */
 	/* Build a new sk_buff for this buffer */
-	dma_unmap_single(&netcp->pdev->dev, sg_dma_address(&p_info->sg[2]),
+	dma_unmap_single(&netcp->pdev->dev, sg_dma_address(&p_info->sg[3]),
 			p_info->primary_bufsiz, DMA_FROM_DEVICE);
 	skb = build_skb(p_info->primary_bufptr, p_info->primary_bufsiz);
 	if (unlikely(!skb)) {
@@ -686,8 +686,8 @@ static void netcp_rx_complete(void *data)
 		netcp_frag_free((p_info->primary_bufsiz <= PAGE_SIZE), 
 				p_info->primary_bufptr);
 		 /* Free other buffers in the scatterlist */
-		for (frags = 0, sg = sg_next(&p_info->sg[2]);
-				frags < NETCP_SGLIST_SIZE-3 && sg;
+		for (frags = 0, sg = sg_next(&p_info->sg[3]);
+				frags < NETCP_SGLIST_SIZE - 4 && sg;
 				++frags, sg = sg_next(sg)) {
 			dma_unmap_page(&netcp->pdev->dev, sg_dma_address(sg),
 					PAGE_SIZE, DMA_FROM_DEVICE);
@@ -700,12 +700,12 @@ static void netcp_rx_complete(void *data)
 
 	/* Update data, tail, and len */
 	skb_reserve(skb, NET_IP_ALIGN + NET_SKB_PAD);
-	len = sg_dma_len(&p_info->sg[2]);
+	len = sg_dma_len(&p_info->sg[3]);
 	__skb_put(skb, len);
 
-	/* Fill in the page fragment list from sg[3] and later */
-	for (frags = 0, sg = sg_next(&p_info->sg[2]);
-			frags < NETCP_SGLIST_SIZE-3 && sg;
+	/* Fill in the page fragment list from sg[4] and later */
+	for (frags = 0, sg = sg_next(&p_info->sg[3]);
+			frags < NETCP_SGLIST_SIZE - 4 && sg;
 			++frags, sg = sg_next(sg)) {
 		dma_unmap_page(&netcp->pdev->dev, sg_dma_address(sg),
 				PAGE_SIZE, DMA_FROM_DEVICE);
@@ -802,7 +802,7 @@ static void netcp_rxpool_free(void *arg, unsigned q_num, unsigned bufsize,
 	if (q_num == 0) {
 		struct netcp_packet *p_info = desc->callback_param;
 
-		dma_unmap_single(dev, sg_dma_address(&p_info->sg[2]),
+		dma_unmap_single(dev, sg_dma_address(&p_info->sg[3]),
 				p_info->primary_bufsiz, DMA_FROM_DEVICE);
 		netcp_frag_free((p_info->primary_bufsiz <= PAGE_SIZE), 
 				p_info->primary_bufptr);
@@ -870,11 +870,14 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		sg_set_buf(&p_info->sg[0], p_info->epib, sizeof(p_info->epib));
 		sg_set_buf(&p_info->sg[1], p_info->psdata,
 			   NETCP_MAX_RX_PSDATA_LEN * sizeof(u32));
-		sg_set_buf(&p_info->sg[2], data, size);
+		sg_set_buf(&p_info->sg[2], &p_info->eflags,
+			   sizeof(p_info->eflags));
+		sg_set_buf(&p_info->sg[3], data, size);
 
-		p_info->sg_ents = 2 + dma_map_sg(&netcp->pdev->dev, &p_info->sg[2],
-						 1, DMA_FROM_DEVICE);
-		if (p_info->sg_ents != 3) {
+		p_info->sg_ents = 3 + dma_map_sg(&netcp->pdev->dev,
+						 &p_info->sg[3], 1,
+						 DMA_FROM_DEVICE);
+		if (p_info->sg_ents != 4) {
 			dev_err(netcp->dev, "dma map failed\n");
 			netcp_frag_free((bufsiz <= PAGE_SIZE), bufptr);
 			kmem_cache_free(netcp_pinfo_cache, p_info);
@@ -882,10 +885,12 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		}
 
 		desc = dmaengine_prep_slave_sg(netcp->rx_channel, p_info->sg,
-					       3, DMA_DEV_TO_MEM,
-					       DMA_HAS_EPIB | DMA_HAS_PSINFO);
+					       4, DMA_DEV_TO_MEM,
+					       DMA_HAS_EPIB | DMA_HAS_PSINFO |
+					       DMA_HAS_EFLAGS);
 		if (IS_ERR_OR_NULL(desc)) {
-			dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
+			dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[3], 1,
+				     DMA_FROM_DEVICE);
 			netcp_frag_free((bufsiz <= PAGE_SIZE), bufptr);
 			kmem_cache_free(netcp_pinfo_cache, p_info);
 			err = PTR_ERR(desc);
