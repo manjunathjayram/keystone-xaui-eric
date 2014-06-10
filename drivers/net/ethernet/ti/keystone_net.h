@@ -283,6 +283,6 @@ int netcp_unregister_rxhook(struct netcp_priv *netcp_priv, int order,
 
 void *netcp_device_find_module(struct netcp_device *netcp_device,
 		const char *name);
-int xge_serdes_init_156p25Mhz(struct device_node *node);
+int xge_serdes_init(struct device_node *node);
 int keystone_pcsr_config(void __iomem *pcsr_ofs, int port, u32 interface);
 #endif
