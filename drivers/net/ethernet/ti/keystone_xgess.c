@@ -300,6 +300,7 @@ struct cpswx_priv {
 	struct kobject			pvlan_kobj;
 	struct kobject			stats_kobj;
 	spinlock_t			hw_stats_lock;
+	struct device_node              *serdes;
 };
 
 struct cpswx_intf {
@@ -319,6 +320,7 @@ struct cpswx_intf {
 	struct timer_list	 timer;
 	u32			 sgmii_link;
 	unsigned long		 active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
+	u32                      serdes_enabled;
 };
 
 /*
@@ -1701,6 +1703,13 @@ static void cpsw_slave_open(struct cpswx_slave *slave,
 				   (slave->phy->drv->name ?
 					slave->phy->drv->name : "") : ""));
 			cpsw_intf->ndev->phydev = slave->phy;
+
+			/* PHY is being started.  Signify to reconfig
+			   serdes to enable serdes link training.
+			*/
+			if (!slave->phy->priv)
+				cpsw_intf->serdes_enabled = 0;
+
 			phy_start(slave->phy);
 		}
 	}
@@ -2055,7 +2064,12 @@ static int cpswx_open(void *intf_mod_priv, struct net_device *ndev)
 				   PSTREAM_ROUTE_DMA);
 #endif
 
-	return 0;
+	if (!cpsw_intf->serdes_enabled) {
+		ret = xge_serdes_init(cpsw_dev->serdes);
+		cpsw_intf->serdes_enabled = 1;
+	}
+	if (!ret)
+		return 0;
 
 ale_fail:
 	netcp_txpipe_close(&cpsw_intf->tx_pipe);
@@ -2360,6 +2374,8 @@ static int cpswx_probe(struct netcp_device *netcp_device,
 
 	cpsw_dev->interfaces = interfaces;
 
+	cpsw_dev->serdes = of_get_child_by_name(node, "serdes");
+
 	if (cpsw_dev->init_serdes_at_probe == 1) {
 		cpsw_dev->clk = clk_get(cpsw_dev->dev, "clk_xge");
 		if (IS_ERR(cpsw_dev->clk)) {
@@ -2374,7 +2390,8 @@ static int cpswx_probe(struct netcp_device *netcp_device,
 		if (ret)
 			goto exit;
 
-		ret = xge_serdes_init_156p25Mhz(node);
+		/* needs the serdes pll to acces switch regs */
+		ret = xge_serdes_init(cpsw_dev->serdes);
 		if (ret)
 			goto exit;
 	}
