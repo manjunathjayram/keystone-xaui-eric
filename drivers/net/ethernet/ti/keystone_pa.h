@@ -97,42 +97,69 @@ struct pa_pdsp_config {
 #define PA_CMD_USR_STATS		13
 #define PA_CMD_CMDSET_AND_USR_STATS	14
 
+/* Interface based routing modes */
+#define PA_ROUTE_INTF_NONE	0 /* No interface based routing */
+#define PA_ROUTE_INTF_QUEUE	1 /* Route by interface number as dest queue
+				     offset */
+#define PA_ROUTE_INTF_FLOW	2 /* Route by interface number as both dest
+				     queue & CPPI flow offset */
+
 struct pa_frm_forward_host {
 
-	u32	context;	/* Context returned as swInfo0 for matched packet */
-	u8	multi_route;	/* True if multiple destination enabled */
+	u32	context; /* Context returned as swInfo0 for matched packet */
+	/*  Control bitmap, 1 for enable, 0 for disable
+	 *  /-----------------------------------------------------\
+	 *  | 7           |       2     |      1      |     0     |
+	 *  | Selection   |             |Flow IF Dest |           |
+	 *  | 0: Priority |             |    OR       |           |
+	 *  | 1: IF dest  |DSCP priority|VLAN priority| multiRoute|
+	 *  \-----------------------------------------------------/
+	 */
+	u8	ctrl_bm;
 	u8	multi_idx;	/* Index of the multiple destination set */
 	u8	pa_pdsp_router; /* PA PDSP number used as multi-route router */
-	u8	rsvd2;
-	u8	cmd[4];		/* optional simple command: 0 means no command */
+	u8	ps_flags;	/* use the bits 7:4.
+				   bit 7: Disable CRC,
+				   bit 6:4 port number (0/1/2),
+				   bit 3:0 errflags = 0
+				   psFlags may be required when the packet is
+				   forwarded through QoS queue */
+	u8	cmd[4];		/* optional simple command:0 means no command */
 }; /* 12 bytes */
+#define PAFRM_MULTIROUTE_ENABLE			0x1
+#define PAFRM_ROUTING_PRIORITY_DSCP_ENABLE	0x2
+#define PAFRM_ROUTING_PRIORITY_VLAN_ENABLE	0x4
+#define PAFRM_ROUTING_FLOW_IF_BASE_ENABLE	0x2 /* 0: queue-based only
+						       1: queue & flow-based */
+#define PAFRM_ROUTING_IF_DEST_SELECT_ENABLE	0x80
 
-/*
- * Routing information used to forward packets to the SA (via PKTDMA) 
- */
+
+/* Routing information used to forward packets to the SA (via PKTDMA) */
 struct pa_frm_forward_sa {
 
-	u32	sw_info_0;	/* Packet descriptor swInfo0 required by SA operation */
-	u32	sw_info_1;	/* Packet descriptor swInfo1 required by SA operation */
-	u8	cmd[4];		/* optional simple command: 0 means no command */
+	u32	sw_info_0;	/* Packet descriptor swInfo0 required by SA
+				   operation */
+	u32	sw_info_1;	/* Packet descriptor swInfo1 required by SA
+				   operation */
+	u8	cmd[4];		/* optional simple command:0 means no command */
 };
 
-/*
- * Routing information used to forward packets to the SRIO (via PKTDMA) 
- */
+/* Routing information used to forward packets to the SRIO (via PKTDMA) */
 struct pa_frm_forward_srio {
 
-	u32  ps_info0;		/* 8-byte protocol-specific information required by SRIO  */
+	u32  ps_info0;		/* 8-byte protocol-specific information
+				   required by SRIO  */
 	u32  ps_info1;		/* routing */
 	u8   pkt_type;		/* Packet type specified for SRIO operation */
 	u8   rsv4[3];
 };
 
-/*
- * Routing information used to forward packets to the Ethernet port 
- */
+/* Routing information used to forward packets to the Ethernet port */
 struct pa_frm_forward_eth {
-	u8	ps_flags;  /* use the bit 7:4 bit 7: Disable CRC, bit 6:4 port number (0/1/2) bit 3:0 errflags = 0*/
+	u8	ps_flags;  /* use the bit 7:4
+			      bit 7: Disable CRC,
+			      bit 6:4 port number (0/1/2)
+			      bit 3:0 errflags = 0*/
 	u8	rsvd1;
 	u16	rsvd2;
 	u32	rsvd3;
@@ -149,7 +176,8 @@ struct pa_frm_forward_pa {
 
 	u8	pa_dest;      /* PDSP destination */
 	u8	custom_type;  /* None, LUT1, LUT2 */
-	u8	custom_idx;   /* Index of the custom type if LUT1 or LUT2 custom */
+	u8	custom_idx;   /* Index of the custom type if LUT1 or LUT2
+				 custom */
 	u8	rsvd2;
 	u32	rsvd3;
 	u32	rsvd4;
@@ -159,21 +187,28 @@ struct pa_frm_forward_pa {
 #define PAFRM_CUSTOM_TYPE_LUT1 PA_CUSTOM_TYPE_LUT1    /* 1 */
 #define PAFRM_CUSTOM_TYPE_LUT2 PA_CUSTOM_TYPE_LUT2    /* 2 */
 
-/*
- * Routing information used to forward packets fromm PA sub-system to various destinations
+/* Routing information used to forward packets fromm PA sub-system to various
+ * destinations
  */
 struct pa_frm_forward  {
 
 	u8 forward_type;	/* Forwarding type as defined below */
-	u8 flow_id;		/* PKTDMA flow Id, valid if forwarding via PKTDMA */
-	u16 queue;		/* Destination queue number, valid if forwarding via PKTDMA */
+	u8 flow_id;		/* PKTDMA flow Id, valid if forwarding via
+				   PKTDMA */
+	u16 queue;		/* Destination queue number, valid if
+				   forwarding via PKTDMA */
   
 	union {
-		struct pa_frm_forward_host	host;    /* Host specific routing information */
-		struct pa_frm_forward_sa	sa;      /* SA specific routing information */
-		struct pa_frm_forward_srio	srio;    /* SRIO specific routing information */
-		struct pa_frm_forward_eth	eth;     /* Ethernet specific routing information */
-		struct pa_frm_forward_pa	pa;      /* PA internal routing information */
+		struct pa_frm_forward_host	host; /* Host specific routing
+							 information */
+		struct pa_frm_forward_sa	sa;   /* SA specific routing
+							 information */
+		struct pa_frm_forward_srio	srio; /* SRIO specific routing
+							 information */
+		struct pa_frm_forward_eth	eth;  /* Ethernet specific
+							 routing information */
+		struct pa_frm_forward_pa	pa;   /* PA internal routing
+							 information */
 	} u;
 };
 
@@ -350,7 +385,9 @@ enum {
 	PAFRM_CONFIG_COMMAND_REQ_VERSION,
 	PAFRM_CONFIG_COMMAND_MULTI_ROUTE,
 	PAFRM_CONFIG_COMMAND_CRC_ENGINE,
-	PAFRM_CONFIG_COMMAND_CMD_SET
+	PAFRM_CONFIG_COMMAND_CMD_SET,
+	PAFRM_CONFIG_COMMAND_USR_STATS,
+	PAFRM_CONFIG_COMMAND_SYS_CONFIG
 };
 
 /* Command magic value */
@@ -715,6 +752,7 @@ struct pa_cmd_info {
 	} params;
 };
 
+#define PAFRM_ROUTE_
 struct pa_route_info {
 	int	dest;
 	u8	flow_id;
@@ -725,6 +763,7 @@ struct pa_route_info {
 	int	custom_type;
 	u8	custom_index;                                    
 	u8	pkt_type_emac_ctrl;
+	u8	route_type;
 	struct pa_cmd_info *pcmd;
 };
 
@@ -735,7 +774,86 @@ struct pa_cmd_reply {
 	u8	flow_id;	/*  Flow ID used on command reply from PASS */
 };
 
+/* Exception routing enumeration */
+enum pa_eroutes {
+	EROUTE_LUT1_FAIL = 0,  /* packet failed to match in LUT1 table */
+	EROUTE_VLAN_MAX_DEPTH, /* packet exceeded maximum number of VLAN tags */
+	EROUTE_IP_MAX_DEPTH,   /* packet exceeded maximum number of IP
+				  headers */
+	EROUTE_MPLS_MAX_DEPTH, /* packet exceeded maximum number of MPLS
+				  headers */
+	EROUTE_GRE_MAX_DEPTH,  /* packet exceeded maximum number of GRE
+				  headers */
+	EROUTE_PARSE_FAIL,     /* packet failed to parse */
+	EROUTE_LUT2_FAIL,      /* packet failed to match in LUT2 table */
+	EROUTE_IP_FRAG,        /* IP fragmented packet found in classify2
+				  lookup */
+	EROUTE_IPV6_OPT_FAIL,  /* Packet failed due to unsupported IPV6 option
+				  header */
+	EROUTE_UDP_LITE_FAIL,  /* Udp lite checksum coverage invalid */
+	EROUTE_ROUTE_OPTION,   /* IPv4 strict source route or IPv6 routing
+				  extension header */
+	EROUTE_SYSTEM_FAIL,    /* Unknown system failure - should never
+				  happen */
+	EROUTE_MAC_BROADCAST,  /* MAC broadcast packet */
+	EROUTE_MAC_MULTICAST,  /* MAC multicast packet */
+	EROUTE_IP_BROADCAST,   /* IP broadcast packet */
+	EROUTE_IP_MULTICAST,   /* IP multicast packet */
+	EROUTE_GTPU_MESSAGE_TYPE_1,   /* GTP-U PING Request packet */
+	EROUTE_GTPU_MESSAGE_TYPE_2,   /* GTP-U PING Response packet */
+	EROUTE_GTPU_MESSAGE_TYPE_26,  /* GTP-U Error Indication packet */
+	EROUTE_GTPU_MESSAGE_TYPE_31,  /* GTP-U Supported Header Notification
+					 packet */
+	EROUTE_GTPU_MESSAGE_TYPE_254, /* GTP-U End Markr packet */
+	EROUTE_GTPU_FAIL,             /* packet failed due to GTPU parsing
+					 error or unsupporte dmessage types */
+	EROUTE_PPPOE_FAIL,            /* Packet failed due to PPPoE session
+					 packet parsing error */
+	EROUTE_PPPOE_CTRL,            /* PPPoE session stage non-IP packets */
+	EROUTE_802_1ag,               /* 802.1ag Packet*/
+	EROUTE_IP_FAIL,               /* Packet failed due to invalid IP
+					 header */
+	EROUTE_NAT_T_KEEPALIVE,       /* NAT-T Keep Alive packet where UDP
+					 Length = 9, data = 0xFF */
+	EROUTE_NAT_T_CTRL,            /* NAT-T control packet where UDP Length
+					 > 12 and the first 4 payload bytes are
+					 equal to 0 */
+	EROUTE_NAT_T_DATA,            /* NAT-T IPSEC ESP data packet where UDP
+					 Length > 12 and the first 4 payload
+					 bytes are not equal to 0 */
+	EROUTE_NAT_T_FAIL,            /* Invalid NAT-T packet */
+	EROUTE_GTPU_MATCH_FAIL,       /* Packet failed to match GTPU */
+	EROUTE_N_MAX                  /* Number of error routes */
+};
+
+/* exception route configuration */
+struct pa_frm_com_eroute {
+	/* Exception route vaild bitmap */
+	u32			route_bitmap;
+	/* Array of exception routing information */
+	struct pa_frm_forward	eroute[EROUTE_N_MAX];
+};
+
+/* PA system configuration command */
+struct pa_frm_command_sys_config_pa {
+	u8	cfg_code; /* system configuration code as defined below */
+	u8	rsvd1;
+	u16	rsvd2;    /* reserved for alignment */
+
+	union {
+		/* Exception routes configuration */
+		struct pa_frm_com_eroute eroute;
+	} u;
+};
+
+/* PA system configuration codes */
+#define PAFRM_SYSTEM_CONFIG_CODE_EROUTE         0
+#define PAFRM_SYSTEM_CONFIG_CODE_CUSTOM_LUT1    1
+#define PAFRM_SYSTEM_CONFIG_CODE_CUSTOM_LUT2    2
+#define PAFRM_SYSTEM_CONFIG_CODE_802_1AG        3
+#define PAFRM_SYSTEM_CONFIG_CODE_IPSEC_NAT_T    4
+#define PAFRM_SYSTEM_CONFIG_CODE_GTPU           5
+
 #endif /* __KERNEL__ */
 
 #endif /* KEYSTONE_PA_H */
-
