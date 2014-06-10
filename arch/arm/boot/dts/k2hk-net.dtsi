@@ -270,7 +270,6 @@ netcpx: netcp@2f00000 {
 		reg = <0x2f00000 0xa0600>;
 		label = "keystone-cpswx";
 		serdes_at_probe = <1>;
-		serdes_tx_ctrl_override = <0 0 5>; /* RTM-BOC cm c1 c2 */
 
 		intf_tx_queues = <1>;
 
@@ -317,6 +316,13 @@ netcpx: netcp@2f00000 {
 				link-interface	= <10>;	/* SGMII_LINK_MAC_PHY */
 				phy-handle	= <&phyx1>;
 			};
+		};
+
+		serdes {
+			/* ref_clock = <0> */ /* 0 - 156.25MHz */
+			/* link_rate = <0> */ /* 0 - 10.3125GHz */
+			tx_ctrl_override = <2 0 2 12 4>; /* c1 c2 cm tx_att tx_vreg */
+			equalizer_flags = <1 1 1>; /* vreg cdfe offset */
 		};
 	};
 };
