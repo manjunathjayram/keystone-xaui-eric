@@ -140,6 +140,11 @@ netcp {
 		rx_pool_depth		= <64>;
 		rx_buffer_size		= <128>;
 		lut-ranges		= <0 43 56 63>;
+		/* Static reservation in LUT-1 (outer IP)
+		 * used by driver to add IP rules for Rx checksum offload.
+		 */
+		ip-lut-ranges		= <61 63>;
+		rx-route		= <8704 22>; /* base queue, base flow */
 		/* mark_mcast_match	= <0x12345a00 0xffffff00>; */
 		/* force_no_hwtstamp; */
 	};

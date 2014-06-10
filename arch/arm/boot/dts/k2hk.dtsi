@@ -266,9 +266,9 @@
 					values = <8704 32>;
 					interrupts = <0 48 0x104>,
 						<0 49 0x204>,
-						<0 50 0xf04>,
-						<0 51 0xf04>,
-						<0 52 0xf04>,
+						<0 50 0x404>,
+						<0 51 0x804>,
+						<0 52 0x204>,
 						<0 53 0xf04>,
 						<0 54 0xf04>,
 						<0 55 0xf04>,
@@ -278,8 +278,8 @@
 						<0 59 0xf04>,
 						<0 60 0x104>,
 						<0 61 0x204>,
-						<0 62 0x404>,
-						<0 63 0x804>,
+						<0 62 0x104>,
+						<0 63 0xf04>,
 						<0 64 0x404>,
 						<0 65 0x804>,
 						<0 66 0xf04>,
@@ -407,7 +407,7 @@
 					label		= "netrx2";
 					pool		= "pool-net";
 					/* submit-queue   = <xx>; */
-					complete-queue = <8718>;
+					complete-queue = <8706>;
 					/* debug; */
 					/* channel = <0>; */
 					flow		= <24>;
@@ -417,7 +417,7 @@
 					label		= "netrx3";
 					pool		= "pool-net";
 					/* submit-queue   = <xx>; */
-					complete-queue = <8719>;
+					complete-queue = <8707>;
 					/* debug; */
 					/* channel = <0>; */
 					flow		= <25>;
@@ -439,7 +439,15 @@
 					label		= "patx-pdsp0";
 					pool		= "pool-net";
 					submit-queue	= <640>;
-					complete-queue  = <8706>;
+					/* debug; */
+					/* channel = <xx>; */
+					/* priority = <1>; */
+				};
+				patx-pdsp1 {
+					transmit;
+					label		= "patx-pdsp1";
+					pool		= "pool-net";
+					submit-queue	= <641>;
 					/* debug; */
 					/* channel = <xx>; */
 					/* priority = <1>; */
@@ -587,7 +595,7 @@
 					label		= "qos5";
 					pool		= "pool-net";
 					submit-queue	= <8077>;
-					complete-queue  = <8707>;
+					complete-queue  = <8718>;
 					/* debug; */
 					/* channel = <xx>; */
 					/* priority = <1>; */
