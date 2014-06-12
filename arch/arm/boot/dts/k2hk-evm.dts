@@ -1891,7 +1891,7 @@
 				region-15 {
 					id = <15>;
 					values	= <1024 128>;	/* num_desc desc_size */
-					link-index = <0x6000>;
+					link-index = <0x7000>;
 				};
 			};
 			descriptors {
@@ -2711,7 +2711,7 @@
 			/* clocks = <&clkpktproc>; */
 			enable-all;
 			/* debug; */
-			dma-coherent;
+			/* dma-coherent; */
 
 			logical-queue-managers	= <4>;
 			queues-per-queue-manager = <4096>;
