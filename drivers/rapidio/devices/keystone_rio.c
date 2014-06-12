@@ -3072,7 +3072,6 @@ struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 {
 	struct rio_ops   *ops;
 	struct rio_mport *port;
-	int res;
 
 	ops = kzalloc(sizeof(struct rio_ops), GFP_KERNEL);
 
@@ -3149,10 +3148,7 @@ struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 	 * so perform explicitely the basic attachement (and
 	 * eventually scanning here).
 	 */
-	res = rio_basic_attach();
-	if (res < 0) {
-		dev_err(krio_priv->dev, "Basic attach failed\n");
-	}
+	rio_basic_attach();
 #endif
 
 	return port;
