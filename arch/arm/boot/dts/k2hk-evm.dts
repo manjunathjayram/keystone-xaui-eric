@@ -1737,6 +1737,16 @@
 			label = "edma3";
 		};
 
+		uio_srio: srio {
+		        compatible = "ti,uio-module-drv";
+		        mem  = <0x232C000 0x00002000
+		                0x2900000 0x30000
+		                0x0231a000 0x00002000>;
+		        clocks=<&clksrio>;
+		        interrupts = <0 154 0xf01>;
+	        label = "srio";
+		};
+
 		hwqueue0: hwqueue@2a40000 {
 			compatible = "ti,keystone-hwqueue";
 			dma-coherent;
@@ -2758,15 +2768,15 @@
 			dma-coherent;
 
 			keystone2-serdes;
-			baudrate  = <1>; /* 2.5Gbps */
-			path_mode = <4>; /* 1 port in 4x */
-			port-register-timeout = <30>; /* 30 seconds */
+			baudrate  = <3>; /* 5Gbps */
+			path_mode = <0>; /* 4 ports in 1x */
+			port-register-timeout = <90>; /* 90 seconds */
 			lsu       = <0 0>; /* DIO and maintenance LSUs */
 
 			tx_channel = "riotx";
 			tx_queue_depth = <256>;
 
-                        ports = <0x1>;      /* bitfield of port(s) to probe */
+                        ports = <0xf>;      /* bitfield of port(s) to probe */
                         dev-id-size = <0>;  /* RapidIO common transport system
 					     * size.
 					     * 0 - Small size. 8-bit deviceID
