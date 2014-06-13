@@ -3460,7 +3460,13 @@ static int cpsw2_open(void *intf_priv, struct net_device *ndev)
 	netcp_set_streaming_switch2(cpsw_dev->netcp_device, netcp->cpsw_port,
 				   PSTREAM_ROUTE_GLOBAL_DMA);
 
+/*
+ * TODO. CPTS h/w changed in K2E and K2L. cpts driver requires change.
+ * comment this for time being
+ */
+#if 0
 	cpsw2_register_cpts(cpsw_dev);
+#endif
 	return 0;
 
 ale_fail:
