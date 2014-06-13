@@ -1375,9 +1375,6 @@ int xge_serdes_init(struct device_node *node)
 					&hw->link_rate))
 		hw->link_rate = K2SERDES_LINK_RATE_10P3125G;
 
-	if (hw->link_rate != K2SERDES_LINK_RATE_10P3125G)
-		hw->link_rate = K2SERDES_LINK_RATE_1P25G;
-
 	if (of_property_read_u32_array(node, "tx_ctrl_override",
 					&hw->c1, 5)) {
 		hw->c1		= 2;
@@ -1397,18 +1394,31 @@ int xge_serdes_init(struct device_node *node)
 	hw->lanes = 2;
 	hw->phy_type = K2SERDES_PHY_XGE;
 
-	pr_info("XGE serdes config %d:\n",
-		k2_xge_serdes_configured + 1);
-	pr_info("  ref_clk=%s, link_rate=%s, lanes=%u\n",
-		(hw->ref_clock_rate == K2SERDES_REF_CLOCK_156P25M) ?
-			"156.25MHz" : "not 156.25MHz",
-		(hw->link_rate == K2SERDES_LINK_RATE_10P3125G) ?
-			"10.3125G" : "1.25G",
-		hw->lanes);
-	pr_info("  c1=%u, c2=%u, cm=%u, tx_att=%u, tx_vreg=%u\n",
-		hw->c1, hw->c2, hw->cm, hw->tx_att, hw->tx_vreg);
-	pr_info("  eq flags: vreg=%u, cdfe=%u, offset=%u\n",
-		hw->eq_vreg_enable, hw->eq_cdfe_enable, hw->eq_offset_enable);
+	if (hw->ref_clock_rate != K2SERDES_REF_CLOCK_156P25M) {
+		pr_err("XGE serdes invalid ref_clock code %d",
+			hw->ref_clock_rate);
+		return -EINVAL;
+	}
+
+	if (hw->link_rate != K2SERDES_LINK_RATE_10P3125G) {
+		pr_err("XGE serdes invalid link_rate code %d", hw->link_rate);
+		return -EINVAL;
+	}
+
+	if (!k2_xge_serdes_configured) {
+		pr_info("XGE serdes config:\n");
+		pr_info("  ref_clk=%s, link_rate=%s, lanes=%u\n",
+			(hw->ref_clock_rate == K2SERDES_REF_CLOCK_156P25M) ?
+				"156.25MHz" : "not 156.25MHz",
+			(hw->link_rate == K2SERDES_LINK_RATE_10P3125G) ?
+				"10.3125G" : "1.25G",
+			hw->lanes);
+		pr_info("  c1=%u, c2=%u, cm=%u, tx_att=%u, tx_vreg=%u\n",
+			hw->c1, hw->c2, hw->cm, hw->tx_att, hw->tx_vreg);
+		pr_info("  eq flags: vreg=%u, cdfe=%u, offset=%u\n",
+			hw->eq_vreg_enable, hw->eq_cdfe_enable,
+			hw->eq_offset_enable);
+	}
 
 	ret = k2serdes_start(hw);
 	if (!ret)
