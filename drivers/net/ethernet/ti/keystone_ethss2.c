@@ -3187,13 +3187,20 @@ static inline void cpsw2_register_cpts(struct cpsw2_priv *cpsw_dev)
 	if (cpsw_dev->cpts_registered > 0)
 		goto done;
 
+	if (ptp_filter_init(phy_ptp_filter, ARRAY_SIZE(phy_ptp_filter))) {
+		dev_err(cpsw_dev->dev, "bad ptp filter\n");
+		return;
+	}
+
 	cpsw_dev->cpts.filter = cpsw_ptp_filter;
 	cpsw_dev->cpts.filter_size = ARRAY_SIZE(cpsw_ptp_filter);
 
 	/* Let cpts calculate the mult and shift */
 	if (cpts_register(cpsw_dev->dev, &cpsw_dev->cpts,
-			  cpsw_dev->cpts.cc.mult, cpsw_dev->cpts.cc.shift))
+			  cpsw_dev->cpts.cc.mult, cpsw_dev->cpts.cc.shift)) {
 		dev_err(cpsw_dev->dev, "error registering cpts device\n");
+		return;
+	}
 
 done:
 	++cpsw_dev->cpts_registered;
@@ -3216,6 +3223,67 @@ static inline void cpsw2_unregister_cpts(struct cpsw2_priv *cpsw_dev)
 	cpsw_dev->cpts.filter_size = 0;
 	cpts_unregister(&cpsw_dev->cpts);
 }
+
+static void cpsw2_update_cpts_dt_params(struct cpsw2_priv *cpsw_dev,
+				  struct device_node *node)
+{
+	int ret;
+
+	ret = of_property_read_u32(node, "cpts_reg_ofs",
+				   &cpsw_dev->cpts_reg_ofs);
+	if (ret < 0)
+		dev_err(cpsw_dev->dev,
+			"missing cpts reg offset, err %d\n", ret);
+
+	ret = of_property_read_u32(node, "cpts_rftclk_sel",
+				   &cpsw_dev->cpts.rftclk_sel);
+	if (ret < 0) {
+		dev_err(cpsw_dev->dev,
+			"missing cpts rftclk_sel, err %d\n", ret);
+		cpsw_dev->cpts.rftclk_sel = 0;
+	}
+
+	ret = of_property_read_u32(node, "cpts_rftclk_freq",
+				   &cpsw_dev->cpts.rftclk_freq);
+	if (ret < 0) {
+		dev_vdbg(cpsw_dev->dev,
+			"cpts rftclk freq not defined\n");
+		cpsw_dev->cpts.rftclk_freq = 0;
+	}
+
+	ret = of_property_read_u32(node, "cpts_ts_comp_length",
+				&cpsw_dev->cpts.ts_comp_length);
+	if (ret < 0) {
+		dev_err(cpsw_dev->dev,
+			"missing cpts ts_comp length, err %d\n", ret);
+		cpsw_dev->cpts.ts_comp_length = 1;
+	}
+
+	if (of_property_read_u32(node, "cpts_clock_mult",
+				&cpsw_dev->cpts.cc.mult)) {
+		dev_err(cpsw_dev->dev,
+			"Missing cpts_clock_mult property in the DT.\n");
+		cpsw_dev->cpts.cc.mult = 0;
+	}
+
+	if (of_property_read_u32(node, "cpts_clock_shift",
+				&cpsw_dev->cpts.cc.shift)) {
+		dev_err(cpsw_dev->dev,
+			"Missing cpts_clock_shift property in the DT.\n");
+		cpsw_dev->cpts.cc.shift = 0;
+	}
+
+	if (of_property_read_u32(node, "cpts_clock_div",
+				&cpsw_dev->cpts.cc_div)) {
+		dev_err(cpsw_dev->dev,
+			"Missing cpts_clock_div property in the DT.\n");
+		cpsw_dev->cpts.cc_div = 1;
+	}
+
+	cpsw_dev->cpts.ignore_adjfreq =
+		of_property_read_bool(node, "cpts-ignore-adjfreq");
+}
+
 #else
 static inline int cpsw2_mark_pkt_txtstamp(struct cpsw2_intf *cpsw_intf,
 					struct netcp_packet *p_info)
@@ -3234,6 +3302,11 @@ static inline void cpsw2_register_cpts(struct cpsw2_priv *cpsw_dev)
 }
 
 static inline void cpsw2_unregister_cpts(struct cpsw2_priv *cpsw_dev)
+{
+}
+
+static void cpsw2_update_cpts_dt_params(struct cpsw2_priv *cpsw_dev,
+				  struct device_node *node)
 {
 }
 #endif /* CONFIG_TI_CPTS */
@@ -3387,7 +3460,13 @@ static int cpsw2_open(void *intf_priv, struct net_device *ndev)
 	netcp_set_streaming_switch2(cpsw_dev->netcp_device, netcp->cpsw_port,
 				   PSTREAM_ROUTE_GLOBAL_DMA);
 
+/*
+ * TODO. CPTS h/w changed in K2E and K2L. cpts driver requires change.
+ * comment this for time being
+ */
+#if 0
 	cpsw2_register_cpts(cpsw_dev);
+#endif
 	return 0;
 
 ale_fail:
@@ -3578,11 +3657,6 @@ static int cpsw2_probe(struct netcp_device *netcp_device,
 		return -ENODEV;
 	}
 
-	if (ptp_filter_init(phy_ptp_filter, ARRAY_SIZE(phy_ptp_filter))) {
-		dev_err(dev, "bad ptp filter\n");
-		return -EINVAL;
-	}
-
 	cpsw_dev = devm_kzalloc(dev, sizeof(struct cpsw2_priv), GFP_KERNEL);
 	if (!cpsw_dev) {
 		dev_err(dev, "cpsw_dev memory allocation failed\n");
@@ -3715,54 +3789,9 @@ static int cpsw2_probe(struct netcp_device *netcp_device,
 				   &cpsw_dev->ale_reg_ofs);
 	if (ret < 0)
 		dev_err(dev, "missing ale reg offset, err %d\n", ret);
-#ifdef CONFIG_TI_CPTS
-	ret = of_property_read_u32(node, "cpts_reg_ofs",
-				   &cpsw_dev->cpts_reg_ofs);
-	if (ret < 0)
-		dev_err(dev, "missing cpts reg offset, err %d\n", ret);
 
-	ret = of_property_read_u32(node, "cpts_rftclk_sel",
-				   &cpsw_dev->cpts.rftclk_sel);
-	if (ret < 0) {
-		dev_err(dev, "missing cpts rftclk_sel, err %d\n", ret);
-		cpsw_dev->cpts.rftclk_sel = 0;
-	}
+	cpsw2_update_cpts_dt_params(cpsw_dev, node);
 
-	ret = of_property_read_u32(node, "cpts_rftclk_freq",
-				   &cpsw_dev->cpts.rftclk_freq);
-	if (ret < 0) {
-		dev_vdbg(dev, "cpts rftclk freq not defined\n");
-		cpsw_dev->cpts.rftclk_freq = 0;
-	}
-
-	ret = of_property_read_u32(node, "cpts_ts_comp_length",
-				&cpsw_dev->cpts.ts_comp_length);
-	if (ret < 0) {
-		dev_err(dev, "missing cpts ts_comp length, err %d\n", ret);
-		cpsw_dev->cpts.ts_comp_length = 1;
-	}
-
-	if (of_property_read_u32(node, "cpts_clock_mult",
-				&cpsw_dev->cpts.cc.mult)) {
-		pr_err("Missing cpts_clock_mult property in the DT.\n");
-		cpsw_dev->cpts.cc.mult = 0;
-	}
-
-	if (of_property_read_u32(node, "cpts_clock_shift",
-				&cpsw_dev->cpts.cc.shift)) {
-		pr_err("Missing cpts_clock_shift property in the DT.\n");
-		cpsw_dev->cpts.cc.shift = 0;
-	}
-
-	if (of_property_read_u32(node, "cpts_clock_div",
-				&cpsw_dev->cpts.cc_div)) {
-		pr_err("Missing cpts_clock_div property in the DT.\n");
-		cpsw_dev->cpts.cc_div = 1;
-	}
-
-	cpsw_dev->cpts.ignore_adjfreq =
-		of_property_read_bool(node, "cpts-ignore-adjfreq");
-#endif
 	ret = of_property_read_u32(node, "ale_ageout", &cpsw_dev->ale_ageout);
 	if (ret < 0) {
 		dev_err(dev, "missing ale_ageout parameter, err %d\n", ret);
