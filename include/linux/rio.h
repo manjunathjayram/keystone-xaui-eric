@@ -215,8 +215,8 @@ struct rio_dev {
 	u16 destid;
 	u8 hopcount;
 	struct rio_dev *prev;
-	struct rio_switch rswitch[0];	/* RIO switch info */
 	struct dio_dev dio;
+	struct rio_switch rswitch[0];	/* RIO switch info */
 };
 
 #define rio_dev_g(n) list_entry(n, struct rio_dev, global_list)

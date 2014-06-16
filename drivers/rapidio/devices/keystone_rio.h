@@ -135,6 +135,22 @@
 	 RIO_PORT_N_ERR_STS_PW_PEND	|	\
 	 RIO_PORT_N_ERR_STS_PORT_ERR)
 
+/* RIO PLM port event status defines */
+#define KEYSTONE_RIO_PORT_PLM_STATUS_MAX_DENIAL        BIT(31)
+#define KEYSTONE_RIO_PORT_PLM_STATUS_LINK_INIT         BIT(28)
+#define KEYSTONE_RIO_PORT_PLM_STATUS_DLT               BIT(27)
+#define KEYSTONE_RIO_PORT_PLM_STATUS_PORT_ERR          BIT(26)
+#define KEYSTONE_RIO_PORT_PLM_STATUS_OUTPUT_FAIL       BIT(25)
+#define KEYSTONE_RIO_PORT_PLM_STATUS_OUTPUT_DEGR       BIT(24)
+#define KEYSTONE_RIO_PORT_PLM_STATUS_RST_REQ           BIT(16)
+#define KEYSTONE_RIO_PORT_PLM_STATUS_MECS              BIT(12)
+
+#define KEYSTONE_RIO_PORT_PLM_STATUS_ERRORS			\
+	(KEYSTONE_RIO_PORT_PLM_STATUS_MAX_DENIAL      |		\
+	 KEYSTONE_RIO_PORT_PLM_STATUS_PORT_ERR        |		\
+	 KEYSTONE_RIO_PORT_PLM_STATUS_OUTPUT_FAIL     |		\
+	 KEYSTONE_RIO_PORT_PLM_STATUS_OUTPUT_DEGR)
+
 #define KEYSTONE_RIO_SP_HDR_NEXT_BLK_PTR	0x1000
 #define KEYSTONE_RIO_SP_HDR_EP_REC_ID		0x0002
 #define KEYSTONE_RIO_ERR_HDR_NEXT_BLK_PTR	0x3000
@@ -239,6 +255,7 @@ struct keystone_rio_board_controller_info {
 	u32		serdes_cfg_regs_size;
 
 	u32             ports;  /* bitfield of port(s) to probe on this controller */
+	int             ports_remote[KEYSTONE_RIO_MAX_PORT]; /* remote link partner port numbers */
 	u32             mode;   /* hw mode (default serdes cfg). idx into serdes_config[] */
 	u32             id;     /* host id */
 	u32             size;   /* RapidIO common transport system size.
