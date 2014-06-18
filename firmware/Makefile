@@ -98,12 +98,10 @@ fw-shipped-$(CONFIG_TIGON3) += tigon/tg3.bin tigon/tg3_tso.bin \
 			       tigon/tg3_tso5.bin
 fw-shipped-$(CONFIG_TI_KEYSTONE) += keystone/sa_pdsp0_1_0_2_1.fw \
 				    keystone/sa_pdsp1_1_0_2_1.fw \
-				    keystone/qmss_pdsp_acc48_le_1_0_3_12.fw \
-				    keystone/qmss_pdsp_acc48_be_1_0_3_12.fw \
 				    keystone/pa_pdsp02_classify1.fw \
 				    keystone/pa_pdsp3_classify2.fw \
 				    keystone/pa_pdsp45_pam.fw \
-				    keystone/qmss_pdsp_acc48_k2_le_1_0_0_8.fw \
+				    keystone/qmss_pdsp_acc48_k2_le_1_0_0_9.fw \
 				    keystone/qmss_pdsp_qos_k2_le_2_0_1_7.fw \
 				    keystone/pa_in0_pdsp0.fw \
 				    keystone/pa_in0_pdsp1.fw \
