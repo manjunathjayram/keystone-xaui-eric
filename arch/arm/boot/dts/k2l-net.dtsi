@@ -167,6 +167,7 @@ netcp {
 		interface-0;
 		interface-1;
 		tx_queue_depth = <32>;
+		netcp_ver = <1>;	/* 0: NETCP v1.0, 1: NSS 1.0 */
 	};
 
 	qos: qos@0 {
