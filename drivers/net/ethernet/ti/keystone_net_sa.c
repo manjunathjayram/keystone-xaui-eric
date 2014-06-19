@@ -46,6 +46,8 @@ struct sa_intf {
 	struct net_device		*net_device;
 	char				 tx_chan_name[24];
 	struct netcp_tx_pipe		 tx_pipe;
+	u32				 netcp_ver; /* 0: NETCP 1.0, 1: NSS
+						       1.0 */
 };
 
 struct ipsecmgr_mod_sa_ctx_info {
@@ -143,6 +145,8 @@ static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 }
 
 #define SA_RXHOOK_ORDER	30
+
+/* Version 0 of sa_rx_hook definitions (for NETCP 1.0 on K2HK) */
 #define SA_IS_IPSEC_ESP_MASK	BIT(25)
 #define SA_IS_FLAG_FRAG_MASK	BIT(3)
 
@@ -167,14 +171,42 @@ static int sa_rx_hook(int order, void *data, struct netcp_packet *p_info)
 	return 0;
 }
 
+/* Version 1 of sa_rx_hook definitions (for NSS 1.0 on K2L and K2E) */
+#define SA_IS_IPSEC_ESP_MASK_VER1	BIT(8)
+#define SA_IS_FLAG_FRAG_MASK_VER1	BIT(19)
+
+static int sa_rx_hook_ver1(int order, void *data, struct netcp_packet *p_info)
+{
+	struct sk_buff *skb = p_info->skb;
+
+	/* Check to see if this is an ESP packet, if not just return.
+	 * ESP packet indication is in word 3, bit 25 of psdata
+	 * This is valid only for first fragment.
+	*/
+	if (!(p_info->psdata[3] & SA_IS_IPSEC_ESP_MASK_VER1))
+		return 0;
+
+	/* See if packet is the first fragment, if so, mark the local_df
+	 * flag of skb which will be checked by the ipsecmgr kernel module
+	 * to indicate packet has not been decrypted by NETCP SA.
+	*/
+	if (p_info->psdata[0] & SA_IS_FLAG_FRAG_MASK_VER1)
+		skb->local_df = 1;
+	return 0;
+}
+
 static int sa_close(void *intf_priv, struct net_device *ndev)
 {
 	struct sa_intf *sa_intf = intf_priv;
 	struct netcp_priv *netcp_priv = netdev_priv(ndev);
 
 	netcp_unregister_txhook(netcp_priv, SA_TXHOOK_ORDER, sa_tx_hook, sa_intf);
-	netcp_unregister_rxhook(netcp_priv, SA_RXHOOK_ORDER,
-				sa_rx_hook, sa_intf);
+	if (sa_intf->netcp_ver == 1)
+		netcp_unregister_rxhook(netcp_priv, SA_RXHOOK_ORDER,
+					sa_rx_hook_ver1, sa_intf);
+	else
+		netcp_unregister_rxhook(netcp_priv, SA_RXHOOK_ORDER,
+					sa_rx_hook, sa_intf);
 	netcp_txpipe_close(&sa_intf->tx_pipe);
 
 	return 0;
@@ -192,7 +224,12 @@ static int sa_open(void *intf_priv, struct net_device *ndev)
 		return ret;
 
 	netcp_register_txhook(netcp_priv, SA_TXHOOK_ORDER, sa_tx_hook, sa_intf);
-	netcp_register_rxhook(netcp_priv, SA_RXHOOK_ORDER, sa_rx_hook, sa_intf);
+	if (sa_intf->netcp_ver == 1)
+		netcp_register_rxhook(netcp_priv, SA_RXHOOK_ORDER,
+					sa_rx_hook_ver1, sa_intf);
+	else
+		netcp_register_rxhook(netcp_priv, SA_RXHOOK_ORDER,
+					sa_rx_hook, sa_intf);
 	return 0;
 }
 
@@ -203,6 +240,7 @@ static int sa_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 	struct sa_intf *sa_intf;
 	char node_name[24];
 	int chan_id = 0;
+	int ret = 0;
 
 	if (netcp->cpsw_port)
 		chan_id = netcp->cpsw_port - 1;
@@ -225,6 +263,14 @@ static int sa_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 		netcp_txpipe_init(&sa_intf->tx_pipe, netdev_priv(ndev),
 				  sa_intf->tx_chan_name, sa_dev->tx_queue_depth);
 		dev_dbg(sa_dev->dev, "keystone-sa attached for %s\n", node_name);
+
+		ret = of_property_read_u32(sa_dev->node, "netcp_ver",
+					   &sa_intf->netcp_ver);
+		if (ret < 0) {
+			dev_warn(sa_dev->dev,
+				"missing netcp_ver parameter, err %d\n", ret);
+			sa_intf->netcp_ver = 0;
+		}
 		return 0;
 	} else
 		return -ENODEV;
