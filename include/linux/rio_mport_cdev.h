@@ -55,7 +55,7 @@ struct rio_mport_dma_buf {
 #endif
 
 struct rio_mport_maint_transfer {
-	uint16_t id;       /* for remote config only */
+	uint16_t destid;   /* for remote config only */
 	uint16_t hopcount; /* for remote config only */
 	uint32_t offset;
 	uint32_t length;

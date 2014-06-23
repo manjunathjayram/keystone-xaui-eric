@@ -312,33 +312,42 @@ static int dbell_receive(struct mport_cdev_priv *priv, void __user *arg)
 static int maint_lconfig_read(struct mport_cdev_priv *priv, void __user *arg)
 {
 	struct mport_dev *md = priv->md;
-	struct rio_mport_maint_transfer maint_transfer;
+	struct rio_mport_maint_transfer mt;
 	int ret;
-	void *buf;
-
-	if (copy_from_user(&maint_transfer, arg,
-			   sizeof(struct rio_mport_maint_transfer)))
-		return -EFAULT;
+	u32 data;
 
 	if (!md->mport->ops->lcread)
 		return -EPROTONOSUPPORT;
 
-	pr_debug(DRV_PREFIX "Perform a local maintenance read at offset %d\n",
-		 maint_transfer.offset);
-
-	buf = kmalloc(maint_transfer.length, GFP_KERNEL);
-	if (!buf)
-		return -ENOMEM;
-
-	ret = md->mport->ops->lcread(md->mport, md->mport->id,
-				     maint_transfer.offset,
-				     maint_transfer.length,
-				     (u32 *) buf);
-
-	if (copy_to_user(maint_transfer.val, buf, maint_transfer.length))
+	if (copy_from_user(&mt, arg, sizeof(struct rio_mport_maint_transfer)))
 		return -EFAULT;
 
-	return ret;
+	pr_debug(DRV_PREFIX "Perform a local maintenance read at offset %d\n",
+		 mt.offset);
+
+	switch (mt.length) {
+	case sizeof(u8):
+		ret = __rio_local_read_config_8(
+					md->mport, mt.offset, (u8 *)&data);
+		break;
+	case sizeof(u16):
+		ret = __rio_local_read_config_16(
+					md->mport, mt.offset, (u16 *)&data);
+		break;
+	case sizeof(u32):
+		ret = __rio_local_read_config_32(
+					md->mport, mt.offset, &data);
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+
+	if (!ret)
+		if (copy_to_user(mt.val, &data, mt.length))
+			ret = -EFAULT;
+
+	return 0;
 }
 
 /*
@@ -349,27 +358,36 @@ static int maint_lconfig_read(struct mport_cdev_priv *priv, void __user *arg)
 static int maint_lconfig_write(struct mport_cdev_priv *priv, void __user *arg)
 {
 	struct mport_dev *md = priv->md;
-	struct rio_mport_maint_transfer maint_transfer;
+	struct rio_mport_maint_transfer mt;
 	int ret;
 	u32 val;
-
-	if (copy_from_user(&maint_transfer, arg,
-			   sizeof(struct rio_mport_maint_transfer)))
-		return -EFAULT;
 
 	if (!md->mport->ops->lcwrite)
 		return -EPROTONOSUPPORT;
 
-	pr_debug(DRV_PREFIX "Perform a local maintenance read at offset %d\n",
-		 maint_transfer.offset);
-
-	if (copy_from_user(&val, maint_transfer.val, sizeof(val)))
+	if (copy_from_user(&mt, arg, sizeof(struct rio_mport_maint_transfer)))
 		return -EFAULT;
 
-	ret = md->mport->ops->lcwrite(md->mport, md->mport->id,
-				      maint_transfer.offset,
-				      maint_transfer.length,
-				      val);
+	pr_debug(DRV_PREFIX "Perform a local maintenance read at offset %d\n",
+		 mt.offset);
+
+	if (copy_from_user(&val, mt.val, sizeof(val)))
+		return -EFAULT;
+
+	switch (mt.length) {
+	case sizeof(u8):
+		ret = __rio_local_write_config_8(md->mport, mt.offset, val);
+		break;
+	case sizeof(u16):
+		ret = __rio_local_write_config_16(md->mport, mt.offset, val);
+		break;
+	case sizeof(u32):
+		ret = __rio_local_write_config_32(md->mport, mt.offset, val);
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
 
 	return ret;
 }
@@ -382,33 +400,40 @@ static int maint_lconfig_write(struct mport_cdev_priv *priv, void __user *arg)
 static int maint_config_read(struct mport_cdev_priv *priv, void __user *arg)
 {
 	struct mport_dev *md = priv->md;
-	struct rio_mport_maint_transfer maint_transfer;
+	struct rio_mport_maint_transfer mt;
 	int ret;
-	void *buf;
-
-	if (copy_from_user(&maint_transfer, arg, sizeof(struct rio_mport_maint_transfer)))
-		return -EFAULT;
+	u32 data;
 
 	if (!md->mport->ops->cread)
 		return -EPROTONOSUPPORT;
 
-	pr_debug(DRV_PREFIX "Perform a remote maintenance read at offset %d\n",
-		 maint_transfer.offset);
-
-	buf = kmalloc(maint_transfer.length, GFP_KERNEL);
-	if (!buf)
-		return -ENOMEM;
-
-	ret = md->mport->ops->cread(md->mport,
-				    md->mport->id,
-				    maint_transfer.id,
-				    maint_transfer.hopcount,
-				    maint_transfer.offset,
-				    maint_transfer.length,
-				    (u32 *) buf);
-
-	if (copy_to_user(maint_transfer.val, buf, maint_transfer.length))
+	if (copy_from_user(&mt, arg, sizeof(struct rio_mport_maint_transfer)))
 		return -EFAULT;
+
+	pr_debug(DRV_PREFIX "Perform a remote maintenance read at offset %d\n",
+		 mt.offset);
+
+	switch (mt.length) {
+	case sizeof(u8):
+		ret = rio_mport_read_config_8(md->mport, mt.destid,
+					mt.hopcount, mt.offset, (u8 *)&data);
+		break;
+	case sizeof(u16):
+		ret = rio_mport_read_config_16(md->mport, mt.destid,
+					mt.hopcount, mt.offset, (u16 *)&data);
+		break;
+	case sizeof(u32):
+		ret = rio_mport_read_config_32(md->mport, mt.destid,
+					mt.hopcount, mt.offset, &data);
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+
+	if (!ret)
+		if (copy_to_user(mt.val, &data, mt.length))
+			ret = -EFAULT;
 
 	return ret;
 }
@@ -421,30 +446,39 @@ static int maint_config_read(struct mport_cdev_priv *priv, void __user *arg)
 static int maint_config_write(struct mport_cdev_priv *priv, void __user *arg)
 {
 	struct mport_dev *md = priv->md;
-	struct rio_mport_maint_transfer maint_transfer;
+	struct rio_mport_maint_transfer mt;
 	int ret;
 	u32 val;
 
-	if (copy_from_user(&maint_transfer, arg,
-			   sizeof(struct rio_mport_maint_transfer)))
+	if (copy_from_user(&mt, arg, sizeof(struct rio_mport_maint_transfer)))
 		return -EFAULT;
 
 	if (!md->mport->ops->cwrite)
 		return -EPROTONOSUPPORT;
 
 	pr_debug(DRV_PREFIX "Perform a remote maintenance read at offset %d\n",
-		 maint_transfer.offset);
+		 mt.offset);
 
-	if (copy_from_user(&val, maint_transfer.val, sizeof(val)))
+	if (copy_from_user(&val, mt.val, sizeof(val)))
 		return -EFAULT;
 
-	ret = md->mport->ops->cwrite(md->mport,
-				     md->mport->id,
-				     maint_transfer.id,
-				     maint_transfer.hopcount,
-				     maint_transfer.offset,
-				     maint_transfer.length,
-				     val);
+	switch (mt.length) {
+	case sizeof(u8):
+		ret = rio_mport_write_config_8(md->mport, mt.destid,
+					mt.hopcount, mt.offset, val);
+		break;
+	case sizeof(u16):
+		ret = rio_mport_write_config_16(md->mport, mt.destid,
+					mt.hopcount, mt.offset, val);
+		break;
+	case sizeof(u32):
+		ret = rio_mport_write_config_32(md->mport, mt.destid,
+					mt.hopcount, mt.offset, val);
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
 
 	return ret;
 }
