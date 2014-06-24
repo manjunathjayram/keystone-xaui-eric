@@ -238,6 +238,7 @@ static int khwq_push(struct hwqueue_instance *inst, dma_addr_t dma,
 
 	val = (u32)dma | ((size / 16) - 1);
 
+	__iowmb();
 	__raw_writel(val, &qmgr->reg_push[id].ptr_size_thresh);
 
 	return 0;
