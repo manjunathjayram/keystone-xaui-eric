@@ -44,6 +44,9 @@
 #define CHAN_HAS_EPIB		BIT(30)
 #define CHAN_HAS_PSINFO		BIT(29)
 #define CHAN_ERR_RETRY		BIT(28)
+#define CHAN_DESC_TYPE_HOST     0
+#define CHAN_DESC_TYPE_SHIFT    26
+#define CHAN_RETQMGR_SHIFT      12
 
 #define DMA_TIMEOUT		1000	/* msecs */
 
@@ -58,8 +61,7 @@
 #define DESC_FLOWTAG_MASK	BITS(8)
 #define DESC_FLOWTAG_SHIFT	16
 #define DESC_LEN_MASK		BITS(22)
-#define DESC_TYPE_HOST		0
-#define DESC_TYPE_SHIFT		26
+#define DESC_PKTTYPE_SHIFT      25
 
 #define DMA_DEFAULT_NUM_DESCS	128
 #define DMA_DEFAULT_PRIORITY	DMA_PRIO_MED_L
@@ -920,8 +922,8 @@ static int chan_start(struct keystone_dma_chan *chan)
 		if (chan->rx_err_retry)
 			v |= CHAN_ERR_RETRY;
 		v |= chan->qnum_complete |
-			(chan->dest_queue_manager << DESC_RETQMGR_SHIFT) |
-			(DESC_TYPE_HOST << DESC_TYPE_SHIFT);
+			(chan->dest_queue_manager << CHAN_RETQMGR_SHIFT) |
+			(CHAN_DESC_TYPE_HOST << CHAN_DESC_TYPE_SHIFT);
 		__raw_writel(v, &chan->reg_rx_flow->control);
 
 		__raw_writel(0, &chan->reg_rx_flow->tags);
@@ -1530,6 +1532,7 @@ chan_prep_slave_sg(struct dma_chan *achan, struct scatterlist *_sg,
 	unsigned nsg;
 	unsigned packet_len;
 	u32 tag_info = chan->tag_info;
+	u32 packet_type = 0;
 	u32 packet_info, psflags;
 	u32 next_desc;
 	unsigned q_num = (options >> DMA_QNUM_SHIFT) & DMA_QNUM_MASK;
@@ -1579,6 +1582,11 @@ chan_prep_slave_sg(struct dma_chan *achan, struct scatterlist *_sg,
 		tag_info =
 			((options >> DMA_FLOWTAG_SHIFT) & DMA_FLOWTAG_MASK) <<
 				 DESC_FLOWTAG_SHIFT;
+
+	if (unlikely(options & DMA_HAS_PKTTYPE))
+		packet_type =
+			((options >> DMA_PKTTYPE_SHIFT) & DMA_PKTTYPE_MASK) <<
+			         DESC_PKTTYPE_SHIFT;
 
 	if (unlikely(!chan_is_alive(chan))) {
 		dev_err(chan_dev(chan), "cannot submit in state %s\n",
@@ -1645,14 +1653,14 @@ chan_prep_slave_sg(struct dma_chan *achan, struct scatterlist *_sg,
 		orig_len = (q_num << 28) | buflen;
 		packet_len += buflen;
 		desc_fill(chan, hwdesc,
-			  packet_len,		/* desc_info	*/
-			  tag_info,		/* tag_info	*/
-			  packet_info,		/* packet_info	*/
-			  buflen,		/* buff_len	*/
-			  sg_dma_address(sg),	/* buff		*/
-			  next_desc,		/* next_desc	*/
-			  orig_len,		/* orig_len	*/
-			  sg_dma_address(sg));	/* orig_buf	*/
+			  packet_type | packet_len,/* desc_info	*/
+			  tag_info,		   /* tag_info	*/
+			  packet_info,		   /* packet_info */
+			  buflen,		   /* buff_len	*/
+			  sg_dma_address(sg),	   /* buff	*/
+			  next_desc,		   /* next_desc	*/
+			  orig_len,		   /* orig_len	*/
+			  sg_dma_address(sg));	   /* orig_buf	*/
 
 		/*
 		 * NB: In the receive case, this should be per queue.
