@@ -553,6 +553,28 @@
 			qm-base-address = <0x23a80000 0x23a90000>;
 
 			channels {
+				udmatx0 {
+					transmit;
+					label		= "udmatx0";
+					pool		= "pool-udma";
+					submit-queue	= <800>;
+					/* complete-queue  = <0> */
+					/* debug; */
+					channel		= <0>;
+					priority	= <1>;
+					flowtag		= <0>;
+				};
+				udmatx1 {
+					transmit;
+					label		= "udmatx1";
+					pool		= "pool-udma";
+					submit-queue	= <801>;
+					/* complete-queue  = <1> */
+					/* debug; */
+					channel		= <1>;
+					priority	= <1>;
+					flowtag		= <1>;
+				};
 				udmatx2 {
 					transmit;
 					label		= "udmatx2";
@@ -618,6 +640,26 @@
 					channel		= <7>;
 					priority	= <1>;
 					flowtag		= <7>;
+				};
+				udmarx0 {
+					receive;
+					label		= "udmarx0";
+					pool		= "pool-udma";
+					/* submit-queue = <xx>; */
+					/* complete-queue  = <16> */
+					/* debug; */
+					channel		= <0>;
+					flow		= <0>;
+				};
+				udmarx1 {
+					receive;
+					label		= "udmarx1";
+					pool		= "pool-udma";
+					/* submit-queue = <xx>; */
+					/* complete-queue  = <17> */
+					/* debug; */
+					channel		= <1>;
+					flow		= <1>;
 				};
 				udmarx2 {
 					receive;

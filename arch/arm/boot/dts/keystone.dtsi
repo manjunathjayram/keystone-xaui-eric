@@ -431,51 +431,6 @@
 			/* rx-priority = <0>; */
 			/* tx-priority = <0>; */
 			queues-per-queue-manager = <4096>;
-
-			channels {
-				udmatx0 {
-					transmit;
-					label		= "udmatx0";
-					pool		= "pool-udma";
-					submit-queue	= <800>;
-					/* complete-queue  = <0> */
-					/* debug; */
-					channel		= <0>;
-					priority	= <1>;
-					flowtag		= <0>;
-				};
-				udmatx1 {
-					transmit;
-					label		= "udmatx1";
-					pool		= "pool-udma";
-					submit-queue	= <801>;
-					/* complete-queue  = <1> */
-					/* debug; */
-					channel		= <1>;
-					priority	= <1>;
-					flowtag		= <1>;
-				};
-				udmarx0 {
-					receive;
-					label		= "udmarx0";
-					pool		= "pool-udma";
-					/* submit-queue = <xx>; */
-					/* complete-queue  = <16> */
-					/* debug; */
-					channel		= <0>;
-					flow		= <0>;
-				};
-				udmarx1 {
-					receive;
-					label		= "udmarx1";
-					pool		= "pool-udma";
-					/* submit-queue = <xx>; */
-					/* complete-queue  = <17> */
-					/* debug; */
-					channel		= <1>;
-					flow		= <1>;
-				};
-			};
 		};
 
 		pci-controller@21800000 {
