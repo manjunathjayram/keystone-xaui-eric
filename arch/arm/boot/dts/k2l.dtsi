@@ -153,7 +153,8 @@
 		hwqueue0: hwqueue@2a40000 {
 			range		= <0 0x2000>;
 			linkram0	= <0x100000 0x4000>;
-			linkram1	= <0x0 0x10000>;
+			linkram1	= <0x70000000 0x10000>;	/* use 1MB OSR
+								   memory */
 
 			queues {
 				qpend-arm-hi {
