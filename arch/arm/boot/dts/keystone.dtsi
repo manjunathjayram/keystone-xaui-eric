@@ -270,6 +270,11 @@
 			mem = <0x02700000 0x000C0000>;
 			label = "edma3";
 		};
+		uio_secmgr: secmgr {
+			compatible = "ti,uio-module-drv";
+			mem  = <0x002500100 0x00000004>;
+			label = "secmgr";
+		};
 
 		hwqueue0: hwqueue@2a40000 {
 			compatible = "ti,keystone-hwqueue";
