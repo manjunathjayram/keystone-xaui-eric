@@ -50,6 +50,11 @@ static int rio_mport_phys_table[] = {
 	-1,
 };
 
+static bool static_enum;
+module_param(static_enum, bool, 0);
+MODULE_PARM_DESC(scan, "Perform RapidIO network static enumeration "
+			"(default = 0)");
+
 
 /**
  * rio_destid_alloc - Allocate next available destID for given network
@@ -184,19 +189,6 @@ static void rio_set_device_id(struct rio_mport *port, u16 destid, u8 hopcount, u
 {
 	rio_mport_write_config_32(port, destid, hopcount, RIO_DID_CSR,
 				  RIO_SET_DID(port->sys_size, did));
-}
-
-/**
- * rio_local_set_device_id - Set the base/extended device id for a port
- * @port: RIO master port
- * @did: Device ID value to be written
- *
- * Writes the base/extended device id from a device.
- */
-static void rio_local_set_device_id(struct rio_mport *port, u16 did)
-{
-	rio_local_write_config_32(port, RIO_DID_CSR, RIO_SET_DID(port->sys_size,
-				did));
 }
 
 /**
@@ -461,6 +453,7 @@ static struct rio_dev *rio_setup_device(struct rio_net *net,
 			     rdev->comp_tag & RIO_CTAG_UDEVID);
 	}
 
+	rdev->dev.parent = &port->dev;
 	rio_attach_device(rdev);
 
 	device_initialize(&rdev->dev);
@@ -618,7 +611,7 @@ static int rio_enum_peer(struct rio_net *net, struct rio_mport *port,
 
 	/* Setup new RIO device */
 	rdev = rio_setup_device(net, port, RIO_ANY_DESTID(port->sys_size),
-					hopcount, 1);
+				hopcount, static_enum ? 0 : 1);
 	if (rdev) {
 		/* Add device to the global and bus/net specific list. */
 		list_add_tail(&rdev->net_list, &net->devices);
@@ -1185,6 +1178,17 @@ MODULE_PARM_DESC(scan, "Start RapidIO network enumeration/discovery "
  * provide a matching cleanup_module routine.
  */
 
+#ifdef CONFIG_TI_KEYSTONE_RAPIDIO
+int rio_basic_attach(void)
+{
+	if (rio_register_scan(RIO_MPORT_ANY, &rio_scan_ops))
+		return -EIO;
+	if (scan)
+		rio_init_mports();
+	return 0;
+}
+EXPORT_SYMBOL_GPL(rio_basic_attach);
+#else
 static int __init rio_basic_attach(void)
 {
 	if (rio_register_scan(RIO_MPORT_ANY, &rio_scan_ops))
@@ -1193,8 +1197,8 @@ static int __init rio_basic_attach(void)
 		rio_init_mports();
 	return 0;
 }
-
 late_initcall(rio_basic_attach);
+#endif
 
 MODULE_DESCRIPTION("Basic RapidIO enumeration/discovery");
 MODULE_LICENSE("GPL");

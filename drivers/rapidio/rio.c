@@ -68,6 +68,19 @@ u16 rio_local_get_device_id(struct rio_mport *port)
 }
 
 /**
+ * rio_local_set_device_id - Set the base/extended device id for a port
+ * @port: RIO master port
+ * @did: Device ID value to be written
+ *
+ * Writes the base/extended device id from a device.
+ */
+void rio_local_set_device_id(struct rio_mport *port, u16 did)
+{
+	rio_local_write_config_32(port, RIO_DID_CSR, RIO_SET_DID(port->sys_size,
+								 did));
+}
+
+/**
  * rio_add_device- Adds a RIO device to the device model
  * @rdev: RIO device
  *
@@ -531,6 +544,39 @@ rio_mport_get_physefb(struct rio_mport *port, int local,
 	return ext_ftr_ptr;
 }
 EXPORT_SYMBOL_GPL(rio_mport_get_physefb);
+
+/**
+ * rio_get_devt - Begin or continue searching for a RIO device by dev_t
+ * @devt: Associated dev_t to find
+ * @from: Previous RIO device found in search, or %NULL for new search
+ *
+ * Iterates through the list of known RIO devices. If a RIO device is
+ * found with a matching @devt, a pointer to its device
+ * structure is returned. Otherwise, %NULL is returned. A new search
+ * is initiated by passing %NULL to the @from argument. Otherwise, if
+ * @from is not %NULL, searches continue from next device on the global
+ * list.
+ */
+struct rio_dev *rio_get_devt(dev_t devt, struct rio_dev *from)
+{
+	struct list_head *n;
+	struct rio_dev *rdev;
+
+	spin_lock(&rio_global_list_lock);
+	n = from ? from->global_list.next : rio_devices.next;
+
+	while (n && (n != &rio_devices)) {
+		rdev = rio_dev_g(n);
+		if (rdev->dev.devt == devt)
+			goto exit;
+		n = n->next;
+	}
+	rdev = NULL;
+exit:
+	spin_unlock(&rio_global_list_lock);
+	return rdev;
+}
+EXPORT_SYMBOL_GPL(rio_get_devt);
 
 /**
  * rio_get_comptag - Begin or continue searching for a RIO device by component tag
@@ -1801,6 +1847,24 @@ static void disc_work_handler(struct work_struct *_work)
 	}
 }
 
+static int rio_mport_enum_callback(struct device *dev, void * _data)
+{
+	struct rio_mport *port = to_rio_mport(dev);
+	int *n = _data;
+
+	dev_printk(KERN_DEBUG, dev, "%s %s\n", __func__, port->name);
+
+	if (port->host_deviceid >= 0) {
+		if (port->nscan && try_module_get(port->nscan->owner)) {
+			port->nscan->enumerate(port, 0);
+			module_put(port->nscan->owner);
+		}
+	} else
+		*n = *n + 1;
+
+	return 0;
+}
+
 int rio_init_mports(void)
 {
 	struct rio_mport *port;
@@ -1814,17 +1878,7 @@ int rio_init_mports(void)
 	 * First, run enumerations and check if we need to perform discovery
 	 * on any of the registered mports.
 	 */
-	mutex_lock(&rio_mport_list_lock);
-	list_for_each_entry(port, &rio_mports, node) {
-		if (port->host_deviceid >= 0) {
-			if (port->nscan && try_module_get(port->nscan->owner)) {
-				port->nscan->enumerate(port, 0);
-				module_put(port->nscan->owner);
-			}
-		} else
-			n++;
-	}
-	mutex_unlock(&rio_mport_list_lock);
+	class_for_each_device(&rio_mport_class, NULL, &n, rio_mport_enum_callback);
 
 	if (!n)
 		goto no_disc;
@@ -1884,6 +1938,7 @@ static int rio_get_hdid(int index)
 int rio_register_mport(struct rio_mport *port)
 {
 	struct rio_scan_node *scan = NULL;
+	int res = 0;
 
 	if (next_portid >= RIO_MAX_MPORTS) {
 		pr_err("RIO: reached specified max number of mports\n");
@@ -1892,7 +1947,20 @@ int rio_register_mport(struct rio_mport *port)
 
 	port->id = next_portid++;
 	port->host_deviceid = rio_get_hdid(port->id);
+
+	/* If host deviceId is defined, already set it into CSR */
+	if (port->host_deviceid >= 0)
+		rio_local_set_device_id(port, port->host_deviceid);
+
 	port->nscan = NULL;
+
+	dev_set_name(&port->dev, "rapidio-%d", port->id);
+	port->dev.class = &rio_mport_class;
+	res = device_register(&port->dev);
+	if (res)
+		pr_debug("RIO: mport [%d] registration failed err=%d\n", port->id, res);
+	else
+		pr_debug("RIO: mport [%s] registered\n", port->name);
 
 	mutex_lock(&rio_mport_list_lock);
 	list_add_tail(&port->node, &rio_mports);
@@ -1916,7 +1984,33 @@ int rio_register_mport(struct rio_mport *port)
 }
 EXPORT_SYMBOL_GPL(rio_register_mport);
 
+static int rio_mport_cleanup_callback(struct device *dev, void * _data)
+{
+	struct rio_dev *rdev = to_rio_dev(dev);
+
+	pr_debug("RIO: %s remove %s\n", __func__, rio_name(rdev));
+	device_unregister(dev);
+	list_del(&rdev->global_list);
+	return 0;
+}
+
+int rio_unregister_mport(struct rio_mport *port)
+{
+	pr_debug("RIO: %s %s id=%d\n", __func__, port->name, port->id);
+	/* Unregister all RapidIO devices attached to this mport */
+	device_for_each_child(&port->dev, port, rio_mport_cleanup_callback);
+
+	mutex_lock(&rio_mport_list_lock);
+	list_del(&port->node);
+	mutex_unlock(&rio_mport_list_lock);
+	device_unregister(&port->dev);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(rio_unregister_mport);
+
 EXPORT_SYMBOL_GPL(rio_local_get_device_id);
+EXPORT_SYMBOL_GPL(rio_local_set_device_id);
 EXPORT_SYMBOL_GPL(rio_get_device);
 EXPORT_SYMBOL_GPL(rio_get_asm);
 EXPORT_SYMBOL_GPL(rio_request_inb_dbell);

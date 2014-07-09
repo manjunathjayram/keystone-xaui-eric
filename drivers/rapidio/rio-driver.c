@@ -14,6 +14,7 @@
 #include <linux/module.h>
 #include <linux/rio.h>
 #include <linux/rio_ids.h>
+#include <linux/rio_drv.h>
 
 #include "rio.h"
 
@@ -131,6 +132,17 @@ static int rio_device_remove(struct device *dev)
 	return 0;
 }
 
+static void rio_device_shutdown(struct device *dev)
+{
+	struct rio_dev *rdev = to_rio_dev(dev);
+	struct rio_driver *rdrv = rdev->driver;
+
+	printk(KERN_DEBUG "RIO: %s(%s)\n", __func__, rio_name(rdev));
+
+	if (rdrv && rdrv->shutdown)
+		rdrv->shutdown(rdev);
+}
+
 /**
  *  rio_register_driver - register a new RIO driver
  *  @rdrv: the RIO driver structure to register
@@ -167,7 +179,6 @@ void rio_unregister_driver(struct rio_driver *rdrv)
 void rio_attach_device(struct rio_dev *rdev)
 {
 	rdev->dev.bus = &rio_bus_type;
-	rdev->dev.parent = &rio_bus;
 }
 EXPORT_SYMBOL_GPL(rio_attach_device);
 
@@ -216,9 +227,16 @@ static int rio_uevent(struct device *dev, struct kobj_uevent_env *env)
 	return 0;
 }
 
-struct device rio_bus = {
-	.init_name = "rapidio",
+static void release_mport_dev(struct device *dev)
+{
+	dev_printk(KERN_DEBUG, dev, "%s\n", __func__);
+}
+
+struct class rio_mport_class = {
+	.name		= "rapidio_port",
+	.dev_release	= &release_mport_dev,
 };
+EXPORT_SYMBOL_GPL(rio_mport_class);
 
 struct bus_type rio_bus_type = {
 	.name = "rapidio",
@@ -227,6 +245,7 @@ struct bus_type rio_bus_type = {
 	.bus_groups = rio_bus_groups,
 	.probe = rio_device_probe,
 	.remove = rio_device_remove,
+	.shutdown = rio_device_shutdown,
 	.uevent	= rio_uevent,
 };
 
@@ -238,8 +257,7 @@ struct bus_type rio_bus_type = {
  */
 static int __init rio_bus_init(void)
 {
-	if (device_register(&rio_bus) < 0)
-		printk("RIO: failed to register RIO bus device\n");
+	class_register(&rio_mport_class);
 	return bus_register(&rio_bus_type);
 }
 

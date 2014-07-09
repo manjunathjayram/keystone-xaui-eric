@@ -531,6 +531,7 @@ int fsl_rio_setup(struct platform_device *dev)
 		sprintf(port->name, "RIO mport %d", i);
 
 		priv->dev = &dev->dev;
+		port->dev.parent = &dev->dev;
 		port->ops = ops;
 		port->priv = priv;
 		port->phys_efptr = 0x100;
@@ -578,6 +579,9 @@ int fsl_rio_setup(struct platform_device *dev)
 					& RIO_PEF_CTLS) >> 4;
 		dev_info(&dev->dev, "RapidIO Common Transport System size: %d\n",
 				port->sys_size ? 65536 : 256);
+
+		/* Set invalid DestID as an initial value for enumeration/discovery */
+		out_be32(priv->regs_win + RIO_DID_CSR, 0x00ffffff);
 
 		if (rio_register_mport(port)) {
 			release_resource(&port->iores);
