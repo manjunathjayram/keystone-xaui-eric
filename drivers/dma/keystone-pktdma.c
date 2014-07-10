@@ -211,7 +211,6 @@ struct keystone_dma_chan {
 	int				 qnum_complete;
 	int				 dest_queue_manager;
 	struct dma_notify_info		 notify_info;
-	wait_queue_head_t		 state_wait_queue;
 
 	/* registers */
 	struct reg_chan __iomem		*reg_chan;
@@ -454,7 +453,6 @@ static int chan_set_state(struct keystone_dma_chan *chan,
 
 	cur = atomic_cmpxchg(&chan->state, old, new);
 	if (likely(cur == old)) {
-		wake_up_all(&chan->state_wait_queue);
 		chan_vdbg(chan, "channel state change from %s to %s\n",
 			  chan_state_str(old), chan_state_str(new));
 		return 0;
@@ -463,27 +461,6 @@ static int chan_set_state(struct keystone_dma_chan *chan,
 	dev_warn(chan_dev(chan), "state %s on switch to %s, expected %s\n",
 		 chan_state_str(cur), chan_state_str(new), chan_state_str(old));
 	return -EINVAL;
-}
-
-static void chan_wait_state_change(struct keystone_dma_chan *chan,
-				   enum keystone_chan_state old)
-{
-	wait_event(chan->state_wait_queue, (chan_get_state(chan) != old));
-}
-
-static enum keystone_chan_state
-chan_wait_stable_state(struct keystone_dma_chan *chan)
-{
-	enum keystone_chan_state state;
-
-retry:
-	state = chan_get_state(chan);
-	if (chan_state_is_transient(state)) {
-		chan_wait_state_change(chan, state);
-		goto retry;
-	}
-
-	return state;
 }
 
 static inline bool __chan_is_alive(enum keystone_chan_state state)
@@ -1043,9 +1020,6 @@ static void chan_purge_rxfree(struct keystone_dma_chan *chan, int index,
 
 		desc_put(chan, desc);
 	}
-
-	WARN_ON(chan->rxpools[index].pool_depth !=
-		atomic_read(&chan->rxpools[index].deficit));
 }
 
 static void chan_stop(struct keystone_dma_chan *chan)
@@ -1066,9 +1040,17 @@ static void chan_stop(struct keystone_dma_chan *chan)
 
 	/* drain submitted buffers */
 	if (chan->direction == DMA_DEV_TO_MEM) {
-		int i;
-		for (i = 0; i < chan->rxpool_count; ++i)
+		int i, deficit;
+
+		for (i = 0; i < chan->rxpool_count; ++i) {
 			chan_purge_rxfree(chan, i, chan->q_submit[i]);
+
+			/* Check for a possible memory leak */
+			deficit = atomic_read(&chan->rxpools[i].deficit);
+			WARN_ONCE((chan->rxpools[i].pool_depth != deficit),
+				"chan_stop: pool %d deficit %d != depth %u\n",
+				i, deficit, chan->rxpools[i].pool_depth);
+		}
 	} else
 		chan_complete(chan, chan->q_submit[0], DMA_ERROR, -1, false);
 
@@ -1261,14 +1243,11 @@ static void chan_destroy(struct dma_chan *achan)
 	struct keystone_dma_device *dma = chan->dma;
 	enum keystone_chan_state state;
 
-retry:
-	state = chan_wait_stable_state(chan);
-
-	if (state == CHAN_STATE_CLOSED)
-		return;
-
-	if (chan_set_state(chan, state, CHAN_STATE_CLOSING))
-		goto retry;
+	do {
+		state = chan_get_state(chan);
+		if (state == CHAN_STATE_CLOSED)
+			return;
+	} while (chan_set_state(chan, state, CHAN_STATE_CLOSING));
 
 	chan_vdbg(chan, "destroying channel\n");
 
@@ -1329,6 +1308,9 @@ static int chan_rxfree_refill(struct keystone_dma_chan *chan)
 {
 	int i;
 
+	if (chan->direction != DMA_DEV_TO_MEM)
+		return -EINVAL;
+
 	for (i = 0; i < chan->rxpool_count; ++i) {
 		while (atomic_dec_return(&chan->rxpools[i].deficit) >= 0) {
 			struct dma_async_tx_descriptor *adesc;
@@ -1363,6 +1345,19 @@ static int chan_rxfree_refill(struct keystone_dma_chan *chan)
 		}
 		atomic_inc(&chan->rxpools[i].deficit);
 	}
+
+	return 0;
+}
+
+static int chan_rxfree_flush(struct keystone_dma_chan *chan)
+{
+	int i;
+
+	if (chan->direction != DMA_DEV_TO_MEM)
+		return -EINVAL;
+
+	for (i = 0; i < chan->rxpool_count; ++i)
+		chan_purge_rxfree(chan, i, chan->q_submit[i]);
 
 	return 0;
 }
@@ -1494,6 +1489,10 @@ static int chan_control(struct dma_chan *achan, enum dma_ctrl_cmd cmd,
 
 	case DMA_RXFREE_REFILL:
 		ret = chan_rxfree_refill(chan);
+		break;
+
+	case DMA_RXFREE_FLUSH:
+		ret = chan_rxfree_flush(chan);
 		break;
 
 	case DMA_GET_TX_QUEUE:
@@ -1848,8 +1847,6 @@ static int dma_init_chan(struct keystone_dma_device *dma,
 	chan = devm_kzalloc(dev, sizeof(*chan), GFP_KERNEL);
 	if (!chan)
 		return -ENOMEM;
-
-	init_waitqueue_head(&chan->state_wait_queue);
 
 	chan->dma	= dma;
 	chan->direction	= DMA_NONE;
