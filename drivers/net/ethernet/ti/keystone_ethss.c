@@ -2147,14 +2147,14 @@ static int cpsw_port_reset(struct cpsw_slave *slave)
 	u32 i, v;
 
 	/* Set the soft reset bit */
-	__raw_writel(SOFT_RESET,
-		     &slave->sliver->soft_reset);
+	__iowmb();
+	__raw_writel(SOFT_RESET, &slave->sliver->soft_reset);
+	__iowmb();
 
 	/* Wait for the bit to clear */
 	for (i = 0; i < DEVICE_EMACSL_RESET_POLL_COUNT; i++) {
 		v = __raw_readl(&slave->sliver->soft_reset);
-		if ((v & SOFT_RESET_MASK) !=
-		    SOFT_RESET)
+		if ((v & SOFT_RESET_MASK) != SOFT_RESET)
 			return 0;
 	}
 
@@ -2172,12 +2172,24 @@ static void cpsw_port_config(struct cpsw_slave *slave, int max_rx_len)
 
 	__raw_writel(max_rx_len, &slave->sliver->rx_maxlen);
 
+	__iowmb();
 	__raw_writel(MACSL_ENABLE | MACSL_RX_ENABLE_EXT_CTL |
 		     MACSL_RX_ENABLE_CSF, &slave->sliver->mac_control);
 }
 
-static void cpsw_slave_stop(struct cpsw_slave *slave, struct cpsw_priv *priv)
+static void cpsw_slave_stop(struct cpsw_slave *slave,
+			    struct cpsw_intf *cpsw_intf)
 {
+	struct cpsw_priv *priv = cpsw_intf->cpsw_priv;
+	void __iomem *sgmii_port_regs;
+
+	if (slave->slave_num < 2)
+		sgmii_port_regs = priv->sgmii_port_regs;
+	else
+		sgmii_port_regs = priv->sgmii_port34_regs;
+
+	keystone_sgmii_rtreset(sgmii_port_regs, slave->slave_num, true);
+
 	cpsw_port_reset(slave);
 
 	if (!slave->phy)
@@ -2219,6 +2231,8 @@ static void cpsw_slave_open(struct cpsw_slave *slave,
 				slave->link_interface);
 
 	cpsw_port_reset(slave);
+
+	keystone_sgmii_rtreset(sgmii_port_regs, slave->slave_num, false);
 
 	cpsw_port_config(slave, priv->rx_packet_max);
 
@@ -3055,7 +3069,7 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 
 	for_each_slave(cpsw_intf, cpsw_slave_init, cpsw_dev);
 
-	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_dev);
+	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_intf);
 
 	/* Serdes init */
 	if (cpsw_dev->init_serdes_at_probe == 0)
@@ -3120,7 +3134,7 @@ static int cpsw_close(void *intf_priv, struct net_device *ndev)
 	if (!cpsw_dev->ale_refcnt)
 		cpsw_ale_stop(cpsw_dev->ale);
 
-	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_dev);
+	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_intf);
 
 	if(!cpsw_dev->force_no_hwtstamp)
 		netcp_unregister_rxhook(netcp, CPSW_RXHOOK_ORDER,
