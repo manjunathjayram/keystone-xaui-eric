@@ -48,54 +48,28 @@
 
 static inline void sgmii_write_reg(void __iomem *base, int reg, u32 val)
 {
-	__iowmb();
 	__raw_writel(val, base + reg);
 }
 
 static inline u32 sgmii_read_reg(void __iomem *base, int reg)
 {
-	u32 v;
+	return __raw_readl(base + reg);
+}
 
-	v = __raw_readl(base + reg);
-	__iormb();
-	return v;
+static inline void sgmii_write_reg_bit(void __iomem *base, int reg, u32 val)
+{
+	__raw_writel((__raw_readl(base + reg) | val),
+			base + reg);
 }
 
 /* port is 0 based */
 int keystone_sgmii_reset(void __iomem *sgmii_ofs, int port)
 {
-	u32 reg;
-
-	/* Initiate a soft reset */
-	reg = sgmii_read_reg(sgmii_ofs, SGMII_SRESET_REG(port));
-	reg |= SGMII_SRESET_RESET;
-	sgmii_write_reg(sgmii_ofs, SGMII_SRESET_REG(port), reg);
-
-	/* Wait for the bit to auto-clear */
-	do
-		reg = sgmii_read_reg(sgmii_ofs, SGMII_SRESET_REG(port));
-	while ((reg & SGMII_SRESET_RESET) != 0x0);
+	/* Soft reset */
+	sgmii_write_reg_bit(sgmii_ofs, SGMII_SRESET_REG(port), 0x1);
+	while(sgmii_read_reg(sgmii_ofs, SGMII_SRESET_REG(port)) != 0x0);
 
 	return 0;
-}
-
-/* port is 0 based */
-bool keystone_sgmii_rtreset(void __iomem *sgmii_ofs, int port, bool set)
-{
-	u32 reg;
-	bool oldval;
-
-	/* Initiate a soft reset */
-	reg = sgmii_read_reg(sgmii_ofs, SGMII_SRESET_REG(port));
-	oldval = (reg & SGMII_SRESET_RTRESET) != 0x0;
-	if (set)
-		reg |= SGMII_SRESET_RTRESET;
-	else
-		reg &= ~SGMII_SRESET_RTRESET;
-	sgmii_write_reg(sgmii_ofs, SGMII_SRESET_REG(port), reg);
-	__iowmb();
-
-	return oldval;
 }
 
 /* assumes ports <= 2 */

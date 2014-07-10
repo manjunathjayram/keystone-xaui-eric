@@ -599,11 +599,11 @@ static int netcp_debug_level;
 static const char *netcp_rx_state_str(struct netcp_priv *netcp)
 {
 	static const char * const state_str[] = {
-		[RX_STATE_INVALID]	= "invalid",
-		[RX_STATE_INTERRUPT]	= "interrupt",
-		[RX_STATE_SCHEDULED]	= "scheduled",
 		[RX_STATE_POLL]		= "poll",
+		[RX_STATE_SCHEDULED]	= "scheduled",
 		[RX_STATE_TEARDOWN]	= "teardown",
+		[RX_STATE_INTERRUPT]	= "interrupt",
+		[RX_STATE_INVALID]	= "invalid",
 	};
 
 	if (netcp->rx_state < 0 || netcp->rx_state >= ARRAY_SIZE(state_str))
@@ -616,7 +616,7 @@ static inline void netcp_set_rx_state(struct netcp_priv *netcp,
 				     enum netcp_rx_state state)
 {
 	netcp->rx_state = state;
-	smp_wmb();
+	cpu_relax();
 }
 
 static inline bool netcp_is_alive(struct netcp_priv *netcp)
@@ -671,12 +671,10 @@ static void netcp_rx_complete(void *data)
 
 	status = dma_async_is_tx_complete(netcp->rx_channel,
 					  p_info->cookie, NULL, NULL);
-	WARN_ONCE((status != DMA_SUCCESS && status != DMA_ERROR),
-		"in netcp_rx_complete dma status: %d\n", status);
-	WARN_ONCE((netcp->rx_state != RX_STATE_POLL	 &&
-		   netcp->rx_state != RX_STATE_TEARDOWN),
-		"in netcp_rx_complete rx_state: (%d) %s\n",
-			netcp->rx_state, netcp_rx_state_str(netcp));
+	WARN_ON(status != DMA_SUCCESS && status != DMA_ERROR);
+	WARN_ON(netcp->rx_state != RX_STATE_INTERRUPT	&&
+		netcp->rx_state != RX_STATE_POLL	&&
+		netcp->rx_state != RX_STATE_TEARDOWN);
 
 	/* sg[3] describes the primary buffer */
 	/* Build a new sk_buff for this buffer */
@@ -745,6 +743,9 @@ static void netcp_rx_complete(void *data)
 		netcp->ndev->stats.rx_errors++;
 		return;
 	}
+
+	BUG_ON(netcp->rx_state != RX_STATE_POLL);
+
 
 	netcp->ndev->last_rx = jiffies;
 
@@ -1007,7 +1008,7 @@ static inline void netcp_set_txpipe_state(struct netcp_tx_pipe *tx_pipe,
 		netcp_tx_state_str(new_state));
 
 	tx_pipe->dma_poll_state = new_state;
-	smp_wmb();
+	cpu_relax();
 }
 
 static int netcp_tx_unmap_skb(struct device *dev, struct sk_buff *skb, int offset, int len)
@@ -1554,11 +1555,8 @@ static int netcp_ndo_open(struct net_device *ndev)
 
 	name = netcp->rx_chan_name;
 	netcp->rx_channel = dma_request_channel_by_name(mask, name);
-	if (IS_ERR_OR_NULL(netcp->rx_channel)) {
-		dev_err(netcp->dev, "Failed to open DMA channel \"%s\": %ld\n",
-				name, PTR_ERR(netcp->rx_channel));
+	if (IS_ERR_OR_NULL(netcp->rx_channel))
 		goto fail;
-	}
 
 	memset(&config, 0, sizeof(config));
 	config.direction		= DMA_DEV_TO_MEM;
@@ -1592,28 +1590,16 @@ static int netcp_ndo_open(struct net_device *ndev)
 		if (module->open != NULL) {
 			err = module->open(intf_modpriv->module_priv, ndev);
 			if (err != 0) {
-				dev_err(netcp->dev, "Open failed in %s\n",
-						module->name);
+				dev_err(netcp->dev, "Open failed\n");
 				goto fail;
 			}
 		}
 	}
 
-	/*
-	 * Since queues open with dma enabled, this order is critical:
-	 * 1) The RX state must be set before the notifier runs or
-	 *    we'll get a BUG assertion in netcp_rx_notify().
-	 * 2) NAPI must be enabled before the notifier runs or the
-	 *    NAPI schedule request will be lost.
-	 * 3) The notifier must be registered before packets arrive
-	 *    or they'll be completed in hard IRQ context (which is bad).
-	 * 4) Once RX buffers are available packets may arrive immediately,
-	 *    so fill the free queues LAST.
-	 */
 	netcp_set_rx_state(netcp, RX_STATE_INTERRUPT);
+	dma_rxfree_refill(netcp->rx_channel);
 	napi_enable(&netcp->napi);
 	dma_set_notify(netcp->rx_channel, netcp_rx_notify, netcp);
-	dma_rxfree_refill(netcp->rx_channel);
 
 	netif_tx_wake_all_queues(ndev);
 
@@ -1634,36 +1620,45 @@ static int netcp_ndo_stop(struct net_device *ndev)
 	struct netcp_priv *netcp = netdev_priv(ndev);
 	struct netcp_intf_modpriv *intf_modpriv;
 	struct netcp_module *module;
+	unsigned long flags;
 	int err = 0;
+
+	spin_lock_irqsave(&netcp->lock, flags);
 
 	netif_tx_stop_all_queues(ndev);
 	netif_carrier_off(ndev);
 
-	for_each_module(netcp, intf_modpriv) {
-		module = intf_modpriv->netcp_module;
-		if (module->close != NULL) {
-			err = module->close(intf_modpriv->module_priv, ndev);
-			if (err != 0)
-				dev_err(netcp->dev,
-					"Close failed in module %s (%d)\n",
-					module->name, err);
-		}
-	}
-
-	napi_disable(&netcp->napi);
-	dmaengine_pause(netcp->rx_channel);
-	dma_rxfree_flush(netcp->rx_channel);
+	BUG_ON(!netcp_is_alive(netcp));
 
 	netcp_set_rx_state(netcp, RX_STATE_TEARDOWN);
-	dma_poll(netcp->rx_channel, -1);
-	dma_release_channel(netcp->rx_channel);
-	netcp->rx_channel = NULL;
+
+	dmaengine_pause(netcp->rx_channel);
+
+	spin_unlock_irqrestore(&netcp->lock, flags);
+
+	napi_disable(&netcp->napi);
+
+	if (netcp->rx_channel) {
+		dma_release_channel(netcp->rx_channel);
+		netcp->rx_channel = NULL;
+	}
 
 	netcp_set_rx_state(netcp, RX_STATE_INVALID);
 
 	netcp_addr_clear_mark(netcp);
 	netcp_addr_sweep_del(netcp);
 
+	for_each_module(netcp, intf_modpriv) {
+		module = intf_modpriv->netcp_module;
+		if (module->close != NULL) {
+			err = module->close(intf_modpriv->module_priv, ndev);
+			if (err != 0) {
+				dev_err(netcp->dev, "Close failed\n");
+				goto out;
+			}
+		}
+	}
+out:
 	dev_dbg(netcp->dev, "netcp device %s stopped\n", ndev->name);
 
 	return 0;
