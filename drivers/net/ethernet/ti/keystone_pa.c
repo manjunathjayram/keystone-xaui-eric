@@ -233,13 +233,10 @@ enum pa_lut_type {
 struct pa_lut_entry {
 	int			index;
 	bool			valid, in_use;
-	struct netcp_addr	*naddr;
-};
-
-struct pa_ip_lut_entry {
-	int			index;
-	bool			valid, in_use;
-	u8			ip_proto;
+	union {
+		struct netcp_addr	*naddr;
+		u8			ip_proto;
+	} u;
 };
 
 struct pa_timestamp_info {
@@ -304,7 +301,7 @@ struct pa_device {
 	u32				 lut_inuse_count;
 	struct pa_lut_entry		 *lut;
 	u32				 lut_size;
-	struct pa_ip_lut_entry		 *ip_lut;
+	struct pa_lut_entry		 *ip_lut;
 	u32				 ip_lut_size;
 	netdev_features_t		 netif_features;
 };
@@ -1094,21 +1091,21 @@ static struct dma_async_tx_descriptor *pa_rxpool_alloc(void *arg,
 static struct pa_lut_entry *pa_lut_alloc(struct pa_device *pa_dev,
 					 enum pa_lut_type type, bool backwards)
 {
-	struct pa_lut_entry *entry;
+	struct pa_lut_entry *lut_table, *entry;
 	u32 lut_size;
 	int i;
 
 	if (type == PA_LUT_MAC) {
-		entry = pa_dev->lut;
+		lut_table = pa_dev->lut;
 		lut_size = pa_dev->lut_size;
 	} else {
-		entry = (struct pa_lut_entry *)pa_dev->ip_lut;
+		lut_table = pa_dev->ip_lut;
 		lut_size = pa_dev->ip_lut_size;
 	}
 
 	if (!backwards) {
 		for (i = 0; i < lut_size; i++) {
-			entry = pa_dev->lut + i;
+			entry = lut_table + i;
 			if (!entry->valid || entry->in_use)
 				continue;
 			entry->in_use = true;
@@ -1116,13 +1113,14 @@ static struct pa_lut_entry *pa_lut_alloc(struct pa_device *pa_dev,
 		}
 	} else {
 		for (i = lut_size - 1; i >= 0; i--) {
-			entry = pa_dev->lut + i;
+			entry = lut_table + i;
 			if (!entry->valid || entry->in_use)
 				continue;
 			entry->in_use = true;
 			return entry;
 		}
 	}
+
 	return NULL;
 }
 
@@ -1317,8 +1315,8 @@ static int keystone_pa_add_mac(struct pa_intf *pa_intf, int index,
 	u32 context = PA_CONTEXT_CONFIG;
 	int size, ret;
 
-	dev_dbg(priv->dev, "add mac, index %d, smac %pM, dmac %pM, rule %d, type %x, port %d\n",
-		index, smac, dmac, rule, etype, port);
+	dev_dbg(priv->dev, "add mac, index %d, smac %pM, dmac %pM, rule %d, "
+		"type %04x, port %d\n", index, smac, dmac, rule, etype, port);
 
 	memset(&fail_info, 0, sizeof(fail_info));
 	memset(&route_info, 0, sizeof(route_info));
@@ -1652,12 +1650,13 @@ static inline int extract_l4_proto(struct netcp_packet *p_info)
 
 static int pa_add_ip_proto(struct pa_device *pa_dev, u8 proto)
 {
-	struct pa_ip_lut_entry *entry;
+	struct pa_lut_entry *entry;
 	int ret;
 
-	entry = (struct pa_ip_lut_entry *)pa_lut_alloc(pa_dev, PA_LUT_IP, 1);
+	entry = pa_lut_alloc(pa_dev, PA_LUT_IP, 1);
 	if (entry == NULL)
 		return -1;
+	entry->u.ip_proto = proto;
 
 	ret = keystone_pa_add_ip_proto(pa_dev, entry->index, proto,
 				       PACKET_PARSE);
@@ -1669,12 +1668,12 @@ static int pa_add_ip_proto(struct pa_device *pa_dev, u8 proto)
 
 static int pa_del_ip_proto(struct pa_device *pa_dev, u8 proto)
 {
-	struct pa_ip_lut_entry *entry;
+	struct pa_lut_entry *entry;
 	int idx, ret = 0;
 
 	for (idx = 0; idx < pa_dev->ip_lut_size; idx++) {
 		entry = pa_dev->ip_lut + idx;
-		if (!entry->valid || !entry->in_use || entry->ip_proto != proto)
+		if (!entry->valid || !entry->in_use || entry->u.ip_proto != proto)
 			continue;
 		ret = keystone_pa_add_ip_proto(pa_dev, entry->index, 0,
 					       PACKET_DROP);
@@ -1682,6 +1681,7 @@ static int pa_del_ip_proto(struct pa_device *pa_dev, u8 proto)
 			dev_err(pa_dev->dev,
 				"failed to del IP proto(%d) rule\n", proto);
 		entry->in_use = false;
+		entry->u.ip_proto = 0;
 	}
 	return ret;
 }
@@ -2066,8 +2066,6 @@ static int pa_close(void *intf_priv, struct net_device *ndev)
 			pa_del_ip_proto(pa_dev, IPPROTO_TCP);
 			pa_del_ip_proto(pa_dev, IPPROTO_UDP);
 		}
-		tasklet_disable(&pa_dev->task);
-		tstamp_purge_pending(pa_dev);
 
 		if (pa_dev->pdsp1_tx_channel) {
 			dmaengine_pause(pa_dev->pdsp1_tx_channel);
@@ -2081,9 +2079,14 @@ static int pa_close(void *intf_priv, struct net_device *ndev)
 		}
 		if (pa_dev->rx_channel) {
 			dmaengine_pause(pa_dev->rx_channel);
+			tasklet_kill(&pa_dev->task);
+			dma_rxfree_flush(pa_dev->rx_channel);
+			dma_poll(pa_dev->rx_channel, -1);
 			dma_release_channel(pa_dev->rx_channel);
 			pa_dev->rx_channel = NULL;
 		}
+
+		tstamp_purge_pending(pa_dev);
 
 		if (pa_dev->clk) {
 			clk_disable_unprepare(pa_dev->clk);
@@ -2362,9 +2365,9 @@ int pa_add_addr(void *intf_priv, struct netcp_addr *naddr)
 	for (idx = 0; idx < count; idx++) {
 		entries[idx] = pa_lut_alloc(pa_dev, PA_LUT_MAC,
 						naddr->type == ADDR_ANY);
-		entries[idx]->naddr = naddr;
 		if (!entries[idx])
 			goto fail_alloc;
+		entries[idx]->u.naddr = naddr;
 	}
 
 	addr = (naddr->type == ADDR_ANY) ? NULL : naddr->addr;
@@ -2415,11 +2418,12 @@ static int pa_del_addr(void *intf_priv, struct netcp_addr *naddr)
 
 	for (idx = 0; idx < pa_dev->lut_size; idx++) {
 		entry = pa_dev->lut + idx;
-		if (!entry->valid || !entry->in_use || entry->naddr != naddr)
+		if (!entry->valid || !entry->in_use || entry->u.naddr != naddr)
 			continue;
 		keystone_pa_add_mac(pa_intf, entry->index, NULL, NULL,
 				    PACKET_DROP, 0, PA_INVALID_PORT);
 		entry->in_use = false;
+		entry->u.naddr = NULL;
 	}
 
 	return 0;
@@ -2798,7 +2802,7 @@ static int pa_probe(struct netcp_device *netcp_device,
 	pa_dev->ip_lut_size = table_size;
 	dev_dbg(dev, "IP lut size = %d\n", pa_dev->ip_lut_size);
 
-	len = pa_dev->ip_lut_size * sizeof(struct pa_ip_lut_entry);
+	len = pa_dev->ip_lut_size * sizeof(struct pa_lut_entry);
 	pa_dev->ip_lut  = devm_kzalloc(dev, len, GFP_KERNEL);
 
 	for (i = 0; i < num_ranges; i++) {
