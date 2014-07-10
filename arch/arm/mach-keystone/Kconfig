@@ -13,6 +13,7 @@ config ARCH_KEYSTONE
 	select ARCH_SUPPORTS_BIG_ENDIAN
 	select ZONE_DMA if ARM_LPAE
         select MIGHT_HAVE_PCI
+	select MIGHT_HAVE_RAPIDIO
         select ARCH_SUPPORTS_MSI
 	help
 	  Support for boards based on the Texas Instruments Keystone family of
