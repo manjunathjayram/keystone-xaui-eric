@@ -68,6 +68,10 @@ hwqueue0: hwqueue@2a40000 {
 			values = <8752 8>;
 			reserved;
 		};
+		riotx {
+			values = <672 1>;
+			reserved;
+                };
 		accumulator-low-0 {
 			values = <128 32>;
 			// pdsp-id, channel, entries, pacing mode, latency
@@ -145,6 +149,12 @@ hwqueue0: hwqueue@2a40000 {
 			values	= <2048 128>;	/* num_desc desc_size */
 			link-index = <0x7000>;
 		};
+                region-15 {
+                         id = <15>;
+                         values  = <1024 128>;   /* num_desc desc_size */
+                         link-index = <0x7800>;
+                };
+
 	};
 	descriptors {
 		pool-net {
@@ -152,8 +162,8 @@ hwqueue0: hwqueue@2a40000 {
 			region-id = <12>;
 		};
 		pool-rio {
-			values = <128 256>;
-			region-id = <13>;
+			values = <1024 128>;
+                        region-id = <15>;
 		};
 		pool-udma {
 			values = <1920 256>;	/* num_desc desc_size */

@@ -80,6 +80,8 @@
 
 		/include/ "k2hk-netcp.dtsi"
 
+		/include/ "k2hk-srio.dtsi"
+
 	};
 
 	leds {
