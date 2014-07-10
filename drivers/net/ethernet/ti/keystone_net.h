@@ -39,6 +39,7 @@
 #define SGMII_REGS_SIZE			0x100
 
 int keystone_sgmii_reset(void __iomem *sgmii_ofs, int port);
+bool keystone_sgmii_rtreset(void __iomem *sgmii_ofs, int port, bool set);
 int keystone_sgmii_link_status(void __iomem *sgmii_ofs, int ports);
 int keystone_sgmii_get_port_link(void __iomem *sgmii_ofs, int port);
 int keystone_sgmii_config(void __iomem *sgmii_ofs,
@@ -47,11 +48,11 @@ int keystone_sgmii_config(void __iomem *sgmii_ofs,
 struct netcp_device;
 
 enum netcp_rx_state {
+	RX_STATE_INVALID,
 	RX_STATE_INTERRUPT,
 	RX_STATE_SCHEDULED,
 	RX_STATE_POLL,
 	RX_STATE_TEARDOWN,
-	RX_STATE_INVALID,
 };
 
 enum netcp_tx_state {
