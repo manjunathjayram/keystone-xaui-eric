@@ -36,7 +36,6 @@ typedef void (*dma_notify_fn)(struct dma_chan *chan, void *arg);
 #define DMA_KEYSTONE_CONFIG	1004
 #define DMA_RXFREE_REFILL	1005
 #define DMA_GET_TX_QUEUE	1006
-#define DMA_RXFREE_FLUSH	1007
 
 struct dma_notify_info {
 	dma_notify_fn		 fn;
@@ -113,11 +112,6 @@ static inline int dma_keystone_config(struct dma_chan *chan,
 static inline int dma_rxfree_refill(struct dma_chan *chan)
 {
 	return dmaengine_device_control(chan, DMA_RXFREE_REFILL, 0);
-}
-
-static inline int dma_rxfree_flush(struct dma_chan *chan)
-{
-	return dmaengine_device_control(chan, DMA_RXFREE_FLUSH, 0);
 }
 
 #endif /* __MACH_KEYSTONE_DMA_H__ */
