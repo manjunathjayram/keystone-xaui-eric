@@ -1126,8 +1126,10 @@ struct pa2_packet {
 
 #define pa2_cond_unmap(field)				\
 	do {						\
-		if (field)				\
+		if (field) {				\
 			devm_iounmap(dev, field);	\
+			field = NULL;			\
+		}					\
 	} while (0)
 
 static void pdsp_fw_put(u32 *dest, const u32 *src, u32 wc)
@@ -1688,9 +1690,6 @@ static int keystone_pa2_set_firmware(struct pa2_device *pa_dev,
 
 	pdsp_fw_put((u32 *)(pa_dev->ppu[pdsp].iram), buffer,
 		    len >> 2);
-
-	/* Unmap IRAM to free up the memory */
-	pa2_cond_unmap(pa_dev->ppu[pdsp].iram);
 
 	for (i = 0; i < PA2_PDSP_CONST_NUM_REG; i++)
 		__raw_writel(pa2_pdsp_const_reg_map[pdsp][i],
