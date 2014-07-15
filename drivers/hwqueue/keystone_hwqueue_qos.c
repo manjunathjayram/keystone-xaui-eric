@@ -1499,18 +1499,25 @@ static ssize_t qnode_output_rate_store(struct khwq_qos_tree_node *qnode,
 {
 	struct khwq_qos_info *info = qnode->info;
 	int idx = qnode->sched_port_idx;
-	int error, val;
+	int error, val, new_rate, shift;
+	unsigned long mask;
 
-	error = kstrtouint(buf, 0, &val);
+	error = kstrtouint(buf, 0, &new_rate);
 	if (error)
 		return error;
 	
-	qnode->output_rate = val;
-
-	val = qnode->output_rate / info->ticks_per_sec;
-	val <<= (qnode->acct == QOS_BYTE_ACCT) ?
+	shift = (qnode->acct == QOS_BYTE_ACCT) ?
 			QOS_CREDITS_BYTE_SHIFT :
 			QOS_CREDITS_PACKET_SHIFT;
+	mask = ~(BIT(BITS_PER_LONG - shift) - 1);
+
+	val = new_rate / info->ticks_per_sec;
+	if (((unsigned long)val & mask) != 0)
+		return -EINVAL;
+	val <<= shift;
+
+	qnode->output_rate = new_rate;
+
 	khwq_qos_set_sched_cir_credit(info, idx, val, true);
 
 	ktree_for_each_child(&qnode->node,
@@ -1541,8 +1548,6 @@ static ssize_t qnode_burst_size_store(struct khwq_qos_tree_node *qnode,
 	if (error)
 		return error;
 	
-	qnode->burst_size = field;
-
 	error = khwq_qos_get_sched_cir_credit(info, idx, &cir_credit);
 	if (error)
 		return error;
@@ -1552,6 +1557,8 @@ static ssize_t qnode_burst_size_store(struct khwq_qos_tree_node *qnode,
 		(field << QOS_CREDITS_PACKET_SHIFT);
 	if (cir_max > (S32_MAX - cir_credit))
 		return -EINVAL;
+
+	qnode->burst_size = field;
 
 	khwq_qos_set_sched_cir_max(info, idx, (u32)cir_max, true);
 
