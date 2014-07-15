@@ -130,7 +130,31 @@
 					reserved;
 				};
 			};
+			regions {
+				#address-cells = <1>;
+				#size-cells = <1>;
+				ranges;
+				region-12 {
+					id = <12>;
+					values	= <16384 128>;	/* num_desc desc_size */
+					link-index = <0x4000>;
+				};
+				region-13 {
+					id = <13>;
+					values	= <2048 256>;	/* num_desc desc_size */
+					link-index = <0x8000>;
+				};
+				region-14 {
+					id = <14>;
+					values	= <2048 128>;	/* num_desc desc_size */
+					link-index = <0x8800>;
+				};
+			};
 			descriptors {
+				pool-net {
+					values = <15360 128>;	/* num_desc desc_size */
+					region-id = <12>;
+				};
 				pool-udma {
 					values = <240 256>;	/* num_desc desc_size */
 					region-id = <13>;
@@ -200,6 +224,46 @@
 					/* channel = <0>; */
 					/* priority = <1>; */
 				};
+				nettx4 {
+					transmit;
+					label		= "nettx4";
+					pool		= "pool-net";
+					submit-queue	= <896>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <0>; */
+					/* priority = <1>; */
+				};
+				nettx5 {
+					transmit;
+					label		= "nettx5";
+					pool		= "pool-net";
+					submit-queue	= <896>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <0>; */
+					/* priority = <1>; */
+				};
+				nettx6 {
+					transmit;
+					label		= "nettx6";
+					pool		= "pool-net";
+					submit-queue	= <896>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <0>; */
+					/* priority = <1>; */
+				};
+				nettx7 {
+					transmit;
+					label		= "nettx7";
+					pool		= "pool-net";
+					submit-queue	= <896>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <0>; */
+					/* priority = <1>; */
+				};
 				netrx0 {
 					receive;
 					label		= "netrx0";
@@ -239,6 +303,46 @@
 					/* debug; */
 					/* channel = <0>; */
 					flow		= <25>;
+				};
+				netrx4 {
+					receive;
+					label		= "netrx4";
+					pool		= "pool-net";
+					/* submit-queue   = <xx>; */
+					complete-queue = <546>;
+					/* debug; */
+					/* channel = <0>; */
+					flow		= <27>;
+				};
+				netrx5 {
+					receive;
+					label		= "netrx5";
+					pool		= "pool-net";
+					/* submit-queue   = <xx>; */
+					complete-queue = <547>;
+					/* debug; */
+					/* channel = <0>; */
+					flow		= <28>;
+				};
+				netrx6 {
+					receive;
+					label		= "netrx6";
+					pool		= "pool-net";
+					/* submit-queue   = <xx>; */
+					complete-queue = <548>;
+					/* debug; */
+					/* channel = <0>; */
+					flow		= <29>;
+				};
+				netrx7 {
+					receive;
+					label		= "netrx7";
+					pool		= "pool-net";
+					/* submit-queue   = <xx>; */
+					complete-queue = <549>;
+					/* debug; */
+					/* channel = <0>; */
+					flow		= <30>;
 				};
 				satx-0 {
 					transmit;
@@ -298,6 +402,46 @@
 					pool		= "pool-net";
 					submit-queue	= <910>;
 					complete-queue = <545>;
+					/* debug; */
+					/* channel = <xx>; */
+					/* priority = <1>; */
+				};
+				patx-pdsp5-4 {
+					transmit;
+					label		= "patx-pdsp5-4";
+					pool		= "pool-net";
+					submit-queue	= <910>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <xx>; */
+					/* priority = <1>; */
+				};
+				patx-pdsp5-5 {
+					transmit;
+					label		= "patx-pdsp5-5";
+					pool		= "pool-net";
+					submit-queue	= <910>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <xx>; */
+					/* priority = <1>; */
+				};
+				patx-pdsp5-6 {
+					transmit;
+					label		= "patx-pdsp5-6";
+					pool		= "pool-net";
+					submit-queue	= <910>;
+					/* complete-queue = <xx>; */
+					/* debug; */
+					/* channel = <xx>; */
+					/* priority = <1>; */
+				};
+				patx-pdsp5-7 {
+					transmit;
+					label		= "patx-pdsp5-7";
+					pool		= "pool-net";
+					submit-queue	= <910>;
+					/* complete-queue = <xx>; */
 					/* debug; */
 					/* channel = <xx>; */
 					/* priority = <1>; */

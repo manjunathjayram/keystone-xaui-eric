@@ -126,7 +126,7 @@ netcp {
 		/* force_no_hwtstamp; */
 
 		multi-interface;
-		num-interfaces = <4>;
+		num-interfaces = <8>;
 		slaves-per-interface = <1>;
 
 		interfaces {
