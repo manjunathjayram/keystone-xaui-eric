@@ -154,5 +154,57 @@
 				};
 			};
 		};
+
+		uio_hyperlink0: hyperlink0 {
+			compatible = "ti,uio-module-drv";
+			mem  = <0x21400000 0x00000100
+				0x40000000 0x10000000
+				0x0231a000 0x00002000>;
+			clocks = <&clkhyperlink0>;
+			interrupts	= <0 387 0x101>;
+			label = "hyperlink0";
+			cfg-params
+			{
+				num_params = <3>;
+				param1 {
+					label = "c1";
+					value =  <4>;
+				};
+				param2 {
+					label = "c2";
+					value =  <0>;
+					};
+				param3 {
+					label = "cm";
+					value =  <3>;
+				};
+			};
+		};
+
+		uio_hyperlink1: hyperlink1 {
+			compatible = "ti,uio-module-drv";
+			mem  = <0x21400100 0x00000100
+				0x28000000 0x08000000
+				0x0231c000 0x00002000>;
+			clocks = <&clkhyperlink1>;
+			interrupts	= <0 388 0x101>;
+			label = "hyperlink1";
+			cfg-params
+			{
+				num_params = <3>;
+				param1 {
+					label = "c1";
+					value =  <4>;
+				};
+				param2 {
+					label = "c2";
+					value =  <0>;
+					};
+				param3 {
+					label = "cm";
+					value =  <3>;
+				};
+			};
+		};
 	};
 };
