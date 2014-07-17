@@ -41,8 +41,9 @@ struct clk_keystone_pll_data {
 	u32 pllm_upper_mask;
 	u32 pllm_upper_shift;
 	u32 plld_mask;
-	/* use this value for postdiv */
-	u32 fixed_postdiv;
+	u32 clkod_mask;
+	u32 clkod_shift;
+	u32 postdiv;
 };
 
 extern struct clk *clk_register_keystone_pll(struct device *dev,
