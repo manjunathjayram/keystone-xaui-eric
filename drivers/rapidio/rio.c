@@ -1580,22 +1580,32 @@ static bool rio_chan_filter(struct dma_chan *chan, void *arg)
 }
 
 /**
- * rio_request_dma - request RapidIO capable DMA channel that supports
- *   specified target RapidIO device.
- * @rdev: RIO device control structure
+ * rio_request_mport_dma - request RapidIO capable DMA channel associated
+ *   with specified local RapidIO mport device.
+ * @mport: RIO mport to perform DMA data transfers
  *
  * Returns pointer to allocated DMA channel or NULL if failed.
  */
-struct dma_chan *rio_request_dma(struct rio_mport *mport)
+struct dma_chan *rio_request_mport_dma(struct rio_mport *mport)
 {
 	dma_cap_mask_t mask;
-	struct dma_chan *dchan;
 
 	dma_cap_zero(mask);
 	dma_cap_set(DMA_SLAVE, mask);
-	dchan = dma_request_channel(mask, rio_chan_filter, mport);
+	return dma_request_channel(mask, rio_chan_filter, mport);
+}
+EXPORT_SYMBOL_GPL(rio_request_mport_dma);
 
-	return dchan;
+/**
+ * rio_request_dma - request RapidIO capable DMA channel that supports
+ *   specified target RapidIO device.
+ * @rdev: RIO device associated with DMA transfer
+ *
+ * Returns pointer to allocated DMA channel or NULL if failed.
+ */
+struct dma_chan *rio_request_dma(struct rio_dev *rdev)
+{
+	return rio_request_mport_dma(rdev->net->hport);
 }
 EXPORT_SYMBOL_GPL(rio_request_dma);
 
@@ -1610,7 +1620,7 @@ void rio_release_dma(struct dma_chan *dchan)
 EXPORT_SYMBOL_GPL(rio_release_dma);
 
 /**
- * rio_dma_prep_slave_sg - RapidIO specific wrapper
+ * rio_dma_prep_xfer - RapidIO specific wrapper
  *   for device_prep_slave_sg callback defined by DMAENGINE.
  * @dchan: DMA channel to configure
  * @destid: target RapidIO device destination ID
@@ -1623,11 +1633,10 @@ EXPORT_SYMBOL_GPL(rio_release_dma);
  * target RIO device.
  * Returns pointer to DMA transaction descriptor or NULL if failed.
  */
-struct dma_async_tx_descriptor *rio_dma_prep_slave_sg(struct dma_chan *dchan,
+struct dma_async_tx_descriptor *rio_dma_prep_xfer(struct dma_chan *dchan,
 	u16 destid, struct rio_dma_data *data,
 	enum dma_transfer_direction direction, unsigned long flags)
 {
-	struct dma_async_tx_descriptor *txd = NULL;
 	struct rio_dma_ext rio_ext;
 
 	if (dchan->device->device_prep_slave_sg == NULL) {
@@ -1640,10 +1649,30 @@ struct dma_async_tx_descriptor *rio_dma_prep_slave_sg(struct dma_chan *dchan,
 	rio_ext.rio_addr = data->rio_addr;
 	rio_ext.wr_type = data->wr_type;
 
-	txd = dmaengine_prep_rio_sg(dchan, data->sg, data->sg_len,
-					direction, flags, &rio_ext);
+	return dmaengine_prep_rio_sg(dchan, data->sg, data->sg_len,
+				     direction, flags, &rio_ext);
+}
+EXPORT_SYMBOL_GPL(rio_dma_prep_xfer);
 
-	return txd;
+/**
+ * rio_dma_prep_slave_sg - RapidIO specific wrapper
+ *   for device_prep_slave_sg callback defined by DMAENGINE.
+ * @rdev: RIO device control structure
+ * @dchan: DMA channel to configure
+ * @data: RIO specific data descriptor
+ * @direction: DMA data transfer direction (TO or FROM the device)
+ * @flags: dmaengine defined flags
+ *
+ * Initializes RapidIO capable DMA channel for the specified data transfer.
+ * Uses DMA channel private extension to pass information related to remote
+ * target RIO device.
+ * Returns pointer to DMA transaction descriptor or NULL if failed.
+ */
+struct dma_async_tx_descriptor *rio_dma_prep_slave_sg(struct rio_dev *rdev,
+	struct dma_chan *dchan, struct rio_dma_data *data,
+	enum dma_transfer_direction direction, unsigned long flags)
+{
+	return rio_dma_prep_xfer(dchan,	rdev->destid, data, direction, flags);
 }
 EXPORT_SYMBOL_GPL(rio_dma_prep_slave_sg);
 
