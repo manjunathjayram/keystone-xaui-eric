@@ -566,7 +566,7 @@ static struct dma_async_tx_descriptor
 		}
 	}
 
-	tx = rio_dma_prep_slave_sg(chan, pdt->id, &tx_data, dir, flags);
+	tx = rio_dma_prep_xfer(chan, pdt->id, &tx_data, dir, flags);
 
 	return tx;
 }
@@ -585,7 +585,7 @@ static int do_dma_request(struct mport_cdev_priv *priv, struct sg_table *sgt,
 
 	/* Request DMA channel associated with this mport device */
 	if (!priv->dmach) {
-		priv->dmach = rio_request_dma(priv->md->mport);
+		priv->dmach = rio_request_mport_dma(priv->md->mport);
 		if (!priv->dmach) {
 			pr_err(DRV_PREFIX "%s: Failed to get DMA channel\n",
 				__func__);
