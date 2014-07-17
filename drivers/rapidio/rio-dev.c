@@ -121,7 +121,7 @@ static struct dma_async_tx_descriptor *rio_dev_prep_dma_xfer(
 		}
 	}
 
-	tx = rio_dma_prep_slave_sg(chan, dest_id, &tx_data, dir, flags);
+	tx = rio_dma_prep_xfer(chan, dest_id, &tx_data, dir, flags);
 
 	return tx;
 }
@@ -698,7 +698,7 @@ static int rio_dev_open(struct inode *inode, struct file *filp)
 	rio_dev->base_offset = 0;
 	rio_dev->write_mode  = RIO_DIO_MODE_WRITER;
 
-	rio_dev->dma_chan    = rio_request_dma(mport);
+	rio_dev->dma_chan    = rio_request_mport_dma(mport);
 	if (rio_dev->dma_chan == NULL) {
 		dev_err(&rdev->dev, "cannot get DMA channel\n");
 		rio_dev_put(rdev);
