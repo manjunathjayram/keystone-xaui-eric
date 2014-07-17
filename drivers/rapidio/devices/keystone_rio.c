@@ -446,7 +446,7 @@ static int keystone_rio_lsu_dma_allocate_channel(struct rio_mport *mport)
 	struct keystone_rio_data *krio_priv = mport->priv;
 	struct dma_chan *dchan;
 
-	dchan = rio_request_dma(mport);
+	dchan = rio_request_mport_dma(mport);
 	if (!dchan) {
 		dev_err(krio_priv->dev, "%s cannot find DMA channel for port %d\n",
 			__FUNCTION__, mport->index);
