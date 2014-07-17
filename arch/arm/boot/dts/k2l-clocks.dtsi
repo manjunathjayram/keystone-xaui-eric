@@ -44,6 +44,17 @@ clocks {
 		plld_mask = <0x3f>;
 	};
 
+	ddr3_clk: ddr3_clk@2620360 {
+		#clock-cells = <0>;
+		compatible = "keystone,pll-clk";
+		clocks = <&refclkddr3>;
+		clock-output-names = "ddr3-pll-clk";
+		reg = <0x02620360 4>;
+		pllm_upper_mask = <0x7ffc0>;
+		pllm_upper_shift = <6>;
+		plld_mask = <0x3f>;
+	};
+
 	clkdfe: clkdfe {
 		#clock-cells = <0>;
 		compatible = "davinci,psc-clk";
