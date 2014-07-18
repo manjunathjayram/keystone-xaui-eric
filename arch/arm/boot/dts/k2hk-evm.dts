@@ -63,12 +63,34 @@
 				clock-output-names = "refclk-main";
 			};
 
+			refclkarm: refclkarm {
+				#clock-cells = <0>;
+				compatible = "fixed-clock";
+				clock-frequency = <125000000>;
+				clock-output-names = "refclk-arm";
+			};
+
 			refclkpass: refclkpass {
 				#clock-cells = <0>;
 				compatible = "fixed-clock";
 				clock-frequency = <122880000>;
 				clock-output-names = "refclk-pass";
 			};
+
+			refclkddr3a: refclkddr3a {
+				#clock-cells = <0>;
+				compatible = "fixed-clock";
+				clock-frequency = <100000000>;
+				clock-output-names = "refclk-ddr3a";
+			};
+
+			refclkddr3b: refclkddr3b {
+				#clock-cells = <0>;
+				compatible = "fixed-clock";
+				clock-frequency = <100000000>;
+				clock-output-names = "refclk-ddr3b";
+			};
+
 		};
 
 		aemif@30000000 {
