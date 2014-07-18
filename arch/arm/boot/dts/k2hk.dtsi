@@ -1092,6 +1092,12 @@
 			};
 		};
 
+                debugss: debugss {
+                        compatible = "ti,keystone-debugss";
+                        clocks = <&mainpllclk>, <&armpllclk>, <&clkdebugsstrc>, <&gemtraceclk>, <&clktetbtrc>;
+                        clock-names = "mainpllclock", "armpllclock", "debugssclock", "gemtraceclock", "tetbclock";
+                };
+
 		sysctrl {
 			interrupts = <0 24 0xf01>, /* L1L2 ECC error interrupt */
 				<0 448 0xf01>; /* DDR3 ECC error interrupt */
