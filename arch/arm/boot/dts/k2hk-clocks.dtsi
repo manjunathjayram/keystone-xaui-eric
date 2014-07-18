@@ -23,6 +23,17 @@ clocks {
 		fixed_postdiv = <2>;
 	};
 
+	armpllclk: armpllclk@2620370 {
+		#clock-cells = <0>;
+		compatible = "keystone,pll-clk";
+		clocks = <&refclkarm>;
+		clock-output-names = "arm-pll-clk";
+		reg = <0x02620370 4>;
+		pllm_upper_mask = <0x7ffc0>;
+		pllm_upper_shift = <6>;
+		plld_mask = <0x3f>;
+	};
+
 	ddr3a_clk: ddr3a_clk@2620360 {
 		#clock-cells = <0>;
 		compatible = "keystone,pll-clk";
