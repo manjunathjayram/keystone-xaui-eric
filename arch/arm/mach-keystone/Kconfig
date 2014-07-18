@@ -18,3 +18,14 @@ config ARCH_KEYSTONE
 	help
 	  Support for boards based on the Texas Instruments Keystone family of
 	  SoCs.
+if ARCH_KEYSTONE
+
+menu "TI KeyStone Implementations"
+
+config KEYSTONE2_DMA_COHERENT
+	bool "MPAX based coherency support"
+	default n
+
+endmenu
+
+endif
