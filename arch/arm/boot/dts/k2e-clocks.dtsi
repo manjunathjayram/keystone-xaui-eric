@@ -25,13 +25,23 @@ clocks {
 
 	papllclk: papllclk@2620358 {
 		#clock-cells = <0>;
-		compatible = "keystone,main-pll-clk";
+		compatible = "keystone,pll-clk";
 		clocks = <&refclkpass>;
 		reg = <0x02620358 4>;	/* PASSPLLCTL0 */
 		pllm_upper_mask = <0x7ffc0>;
 		pllm_upper_shift = <6>;
 		plld_mask = <0x3f>;
-		fixed_postdiv = <2>;
+	};
+
+	ddr3_clk: ddr3_clk@2620360 {
+		#clock-cells = <0>;
+		compatible = "keystone,pll-clk";
+		clocks = <&refclkddr3>;
+		clock-output-names = "ddr3-pll-clk";
+		reg = <0x02620360 4>;
+		pllm_upper_mask = <0x7ffc0>;
+		pllm_upper_shift = <6>;
+		plld_mask = <0x3f>;
 	};
 
 	clkusb: clkusb {
