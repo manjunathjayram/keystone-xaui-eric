@@ -63,6 +63,7 @@
 #define GMACSL_RET_WARN_RESET_INCOMPLETE	-2
 
 #define CPSW2_NUM_PORTS				9
+#define CPSW_CTL_P0_TX_CRC_REMOVE		BIT(13)
 #define CPSW2_CTL_P0_ENABLE			BIT(2)
 #define CPSW2_CTL_VLAN_AWARE			BIT(1)
 #define CPSW2_REG_VAL_STAT_ENABLE_ALL(x)	((1 << (x)) - 1)
@@ -3391,6 +3392,9 @@ static int cpsw2_open(void *intf_priv, struct net_device *ndev)
 		 CPSW2_MAJOR_VERSION(reg), CPSW2_MINOR_VERSION(reg),
 		 CPSW2_RTL_VERSION(reg), CPSW2_SGMII_IDENT(reg));
 
+	/* Use CPSW_NU P0 TX crc remove capability to remove FCS */
+	netcp->hw_capabilities |= CPSW_HAS_P0_TX_CRC_REMOVE;
+
 	ret = netcp_txpipe_open(&cpsw_intf->tx_pipe);
 	if (ret)
 		goto txpipe_fail;
@@ -3436,7 +3440,8 @@ static int cpsw2_open(void *intf_priv, struct net_device *ndev)
 	writel(0, &cpsw_dev->regs->ptype);
 
 	/* Control register */
-	writel(CPSW2_CTL_P0_ENABLE, &cpsw_dev->regs->control);
+	__raw_writel(CPSW2_CTL_P0_ENABLE | CPSW_CTL_P0_TX_CRC_REMOVE,
+			&cpsw_dev->regs->control);
 
 	/* All statistics enabled by default */
 	writel(CPSW2_REG_VAL_STAT_ENABLE_ALL(cpsw_dev->num_slaves + 1),
