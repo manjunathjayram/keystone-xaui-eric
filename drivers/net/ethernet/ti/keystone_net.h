@@ -96,6 +96,9 @@ struct netcp_addr {
 	struct list_head	 node;
 };
 
+/* Flags for hw_capabilities */
+#define	CPSW_HAS_P0_TX_CRC_REMOVE	BIT(0)
+
 struct netcp_priv {
 	/* Common stuff first */
 	struct netcp_device		*netcp_device;
@@ -109,6 +112,7 @@ struct netcp_priv {
 	struct dma_chan			*rx_channel;
 	enum netcp_rx_state		 rx_state;
 	struct netcp_hook_list		*rxhook_list_array;
+	u32				hw_capabilities;
 	struct napi_struct		 napi;
 	/* Non data path stuff */
 	u32				 msg_enable;

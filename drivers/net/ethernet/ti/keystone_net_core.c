@@ -717,8 +717,11 @@ static void netcp_rx_complete(void *data)
 		skb_add_rx_frag(skb, frags, sg_page(sg), sg->offset, len, PAGE_SIZE);
 	}
 
-	/* Remove the FCS from the packet (last 4 bytes) */
-	__pskb_trim(skb, skb->len - ETH_FCS_LEN);
+	/* Remove FCS from the packet (last 4 bytes) for platforms
+	 * that don't have capability to do this in CPSW
+	 */
+	if (!(netcp->hw_capabilities & CPSW_HAS_P0_TX_CRC_REMOVE))
+		__pskb_trim(skb, skb->len - ETH_FCS_LEN);
 
 	if (unlikely(netcp->rx_state == RX_STATE_TEARDOWN)) {
 		dev_dbg(netcp->dev,
