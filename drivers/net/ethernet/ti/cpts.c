@@ -31,6 +31,25 @@
 
 #ifdef CONFIG_TI_CPTS
 
+struct cpts_tc_ts_converter {
+	u32 freq;
+	u32 mult;
+	u32 shift;
+	u32 div;
+};
+
+struct cpts_tc_ts_converter cpts_tc_ts_default_converters[] = {
+	{400000000, 2560, 10,  1},
+	{425000000, 5120,  7, 17},
+	{500000000, 2048, 10,  1},
+	{600000000, 5120, 10,  3},
+	{614400000, 5000, 10,  3},
+	{625000000, 4096,  9,  5},
+	{675000000, 5120,  7, 27},
+	{700000000, 5120,  9,  7},
+	{750000000, 4096, 10,  3},
+};
+
 static struct sock_filter ptp_default_filter[] = {
 	PTP_FILTER
 };
@@ -692,6 +711,38 @@ static void cpts_overflow_check(struct work_struct *work)
 	schedule_delayed_work(&cpts->overflow_work, CPTS_OVERFLOW_PERIOD);
 }
 
+static int cpts_get_rftclk_default_converters(struct cpts *cpts)
+{
+	struct cpts_tc_ts_converter *c = &cpts_tc_ts_default_converters[0];
+	struct cpts_tc_ts_converter *d_min_conv = NULL;
+	u32 a_size = ARRAY_SIZE(cpts_tc_ts_default_converters);
+	u32 f = cpts->rftclk_freq;
+	u32 d_min = 0xffffffff;
+	u32 i, d;
+
+	for (i = 0, c = &cpts_tc_ts_default_converters[0];
+					i < a_size; i++, c++) {
+		d = abs(f - c->freq);
+		if (d < d_min) {
+			d_min = d;
+			d_min_conv = c;
+		}
+	}
+
+	/* if ref clk freq differs from freq in the defaults
+	   for more than 1 MHz, do not return any multi/div/shif.
+	   1MHz is arbitrary but reasonable
+	*/
+	if (d_min >= 1000000)
+		return -1;
+
+	cpts->cc.mult	= d_min_conv->mult;
+	cpts->cc.shift	= d_min_conv->shift;
+	cpts->cc_div	= d_min_conv->div;
+
+	return 0;
+}
+
 #define CPTS_REF_CLOCK_NAME "cpsw_cpts_rft_clk"
 
 static void cpts_clk_init(struct cpts *cpts)
@@ -708,16 +759,20 @@ static void cpts_clk_init(struct cpts *cpts)
 		cpts->rftclk_freq = clk_get_rate(cpts->refclk);
 
 	if (!cpts->cc.mult && !cpts->cc.shift) {
-		/*
-		   calculate the multiplier/shift to
-		   convert CPTS counter ticks to ns.
-		*/
-		rate = cpts->rftclk_freq;
-		max_sec = ((1ULL << CPTS_COUNTER_BITS) - 1) + (rate - 1);
-		do_div(max_sec, rate);
+		if (cpts_get_rftclk_default_converters(cpts)) {
+			/*
+			   calculate the multiplier/shift to
+			   convert CPTS counter ticks to ns.
+			*/
+			rate = cpts->rftclk_freq;
+			max_sec = ((1ULL << CPTS_COUNTER_BITS) - 1) +
+								(rate - 1);
+			do_div(max_sec, rate);
 
-		clocks_calc_mult_shift(&cpts->cc.mult, &cpts->cc.shift, rate,
-					NSEC_PER_SEC, max_sec);
+			clocks_calc_mult_shift(&cpts->cc.mult, &cpts->cc.shift,
+						rate, NSEC_PER_SEC, max_sec);
+			cpts->cc_div = 1;
+		}
 	}
 
 	pr_info("cpts rftclk rate(%u HZ),mult(%u),shift(%u),div(%u)\n",
