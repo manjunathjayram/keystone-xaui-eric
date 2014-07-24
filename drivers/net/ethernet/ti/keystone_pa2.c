@@ -1679,7 +1679,6 @@ static int keystone_pa2_set_firmware(struct pa2_device *pa_dev,
 			     int pdsp, const unsigned int *buffer, int len)
 {
 	struct pa2_ppu_debug_regs __iomem *debug_reg = pa_dev->ppu[pdsp].debug;
-	struct device *dev = pa_dev->dev;
 	u32 i;
 
 	if ((pdsp < 0) || (pdsp >= PA2_NUM_PDSPS))
