@@ -14,22 +14,33 @@
 	};
 
 	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
 		interrupt-parent = <&gic>;
 
 		cpu@0 {
 			compatible = "arm,cortex-a15";
+			device_type = "cpu";
+			reg = <0x0>;
 		};
 
 		cpu@1 {
 			compatible = "arm,cortex-a15";
+			device_type = "cpu";
+			reg = <0x1>;
 		};
 
 		cpu@2 {
 			compatible = "arm,cortex-a15";
+			device_type = "cpu";
+			reg = <0x2>;
 		};
 
 		cpu@3 {
 			compatible = "arm,cortex-a15";
+			device_type = "cpu";
+			reg = <0x3>;
 		};
 	};
 
