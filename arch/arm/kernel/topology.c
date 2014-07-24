@@ -11,6 +11,7 @@
  * for more details.
  */
 
+#include <linux/clk.h>
 #include <linux/cpu.h>
 #include <linux/cpumask.h>
 #include <linux/export.h>
@@ -104,7 +105,9 @@ static void __init parse_dt_topology(void)
 	cpu_capacity = kzalloc(alloc_size, GFP_NOWAIT);
 
 	while ((cn = of_find_node_by_type(cn, "cpu"))) {
-		const u32 *rate, *reg;
+		const u32 *prop, *reg;
+		struct clk *cpu_clk;
+		unsigned long rate;
 		int len;
 
 		if (cpu >= num_possible_cpus())
@@ -117,12 +120,17 @@ static void __init parse_dt_topology(void)
 		if (cpu_eff->compatible == NULL)
 			continue;
 
-		rate = of_get_property(cn, "clock-frequency", &len);
-		if (!rate || len != 4) {
-			pr_err("%s missing clock-frequency property\n",
-				cn->full_name);
-			continue;
-		}
+		cpu_clk = of_clk_get(cn, 0);
+		if (IS_ERR(cpu_clk)) {
+			prop = of_get_property(cn, "clock-frequency", &len);
+			if (!prop || len != 4) {
+				pr_err("%s missing clock-frequency property\n",
+					cn->full_name);
+				continue;
+			}
+			rate = be32_to_cpup(prop);
+		} else
+			rate = clk_get_rate(cpu_clk);
 
 		reg = of_get_property(cn, "reg", &len);
 		if (!reg || len != 4) {
@@ -130,7 +138,7 @@ static void __init parse_dt_topology(void)
 			continue;
 		}
 
-		capacity = ((be32_to_cpup(rate)) >> 20) * cpu_eff->efficiency;
+		capacity = (rate >> 20) * cpu_eff->efficiency;
 
 		/* Save min capacity of the system */
 		if (capacity < min_capacity)
