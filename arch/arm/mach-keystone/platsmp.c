@@ -29,27 +29,6 @@
 
 #include "keystone.h"
 
-static void __init keystone_smp_init_cpus(void)
-{
-	unsigned int i, ncores;
-
-	ncores = 4;
-
-	/* sanity check */
-	if (ncores > NR_CPUS) {
-		pr_warn("restricted to %d cpus\n", NR_CPUS);
-		ncores = NR_CPUS;
-	}
-
-	for (i = 0; i < ncores; i++)
-		set_cpu_possible(i, true);
-}
-
-static void __init keystone_smp_prepare_cpus(unsigned int max_cpus)
-{
-	/* nothing to do here */
-}
-
 static void __cpuinit keystone_smp_secondary_initmem(void)
 {
 #ifdef CONFIG_ARM_LPAE
@@ -106,8 +85,6 @@ static int keystone_cpu_disable(unsigned int cpu)
 #endif
 
 struct smp_operations keystone_smp_ops __initdata = {
-	.smp_init_cpus		= keystone_smp_init_cpus,
-	.smp_prepare_cpus	= keystone_smp_prepare_cpus,
 	.smp_secondary_init	= keystone_smp_secondary_init,
 	.smp_boot_secondary	= keystone_smp_boot_secondary,
 #ifdef CONFIG_HOTPLUG_CPU
