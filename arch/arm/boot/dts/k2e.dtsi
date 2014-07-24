@@ -23,24 +23,28 @@
 			compatible = "arm,cortex-a15";
 			device_type = "cpu";
 			reg = <0x0>;
+			clocks = <&mainpllclk>;
 		};
 
 		cpu@1 {
 			compatible = "arm,cortex-a15";
 			device_type = "cpu";
 			reg = <0x1>;
+			clocks = <&mainpllclk>;
 		};
 
 		cpu@2 {
 			compatible = "arm,cortex-a15";
 			device_type = "cpu";
 			reg = <0x2>;
+			clocks = <&mainpllclk>;
 		};
 
 		cpu@3 {
 			compatible = "arm,cortex-a15";
 			device_type = "cpu";
 			reg = <0x3>;
+			clocks = <&mainpllclk>;
 		};
 	};
 
