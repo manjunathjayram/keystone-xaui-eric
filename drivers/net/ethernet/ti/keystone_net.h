@@ -138,6 +138,7 @@ struct netcp_packet {
 						struct sk_buff *skb);
 	void				*primary_bufptr;
 	unsigned int			 primary_bufsiz;
+	unsigned int			 primary_datsiz;
 	int				 sg_ents;
 	struct scatterlist		 sg[NETCP_SGLIST_SIZE];
 	u32				 psdata[NETCP_PSDATA_LEN];
