@@ -266,11 +266,8 @@ static int sa_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 
 		ret = of_property_read_u32(sa_dev->node, "netcp_ver",
 					   &sa_intf->netcp_ver);
-		if (ret < 0) {
-			dev_warn(sa_dev->dev,
-				"missing netcp_ver parameter, err %d\n", ret);
+		if (ret < 0)
 			sa_intf->netcp_ver = 0;
-		}
 		return 0;
 	} else
 		return -ENODEV;
