@@ -204,6 +204,7 @@
 
 			pca@20 {
 				compatible = "nxp,pca9555";
+				status = "disabled";
 				reg = <0x20>;
 			};
 		};
