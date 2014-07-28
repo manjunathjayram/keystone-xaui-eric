@@ -765,6 +765,11 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 			return -ERESTARTSYS;
 		}
 	}
+#ifdef CONFIG_KEYSTONE2_DMA_COHERENT
+	/* Sync buffer for cpu access */
+	dma_sync_single_for_cpu(dev, virt_to_dma(dev, (void *)(msg)),
+		sizeof(struct rpmsg_hdr) + msg->len - 1, DMA_TO_DEVICE);
+#endif
 
 	msg->len = len;
 	msg->flags = 0;
@@ -774,6 +779,7 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 	memcpy(msg->data, data, len);
 
 #ifdef CONFIG_KEYSTONE2_DMA_COHERENT
+	/* Sync buffer to give access to remote device */
 	dma_sync_single_for_device(dev, virt_to_dma(dev, (void *)(msg)),
 					sizeof(struct rpmsg_hdr) + msg->len - 1,
 					DMA_TO_DEVICE);
@@ -817,6 +823,7 @@ static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
 	int err;
 
 #ifdef CONFIG_KEYSTONE2_DMA_COHERENT
+	/* Sync buffer to receive message */
 	dma_sync_single_for_cpu(dev, virt_to_dma(dev, (void *)(msg)),
 					sizeof(struct rpmsg_hdr) + msg->len - 1,
 					DMA_FROM_DEVICE);
@@ -866,6 +873,12 @@ static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
 
 	/* publish the real size of the buffer */
 	sg_init_one(&sg, msg, RPMSG_BUF_SIZE);
+
+#ifdef CONFIG_KEYSTONE2_DMA_COHERENT
+	/* Sync buffer for remote device to use */
+	dma_sync_single_for_device(dev, virt_to_dma(dev, (void *)(msg)),
+		sizeof(struct rpmsg_hdr) + msg->len - 1, DMA_FROM_DEVICE);
+#endif
 
 	/* add the buffer back to the remote processor's virtqueue */
 	err = virtqueue_add_inbuf(vrp->rvq, &sg, 1, msg, GFP_KERNEL);
@@ -1060,6 +1073,12 @@ static int rpmsg_probe(struct virtio_device *vdev)
 		void *cpu_addr = vrp->rbufs + i * RPMSG_BUF_SIZE;
 
 		sg_init_one(&sg, cpu_addr, RPMSG_BUF_SIZE);
+
+#ifdef CONFIG_KEYSTONE2_DMA_COHERENT
+	/* Sync buffer for remove device to use */
+	dma_sync_single_for_device(&vdev->dev, virt_to_dma(&vdev->dev,
+		(void *)(&sg)), RPMSG_BUF_SIZE, DMA_FROM_DEVICE);
+#endif
 
 		err = virtqueue_add_inbuf(vrp->rvq, &sg, 1, cpu_addr,
 								GFP_KERNEL);
