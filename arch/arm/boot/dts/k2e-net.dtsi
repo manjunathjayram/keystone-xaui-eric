@@ -220,7 +220,7 @@ netcp {
 		tx_data_queue_depth     = <1024>;
 		rx_pool_depth           = <64>;
 		rx_buffer_size          = <128>;
-		lut-ranges              = <0 43 56 63>;
+		lut-ranges              = <0 43 248 255>;
 		/* mark_mcast_match	= <0x12345a00 0xffffff00>; */
 		/* force_no_hwtstamp; */
 	};
