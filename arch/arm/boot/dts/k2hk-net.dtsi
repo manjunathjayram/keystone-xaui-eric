@@ -228,6 +228,7 @@ mdiox0: mdiox {
 	compatible = "virtual,mdio-gpio";
 	#address-cells = <1>;
 	#size-cells = <0>;
+	status = "disabled";
 	gpios = <&gpio0 2 0x2		/* mdc */
 		 &gpio0 0 0x2>;		/* mdio */
 
@@ -247,6 +248,7 @@ netcpx: netcp@2f00000 {
 	reg = <0x2f00000 0xa0600>;
 	compatible = "ti,keystone-netcp";
 	dma-coherent;
+	status = "disabled";
 
 	clocks = <&clkxge>;
 	clock-names = "clk_xge";
