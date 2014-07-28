@@ -852,10 +852,12 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		bufsiz = SKB_DATA_ALIGN(size + NET_IP_ALIGN + NET_SKB_PAD) +
 			 SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
 		if (bufsiz <= PAGE_SIZE) {
-			bufptr = netdev_alloc_frag(bufsiz);
+			bufptr = __netdev_alloc_frag(bufsiz,
+					GFP_ATOMIC | __GFP_COLD | __GFP_DMA);
 			p_info->primary_bufsiz = bufsiz;
 		} else {
-			bufptr = kmalloc(bufsiz, GFP_ATOMIC | __GFP_COLD);
+			bufptr = kmalloc(bufsiz,
+					GFP_ATOMIC | __GFP_COLD | __GFP_DMA);
 			p_info->primary_bufsiz = 0;
 		}
 		if (!bufptr) {
@@ -914,7 +916,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		/* Allocate a secondary receive queue entry */
 		struct scatterlist sg[1];
 
-		page = alloc_page(GFP_ATOMIC | GFP_DMA32 | __GFP_COLD);
+		page = alloc_page(GFP_ATOMIC | __GFP_COLD | __GFP_DMA);
 		if (!page) {
 			dev_warn(netcp->dev, "page alloc failed for pool %d\n", q_num);
 			return NULL;
