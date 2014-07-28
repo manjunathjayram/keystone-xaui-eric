@@ -340,7 +340,7 @@ struct netdev_alloc_cache {
 };
 static DEFINE_PER_CPU(struct netdev_alloc_cache, netdev_alloc_cache);
 
-static void *__netdev_alloc_frag(unsigned int fragsz, gfp_t gfp_mask)
+void *__netdev_alloc_frag(unsigned int fragsz, gfp_t gfp_mask)
 {
 	struct netdev_alloc_cache *nc;
 	void *data = NULL;
@@ -384,6 +384,7 @@ end:
 	local_irq_restore(flags);
 	return data;
 }
+EXPORT_SYMBOL(__netdev_alloc_frag);
 
 /**
  * netdev_alloc_frag - allocate a page fragment
