@@ -693,10 +693,10 @@ static int cpts_check_ts_comp_hw_ts_ev(struct cpts *cpts)
 	return 0;
 }
 
-static void cpts_overflow_check(struct work_struct *work)
+static void cpts_overflow_check(unsigned long arg)
 {
+	struct cpts *cpts = (struct cpts *)arg;
 	struct timespec ts;
-	struct cpts *cpts = container_of(work, struct cpts, overflow_work.work);
 	u32 v;
 
 	v = cpts_read32(cpts, control) | CPTS_EN;
@@ -708,7 +708,8 @@ static void cpts_overflow_check(struct work_struct *work)
 		cpts_disable_ts_comp(cpts);
 	if (cpts->pps_enable || cpts->hw_ts_enable)
 		cpts_check_ts_comp_hw_ts_ev(cpts);
-	schedule_delayed_work(&cpts->overflow_work, CPTS_OVERFLOW_PERIOD);
+	cpts->timer.expires = jiffies + CPTS_OVERFLOW_PERIOD;
+	add_timer(&cpts->timer);
 }
 
 static int cpts_get_rftclk_default_converters(struct cpts *cpts)
@@ -972,8 +973,11 @@ int cpts_register(struct device *dev, struct cpts *cpts,
 
 	cpts->cc_total = cpts->tc.cycle_last;
 
-	INIT_DELAYED_WORK(&cpts->overflow_work, cpts_overflow_check);
-	schedule_delayed_work(&cpts->overflow_work, CPTS_OVERFLOW_PERIOD);
+	init_timer(&cpts->timer);
+	cpts->timer.data        = (unsigned long)cpts;
+	cpts->timer.function    = cpts_overflow_check;
+	cpts->timer.expires     = jiffies + CPTS_OVERFLOW_PERIOD;
+	add_timer(&cpts->timer);
 
 	cpts->phc_index = ptp_clock_index(cpts->clock);
 #endif
@@ -985,7 +989,7 @@ void cpts_unregister(struct cpts *cpts)
 #ifdef CONFIG_TI_CPTS
 	if (cpts->clock) {
 		ptp_clock_unregister(cpts->clock);
-		cancel_delayed_work_sync(&cpts->overflow_work);
+		del_timer_sync(&cpts->timer);
 	}
 	if (cpts->refclk)
 		cpts_clk_release(cpts);
