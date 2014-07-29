@@ -296,7 +296,7 @@ struct sa_tfm_ctx {
 /* Tx DMA callback param */
 struct sa_dma_req_ctx {
 	struct keystone_crypto_data *dev_data;
-	u32		cmdl[SA_MAX_CMDL_WORDS];
+	u32		cmdl[SA_MAX_CMDL_WORDS + SA_NUM_PSDATA_CTX_WORDS];
 	unsigned	map_idx;
 	struct sg_table sg_tbl;
 	dma_cookie_t	cookie;
@@ -2613,7 +2613,7 @@ static int sa_aead_setkey(struct crypto_aead *authenc,
 	memcpy(&ctx->enc.epib[1], &swinfo.word[0], sizeof(swinfo));
 	cmdl_len = sa_format_cmdl_gen(&cfg,
 				(u8 *)ctx->enc.cmdl, &ctx->enc.cmdl_upd_info);
-	if (cmdl_len <= 0)
+	if ((cmdl_len <= 0) || (cmdl_len > SA_MAX_CMDL_WORDS * sizeof(u32)))
 		goto badkey;
 
 	ctx->enc.cmdl_size = cmdl_len;
@@ -2631,7 +2631,7 @@ static int sa_aead_setkey(struct crypto_aead *authenc,
 	cmdl_len = sa_format_cmdl_gen(&cfg,
 				(u8 *)ctx->dec.cmdl, &ctx->dec.cmdl_upd_info);
 
-	if (cmdl_len <= 0)
+	if ((cmdl_len <= 0) || (cmdl_len > SA_MAX_CMDL_WORDS * sizeof(u32)))
 		goto badkey;
 
 	ctx->dec.cmdl_size = cmdl_len;
