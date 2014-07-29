@@ -107,7 +107,7 @@ netcp {
 		host_port_reg_ofs = <0x21000>;
 		slave_reg_ofs	  = <0x22000>;
 		hw_stats_reg_ofs  = <0x3a000>;
-		/* cpts_reg_ofs	  = <0x3d000>; */
+		cpts_reg_ofs	  = <0x3d000>;
 		ale_reg_ofs	  = <0x3e000>;
 
 		num_slaves  = <8>;
@@ -120,9 +120,9 @@ netcp {
 		/*cpts_rftclk_freq = <399360000>;*/
 		cpts_ts_comp_length = <3>;
 		cpts_ts_comp_polarity = <1>;  /* 1 - assert high */
-		cpts_clock_mult = <5000>;
-		cpts_clock_shift = <10>;
-		cpts_clock_div = <3>;
+		/* cpts_clock_mult = <5000>; */
+		/* cpts_clock_shift = <10>; */
+		/* cpts_clock_div = <3>; */
 		/* force_no_hwtstamp; */
 
 		multi-interface;
