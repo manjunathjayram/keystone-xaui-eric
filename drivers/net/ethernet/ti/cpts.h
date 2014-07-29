@@ -137,7 +137,7 @@ struct cpts {
 	u32 cc_mult; /* for the nominal frequency */
 	struct cyclecounter cc;
 	struct timecounter tc;
-	struct delayed_work overflow_work;
+	struct timer_list timer;
 	int phc_index;
 	struct clk *refclk;
 	struct list_head events;
