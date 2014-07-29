@@ -625,6 +625,7 @@ static inline bool netcp_is_alive(struct netcp_priv *netcp)
 		netcp->rx_state == RX_STATE_INTERRUPT);
 }
 
+#ifdef DEBUG
 static void netcp_dump_packet(struct netcp_packet *p_info, const char *cause)
 {
 	struct netcp_priv *netcp = p_info->netcp;
@@ -649,6 +650,7 @@ static void netcp_dump_packet(struct netcp_packet *p_info, const char *cause)
 		tail[0x08], tail[0x09], tail[0x0a], tail[0x0b],
 		tail[0x0c], tail[0x0d], tail[0x0e], tail[0x0f]);
 }
+#endif
 
 static inline void netcp_frag_free(bool is_frag, void *ptr)
 {
@@ -679,7 +681,7 @@ static void netcp_rx_complete(void *data)
 	/* sg[3] describes the primary buffer */
 	/* Build a new sk_buff for this buffer */
 	dma_unmap_single(&netcp->pdev->dev, sg_dma_address(&p_info->sg[3]),
-			p_info->primary_bufsiz, DMA_FROM_DEVICE);
+			p_info->primary_datsiz, DMA_FROM_DEVICE);
 	skb = build_skb(p_info->primary_bufptr, p_info->primary_bufsiz);
 	if (unlikely(!skb)) {
 		 /* Free the primary buffer */
@@ -803,7 +805,7 @@ static void netcp_rxpool_free(void *arg, unsigned q_num, unsigned bufsize,
 		struct netcp_packet *p_info = desc->callback_param;
 
 		dma_unmap_single(dev, sg_dma_address(&p_info->sg[3]),
-				p_info->primary_bufsiz, DMA_FROM_DEVICE);
+				p_info->primary_datsiz, DMA_FROM_DEVICE);
 		netcp_frag_free((p_info->primary_bufsiz <= PAGE_SIZE), 
 				p_info->primary_bufptr);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
@@ -850,10 +852,12 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		bufsiz = SKB_DATA_ALIGN(size + NET_IP_ALIGN + NET_SKB_PAD) +
 			 SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
 		if (bufsiz <= PAGE_SIZE) {
-			bufptr = netdev_alloc_frag(bufsiz);
+			bufptr = __netdev_alloc_frag(bufsiz,
+					GFP_ATOMIC | __GFP_COLD | __GFP_DMA);
 			p_info->primary_bufsiz = bufsiz;
 		} else {
-			bufptr = kmalloc(bufsiz, GFP_ATOMIC | __GFP_COLD);
+			bufptr = kmalloc(bufsiz,
+					GFP_ATOMIC | __GFP_COLD | __GFP_DMA);
 			p_info->primary_bufsiz = 0;
 		}
 		if (!bufptr) {
@@ -862,6 +866,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 			return NULL;
 		}
 		p_info->primary_bufptr = bufptr;
+		p_info->primary_datsiz = size;
 		
 		/* Same as skb_reserve(skb, NET_IP_ALIGN + NET_SKB_PAD) */
 		data = bufptr + NET_IP_ALIGN + NET_SKB_PAD;
@@ -911,7 +916,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		/* Allocate a secondary receive queue entry */
 		struct scatterlist sg[1];
 
-		page = alloc_page(GFP_ATOMIC | GFP_DMA32 | __GFP_COLD);
+		page = alloc_page(GFP_ATOMIC | __GFP_COLD | __GFP_DMA);
 		if (!page) {
 			dev_warn(netcp->dev, "page alloc failed for pool %d\n", q_num);
 			return NULL;
@@ -1220,7 +1225,9 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 		skb->len = NETCP_MIN_PACKET_SIZE;
 	}
 
+#ifdef DEBUG
 	netcp_dump_packet(&p_info, "txs");
+#endif
 
 	skb_tx_timestamp(skb);
 
