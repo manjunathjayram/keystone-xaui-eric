@@ -27,8 +27,10 @@
 		pr_debug("reg %p has value %x\n", (void *)addr, \
 				(__raw_readl(addr) & ~mask))
 
-#define PCIE_RC_MODE		(BIT(2))
-#define PCIE_MODE_MASK		(BIT(1) | BIT(2))
+#define PCIE0_RC_MODE		(BIT(2))
+#define PCIE0_MODE_MASK		(BIT(1) | BIT(2))
+#define PCIE1_RC_MODE		(BIT(4))
+#define PCIE1_MODE_MASK		(BIT(3) | BIT(4))
 
 /* mask bits point to bits being modified */
 #define reg_rmw(addr, value, mask) \
@@ -153,7 +155,7 @@ static struct serdes_config k2_100mhz_pcie_5gbps_serdes[] = {
 	{0x0b14, 0x0000005d, 0x000000ff},
 };
 
-int k2_pcie_platform_setup(void *pdata, struct device_node *np)
+int k2_pcie_platform_setup(void *pdata, struct device_node *np, int domain)
 {
 	struct keystone_pcie_pdata *p_data = pdata;
 	void __iomem *reg_serdes_base, *devcfg;
@@ -164,7 +166,7 @@ int k2_pcie_platform_setup(void *pdata, struct device_node *np)
 	devcfg = of_iomap(np, 1);
 	reg_serdes_base = of_iomap(np, 2);
 
-	pr_info("keystone2_pcie_serdes_setup\n");
+	pr_info("keystone2_pcie_serdes_setup for domain %d\n", domain);
 
 	if (!reg_serdes_base)
 		pr_info("Assuming SERDES initialized by boot loader\n");
@@ -187,15 +189,22 @@ int k2_pcie_platform_setup(void *pdata, struct device_node *np)
 
 	/* enable RC mode in devcfg */
 	val = __raw_readl(devcfg);
-	val &= ~PCIE_MODE_MASK;
-	val |= PCIE_RC_MODE;
+	if (domain) {
+		val &= ~PCIE1_MODE_MASK;
+		val |= PCIE1_RC_MODE;
+	} else {
+		val &= ~PCIE0_MODE_MASK;
+		val |= PCIE0_RC_MODE;
+	}
 	__raw_writel(val, devcfg);
 
 	/* check if we need to enable link training */
 	p_data->en_link_train =
 		(of_get_property(np, "enable-linktrain", NULL) != NULL);
 
-	pr_info("keystone2_pcie_serdes_setup done, en_link_train = %d\n",
-		p_data->en_link_train);
+	pr_info("keystone2_pcie_serdes_setup done domain %d, en_link_train = %d\n",
+		domain, p_data->en_link_train);
+	iounmap(devcfg);
+	iounmap(reg_serdes_base);
 	return 0;
 }
