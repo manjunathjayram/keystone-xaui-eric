@@ -3259,6 +3259,10 @@ static void cpsw2_update_cpts_dt_params(struct cpsw2_priv *cpsw_dev,
 		cpsw_dev->cpts.ts_comp_length = 1;
 	}
 
+	if (of_property_read_u32(node, "cpts_ts_comp_polarity",
+				&cpsw_dev->cpts.ts_comp_polarity))
+		cpsw_dev->cpts.ts_comp_polarity = 1;
+
 	if (of_property_read_u32(node, "cpts_clock_mult",
 				&cpsw_dev->cpts.cc.mult)) {
 		dev_err(cpsw_dev->dev,
