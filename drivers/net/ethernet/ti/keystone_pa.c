@@ -289,7 +289,6 @@ struct pa_device {
 	u32				 lut_inuse_count;
 	struct pa_lut_entry		 *lut;
 	u32				 lut_size;
-
 	u32				 ts_not_req;
 	int				 force_no_hwtstamp;
 };
@@ -1089,8 +1088,8 @@ static int keystone_pa_add_mac(struct pa_intf *pa_intf, int index,
 	u32 context = PA_CONTEXT_CONFIG;
 	int size, ret;
 
-	dev_dbg(priv->dev, "add mac, index %d, smac %pM, dmac %pM, rule %d, type %x, port %d\n",
-		index, smac, dmac, rule, etype, port);
+	dev_dbg(priv->dev, "add mac, index %d, smac %pM, dmac %pM, rule %d, "
+		"type %04x, port %d\n", index, smac, dmac, rule, etype, port);
 
 	memset(&fail_info, 0, sizeof(fail_info));
 
@@ -1708,9 +1707,6 @@ static int pa_close(void *intf_priv, struct net_device *ndev)
 		/* Do pa disable related stuff only if this is the last
 		 * interface to go down
 		 */
-		tasklet_disable(&pa_dev->task);
-
-		tstamp_purge_pending(pa_dev);
 
 		if (pa_dev->pdsp0_tx_channel) {
 			dmaengine_pause(pa_dev->pdsp0_tx_channel);
@@ -1719,9 +1715,14 @@ static int pa_close(void *intf_priv, struct net_device *ndev)
 		}
 		if (pa_dev->rx_channel) {
 			dmaengine_pause(pa_dev->rx_channel);
+			tasklet_kill(&pa_dev->task);
+			dma_rxfree_flush(pa_dev->rx_channel);
+			dma_poll(pa_dev->rx_channel, -1);
 			dma_release_channel(pa_dev->rx_channel);
 			pa_dev->rx_channel = NULL;
 		}
+
+		tstamp_purge_pending(pa_dev);
 
 		if (pa_dev->clk) {
 			clk_disable_unprepare(pa_dev->clk);
@@ -1996,9 +1997,9 @@ int pa_add_addr(void *intf_priv, struct netcp_addr *naddr)
 
 	for (idx = 0; idx < count; idx++) {
 		entries[idx] = pa_lut_alloc(pa_dev, naddr->type == ADDR_ANY);
-		entries[idx]->naddr = naddr;
 		if (!entries[idx])
 			goto fail_alloc;
+		entries[idx]->naddr = naddr;
 	}
 
 	addr = (naddr->type == ADDR_ANY) ? NULL : naddr->addr;
@@ -2054,6 +2055,7 @@ static int pa_del_addr(void *intf_priv, struct netcp_addr *naddr)
 		keystone_pa_add_mac(pa_intf, entry->index, NULL, NULL,
 				    PACKET_DROP, 0, PA_INVALID_PORT);
 		entry->in_use = false;
+		entry->naddr = NULL;
 	}
 
 	return 0;
