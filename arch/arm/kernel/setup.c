@@ -632,6 +632,10 @@ static int __init early_mem(char *p)
 	if (*endp == '@')
 		start = memparse(endp + 1, NULL);
 
+#ifdef CONFIG_ARCH_KEYSTONE
+	start += IDMAP_ADDR_OFFSET;
+#endif
+
 	arm_add_memory(start, size);
 
 	return 0;

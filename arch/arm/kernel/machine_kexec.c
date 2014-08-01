@@ -38,6 +38,7 @@ int machine_kexec_prepare(struct kimage *image)
 	struct kexec_segment *current_segment;
 	__be32 header;
 	int i, err;
+	phys_addr_t pmem, pmemsz;
 
 	/*
 	 * No segment at default ATAGs address. try to locate
@@ -46,8 +47,11 @@ int machine_kexec_prepare(struct kimage *image)
 	for (i = 0; i < image->nr_segments; i++) {
 		current_segment = &image->segment[i];
 
-		if (!memblock_is_region_memory(current_segment->mem,
-					       current_segment->memsz))
+		pmem = current_segment->mem + IDMAP_ADDR_OFFSET;
+		pmemsz = current_segment->memsz;
+
+		if (!memblock_is_region_memory(pmem /*current_segment->mem*/,
+					       pmemsz/*current_segment->memsz*/))
 			return -EINVAL;
 
 		err = get_user(header, (__be32*)current_segment->buf);
@@ -147,7 +151,7 @@ void machine_kexec(struct kimage *image)
 
 	/* we need both effective and real address here */
 	reboot_code_buffer_phys =
-	    page_to_pfn(image->control_code_page) << PAGE_SHIFT;
+	    (page_to_pfn(image->control_code_page) - IDMAP_PFN_OFFSET) << PAGE_SHIFT;
 	reboot_code_buffer = page_address(image->control_code_page);
 
 	/* Prepare parameters for reboot_code_buffer*/
