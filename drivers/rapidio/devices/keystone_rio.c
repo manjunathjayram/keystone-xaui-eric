@@ -3682,7 +3682,7 @@ out:
 	return res;
 }
 
-static int __init keystone_rio_probe(struct platform_device *pdev)
+static int keystone_rio_probe(struct platform_device *pdev)
 {
 	struct device_node *node = pdev->dev.of_node;
 	struct keystone_rio_data *krio_priv;
