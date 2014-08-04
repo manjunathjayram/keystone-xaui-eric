@@ -901,14 +901,13 @@ int arch_setup_msi_irq(struct pci_dev *pdev, struct msi_desc *desc)
 
 void arch_teardown_msi_irq(unsigned int irq)
 {
-	struct irq_data *irq_data = irq_get_chip_data(irq);
-	struct keystone_pcie_info *info = irq_data_get_irq_chip_data(irq_data);
+	struct msi_desc *entry = irq_get_msi_desc(irq);
+	struct pci_dev *pdev = entry->dev;
+	struct keystone_pcie_info *info = pbus_to_kspci(pdev->bus);
 
 	if (info) {
 		int pos = irq - irq_linear_revmap(info->msi_irqd, 0);
-
-		irq_set_chip_and_handler(irq, NULL, NULL);
-		irq_set_chip_data(irq, NULL);
+		dynamic_irq_cleanup(irq);
 		clear_bit(pos, msi_irq_bits);
 		return;
 	}
