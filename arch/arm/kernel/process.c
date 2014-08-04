@@ -86,7 +86,11 @@ static void __soft_restart(void *addr)
 	flush_cache_all();
 
 	/* Switch to the identity mapping. */
+#ifdef CONFIG_ARCH_KEYSTONE
+	phys_reset = (phys_reset_t)(unsigned long)virt_to_idmap(cpu_reset);
+#else
 	phys_reset = (phys_reset_t)(unsigned long)virt_to_phys(cpu_reset);
+#endif
 	phys_reset((unsigned long)addr);
 
 	/* Should never get here. */
