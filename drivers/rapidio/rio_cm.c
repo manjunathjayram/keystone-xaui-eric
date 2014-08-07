@@ -33,6 +33,7 @@
 #include <linux/cdev.h>
 #include <linux/fs.h>
 #include <linux/poll.h>
+#include <linux/reboot.h>
 #include <linux/rio_ids.h>
 #include <linux/rio_cm_cdev.h>
 #include "rio_cm.h"
@@ -1413,6 +1414,39 @@ static void riocm_ch_free(struct rio_channel *ch)
 	kfree(ch);
 }
 
+
+static int riocm_send_close(struct rio_channel *ch)
+{
+	struct rio_ch_chan_hdr hdr;
+	int ret;
+
+	/*
+	 * Send CLOSE notification to the remote RapidIO device
+	 */
+
+	hdr.bhdr.src_id = htonl(ch->loc_destid);
+	hdr.bhdr.dst_id = htonl(ch->rem_destid);
+	hdr.bhdr.src_mbox = cmbox;
+	hdr.bhdr.dst_mbox = cmbox;
+	hdr.bhdr.type = RIO_CM_CHAN;
+	hdr.ch_op = CM_CONN_CLOSE;
+	hdr.dst_ch = htons(ch->rem_channel);
+	hdr.src_ch = htons(ch->id);
+
+	/* FIXME: the function call below relies on the fact that underlying
+	 * add_outb_message() routine copies TX data into its internal transfer
+	 * buffer. Needs to be reviewed if switched to direct buffer version.
+	 */
+
+	ret = riocm_post_send(ch->cmdev, ch->rdev, &hdr, sizeof hdr, NULL);
+	if (ret) {
+		riocm_error("%s(%d) sending CLOSE failed (ret=%d)",
+			__func__, ch->id, ret);
+	}
+
+	return ret;
+}
+
 /*
  * riocm_ch_close - closes a channel object with specified ID (by local request)
  * @ch_id: channel ID to be closed
@@ -1421,9 +1455,7 @@ static void riocm_ch_free(struct rio_channel *ch)
 int riocm_ch_close(u16 ch_id)
 {
 	struct rio_channel *ch;
-	struct cm_dev *cm;
 	enum rio_cm_state state;
-	int ret;
 
 	riocm_debug(DBG_CHOP, "%s(%d)", __func__, ch_id);
 	ch = riocm_get_channel(ch_id);
@@ -1441,33 +1473,8 @@ int riocm_ch_close(u16 ch_id)
 		spin_lock(&rio_list_lock);
 		list_del(&ch->ch_node);
 		spin_unlock(&rio_list_lock);
-	} else if (state == RIO_CM_CONNECTED) {
-		/*
-		 * Send CLOSE notification to the remote RapidIO device
-		 */
-		struct rio_ch_chan_hdr hdr;
-
-		cm = ch->cmdev;
-		hdr.bhdr.src_id = htonl(ch->loc_destid);
-		hdr.bhdr.dst_id = htonl(ch->rem_destid);
-		hdr.bhdr.src_mbox = cmbox;
-		hdr.bhdr.dst_mbox = cmbox;
-		hdr.bhdr.type = RIO_CM_CHAN;
-		hdr.ch_op = CM_CONN_CLOSE;
-		hdr.dst_ch = htons(ch->rem_channel);
-		hdr.src_ch = htons((u16)ch_id);
-
-		/* FIXME: the function call below relies on the fact that underlying
-		 * add_outb_message() routine copies TX data into its internal transfer
-		 * buffer. Needs to be reviewed if switched to direct buffer version.
-		 */
-
-		ret = riocm_post_send(cm, ch->rdev, &hdr, sizeof hdr, NULL);
-		if (ret) {
-			riocm_error("%s(%d) sending CLOSE failed",
-				__func__, ch_id);
-		}
-	}
+	} else if (state == RIO_CM_CONNECTED)
+		riocm_send_close(ch);
 
 	if (waitqueue_active(&ch->wait_q))
 		wake_up_all(&ch->wait_q);
@@ -2120,6 +2127,25 @@ found:
 	kfree(cm);
 }
 
+static int rio_cm_shutdown(struct notifier_block *nb, unsigned long code,
+	void *unused)
+{
+	struct rio_channel *ch;
+	unsigned int i;
+
+	riocm_debug(DBG_EXIT, "%s", __func__);
+
+	spin_lock_bh(&idr_lock);
+	idr_for_each_entry(&ch_idr, ch, i) {
+		riocm_debug(DBG_EXIT, "close ch %d", ch->id);
+		if (ch->state == RIO_CM_CONNECTED)
+			riocm_send_close(ch);
+	}
+	spin_unlock_bh(&idr_lock);
+
+	return NOTIFY_DONE;
+}
+
 /*
  * riocm_interface handles addition/removal of remote RapidIO devices
  */
@@ -2137,6 +2163,10 @@ static struct class_interface rio_mport_interface __refdata = {
 	.class = &rio_mport_class,
 	.add_dev = riocm_add_mport,
 	.remove_dev = riocm_remove_mport,
+};
+
+static struct notifier_block rio_cm_notifier = {
+	.notifier_call = rio_cm_shutdown,
 };
 
 static int __init riocm_init(void)
@@ -2194,14 +2224,22 @@ static int __init riocm_init(void)
 		goto err_cl;
 	}
 
+	ret = register_reboot_notifier(&rio_cm_notifier);
+	if (ret) {
+		riocm_error("failed to register reboot notifier (err=%d)", ret);
+		goto err_sif;
+	}
+
 	riocm_cdev = riocm_cdev_add(dev_number);
 	if (!riocm_cdev) {
-		subsys_interface_unregister(&riocm_interface);
+		unregister_reboot_notifier(&rio_cm_notifier);
 		ret = -ENODEV;
-		goto err_cl;
+		goto err_sif;
 	}
 
 	return 0;
+err_sif:
+	subsys_interface_unregister(&riocm_interface);
 err_cl:
 	class_interface_unregister(&rio_mport_interface);
 err_wq:
@@ -2212,6 +2250,7 @@ err_wq:
 static void __exit riocm_exit(void)
 {
 	riocm_debug(DBG_EXIT, "enter %s", __func__);
+	unregister_reboot_notifier(&rio_cm_notifier);
 	subsys_interface_unregister(&riocm_interface);
 	class_interface_unregister(&rio_mport_interface);
 	destroy_workqueue(riocm_wq);
