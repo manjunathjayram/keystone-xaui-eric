@@ -27,6 +27,21 @@ dma-coherent:     Indicate if DirectIO operations support hw cache-coherency.
 keystone2-serdes: Indicate that the driver needs to use KeyStone 2 SerDes
 		  initialization. If not specified, it will KeyStone 1
 		  initialization instead.
+serdes_1sb:       Allow to set the TX driver 1 lsb pre emphasis setting for KeyStone
+		  2 SerDes. There is one value per lane. Default value is 0.
+serdes_c1:        Allow to override value of TX driver C1 coefficient for KeyStone
+		  2 SerDes. There is one value per lane. Default value if not
+		  specified is 6 for 3.125Gbps and 4 for other baudrates.
+serdes_c2:        Allow to override value of TX driver C2 coefficient for KeyStone
+		  2 SerDes. There is one value per lane. Default value is 0 if not
+		  specified.
+serdes_cm:	  Allow to override value of TX driver CM coefficient for KeyStone
+		  2 SerDes. There is one value per lane. Default value is 0.
+serdes_att:       Allow to set attenuator setting of TX driver for KeyStone 2 SerDes.
+		  There is one value per lane. Default value is 12 if not specified.
+serdes_vreg:      Allow to set regulator voltage setting for TX driver for KeyStone 2
+		  SerDes. There is one value per lane. Default value is 4 if not
+		  specified.
 baudrate:         This the lane baudrate configuration number (from 0 to 3).
 		  If not specified the baudrate configuration 0 will be used
                   (1.25Gbps).
@@ -50,6 +65,14 @@ tx_queue_depth:   Number of descriptors for the transmit queue. Default is 128
                   descriptors.
 num-mboxes:       Number of receive mailboxes used for MP. If not specified, only one
 		  mailbox will be used.
+pkt-forward:      This allow to define the routing table for hardware packet
+		  forwarding. There are 8 entries in the table. Each entry starts
+		  with the lower DeviceID boundary, then the upper DeviceID boundary
+		  and the output port to route packets whose DestID falls within the
+		  described range.
+		  For example, '0x3 0x3 1' will forward incoming packets with DestID
+		  0x3 to port 1.
+		  All the 8 entries must be referenced with the 3 values.
 
 Sub-nodes
 ---------
