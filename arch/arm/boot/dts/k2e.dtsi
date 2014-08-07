@@ -76,16 +76,6 @@
 			label = "dspmem";
 		};
 
-		uio_hyperlink0: hyperlink0 {
-			compatible = "ti,uio-module-drv";
-			mem  = <0x21400000 0x00000100
-				0x40000000 0x10000000
-				0x0231a000 0x00002000>;
-			clocks = <&clkhyperlink0>;
-			interrupts	= <0 387 0x101>;
-			label = "hyperlink0";
-		};
-
 		hwqueue0: hwqueue@2a40000 {
 			range		= <0 0x2000>;
 			linkram0	= <0x100000 0x4000>;
