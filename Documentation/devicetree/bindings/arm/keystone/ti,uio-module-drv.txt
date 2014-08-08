@@ -16,14 +16,37 @@ Recommended properties :
 - interrupts : standard interrupt property
 - clocks : desired clock domain property
 
+Optional properties:
+- cfg-params: Specifies configuration parameters to be used with specific peripherals
+	ti,serdes_refclk_khz: serdes reference clock in khz
+	ti,serdes_maxserrate_khz: serdes maximum serial rate in khz
+	ti,serdes_maxlanerate: Lane rate "full" or "half" or "quarter"
+	The following are serdes equilization tap parameters
+	ti,serdes_c1	: Serdes c1 coefficient (0-31)
+	ti,serdes_c2	: Serdes c2 coefficient (0-15)
+	ti,serdes_cm	: Serdes cm coefficient (0-15)
+	Other serdes configurations
+	ti,serdes_tx_att 		: Serdes TX attenuation (0-15)
+	ti,serdes_tx_vreg_lev	: Serdes regulator voltage setting for TX driver slices
+							: (0-7)
 Example:
 
-		uio_hyperlink0: hyperlink0 {
-			compatible = "ti,uio-module-drv";
-			mem  = <0x21400000 0x00000100
-				0x40000000 0x10000000
-				0x0231a000 0x00002000>;
-			clocks = <&clkhyperlink0>;
-			interrupts	= <0 387 0x101>;
-			label = "hyperlink0";
+	uio_hyperlink0: hyperlink0 {
+		compatible = "ti,uio-module-drv";
+		mem  = <0x21400000 0x00000100
+			0x40000000 0x10000000
+			0x0231a000 0x00002000>;
+		clocks = <&clkhyperlink0>;
+		interrupts	= <0 387 0x101>;
+		label = "hyperlink0";
+		cfg-params
+		{
+			ti,serdes_refclk_khz = <312500>;
+			ti,serdes_maxserrate_khz = <6250000>;
+			ti,serdes_lanerate = "half";
+			ti,serdes_c1 = <4>;
+			ti,serdes_c2 = <0>;
+			ti,serdes_cm = <3>;
+			ti,serdes_tx_att = <5>;
+			ti,serdes_tx_vreg_lev = <0>;
 		};
