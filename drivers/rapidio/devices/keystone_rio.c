@@ -1027,6 +1027,8 @@ static int keystone_rio_get_lane_config(u32 ports, u32 path_mode)
 static void k2_rio_serdes_init_3g(u32 lanes, struct keystone_rio_data *krio_priv)
 {
 	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
+	u32 val;
+	int i;
 
 	/* Uses Half Rate configuration */
 	reg_rmw(regs + 0x000, 0x00000000, 0xff000000);
@@ -1091,6 +1093,23 @@ static void k2_rio_serdes_init_3g(u32 lanes, struct keystone_rio_data *krio_priv
 		reg_rmw(regs + 0x88c, 0x00003b00, 0x0000ff00);
 	}
 
+	for (i = 0; i < 4; i++) {
+		struct keystone_serdes_config *serdes_config =
+			&(krio_priv->board_rio_cfg.serdes_config[i]);
+
+		val = (serdes_config->serdes_c1)
+			| ((serdes_config->serdes_c2) << 8)
+			| ((serdes_config->serdes_cm) << 12);
+		reg_rmw(regs + 0x008 + (0x200 * (i + 1)), val, 0x0000ff0f);
+
+		val = (serdes_config->serdes_att << 25)
+			| (serdes_config->serdes_1sb << 31);
+		reg_rmw(regs + 0x004 + (0x200 * (i + 1)), val, 0x1e000000);
+
+		val = serdes_config->serdes_vreg << 5;
+		reg_rmw(regs + 0x084 + (0x200 * (i + 1)), val, 0x000000e0);
+	}
+
 	reg_rmw(regs + 0xa00, 0x00000800, 0x0000ff00);
 	reg_rmw(regs + 0xa08, 0x37720000, 0xffff0000);
 	reg_rmw(regs + 0xa30, 0x00777700, 0x00ffff00);
@@ -1107,6 +1126,8 @@ static void k2_rio_serdes_init_3g(u32 lanes, struct keystone_rio_data *krio_priv
 static void k2_rio_serdes_init_5g(u32 lanes, struct keystone_rio_data *krio_priv)
 {
 	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
+	u32 val;
+	int i;
 
 	/* Uses Full Rate configuration by default */
 	reg_rmw(regs + 0x000, 0x00000000, 0xff000000);
@@ -1165,6 +1186,23 @@ static void k2_rio_serdes_init_5g(u32 lanes, struct keystone_rio_data *krio_priv
 		reg_rmw(regs + 0x880, 0x00860086, 0x00ff00ff);
 		reg_rmw(regs + 0x884, 0x1d0f0085, 0xffff00ff);
 		reg_rmw(regs + 0x88c, 0x00002c00, 0x0000ff00);
+	}
+
+	for (i = 0; i < 4; i++) {
+		struct keystone_serdes_config *serdes_config =
+			&(krio_priv->board_rio_cfg.serdes_config[i]);
+
+		val = (serdes_config->serdes_c1)
+			| ((serdes_config->serdes_c2) << 8)
+			| ((serdes_config->serdes_cm) << 12);
+		reg_rmw(regs + 0x008 + (0x200 * (i + 1)), val, 0x0000ff0f);
+
+		val = (serdes_config->serdes_att << 25)
+			| (serdes_config->serdes_1sb << 31);
+		reg_rmw(regs + 0x004 + (0x200 * (i + 1)), val, 0x1e000000);
+
+		val = serdes_config->serdes_vreg << 5;
+		reg_rmw(regs + 0x084 + (0x200 * (i + 1)), val, 0x000000e0);
 	}
 
 	reg_rmw(regs + 0xa00, 0x00008000, 0x0000ff00);
@@ -1833,7 +1871,7 @@ static int keystone_rio_port_status(int port, struct keystone_rio_data *krio_pri
 	if ((value & RIO_PORT_N_ERR_STS_PORT_OK) != 0) {
 		res = keystone_rio_test_link(port, krio_priv);
 		if (res != 0) {
-			dev_err(krio_priv->dev,
+			dev_dbg(krio_priv->dev,
 				"link test failed on port %d\n", port);
 			return -EIO;
 		}
@@ -3282,6 +3320,60 @@ static void keystone_rio_get_controller_defaults(struct device_node *node,
 		}
 	}
 
+	/* SerDes 1sb, c1, c2, cm, ATT and VREG config */
+	if (of_property_read_u32_array(node, "serdes_1sb", &temp[0], 4)) {
+		for (i = 0; i < 4; i++)
+			c->serdes_config[i].serdes_1sb = 0;
+	} else {
+		for (i = 0; i < 4; i++)
+			c->serdes_config[i].serdes_1sb = temp[i];
+	}
+
+	if (of_property_read_u32_array(node, "serdes_c1", &temp[0], 4)) {
+		if (c->serdes_baudrate == KEYSTONE_RIO_BAUD_3_125) {
+			for (i = 0; i < 4; i++)
+				c->serdes_config[i].serdes_c1 = 4;
+		} else {
+			for (i = 0; i < 4; i++)
+				c->serdes_config[i].serdes_c1 = 6;
+		}
+	} else {
+		for (i = 0; i < 4; i++)
+			c->serdes_config[i].serdes_c1 = temp[i];
+	}
+
+	if (of_property_read_u32_array(node, "serdes_c2", &temp[0], 4)) {
+		for (i = 0; i < 4; i++)
+			c->serdes_config[i].serdes_c2 = 0;
+	} else {
+		for (i = 0; i < 4; i++)
+			c->serdes_config[i].serdes_c2 = temp[i];
+	}
+
+	if (of_property_read_u32_array(node, "serdes_cm", &temp[0], 4)) {
+		for (i = 0; i < 4; i++)
+			c->serdes_config[i].serdes_cm = 0;
+	} else {
+		for (i = 0; i < 4; i++)
+			c->serdes_config[i].serdes_cm = temp[i];
+	}
+
+	if (of_property_read_u32_array(node, "serdes_att", &temp[0], 4)) {
+		for (i = 0; i < 4; i++)
+			c->serdes_config[i].serdes_att = 12;
+	} else {
+		for (i = 0; i < 4; i++)
+			c->serdes_config[i].serdes_att = temp[i];
+	}
+
+	if (of_property_read_u32_array(node, "serdes_vreg", &temp[0], 4)) {
+		for (i = 0; i < 4; i++)
+			c->serdes_config[i].serdes_vreg = 4;
+	} else {
+		for (i = 0; i < 4; i++)
+			c->serdes_config[i].serdes_vreg = temp[i];
+	}
+
 	/* Path mode config (mapping of SerDes lanes to port widths) */
 	if (of_property_read_u32(node, "path_mode", &c->path_mode)) {
 		dev_err(krio_priv->dev,
@@ -3590,7 +3682,7 @@ out:
 	return res;
 }
 
-static int __init keystone_rio_probe(struct platform_device *pdev)
+static int keystone_rio_probe(struct platform_device *pdev)
 {
 	struct device_node *node = pdev->dev.of_node;
 	struct keystone_rio_data *krio_priv;

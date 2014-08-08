@@ -226,6 +226,12 @@ struct keystone_serdes_config {
 	u32 cfg_cntl;                              /* setting control reg cfg */
 	u16 serdes_cfg_pll;                        /* SerDes PLL cfg */
 	u16 prescalar_srv_clk;                     /* prescalar fo ip_clk */
+	u32 serdes_1sb;				   /* 1 lsb pre emphasis */
+	u32 serdes_c1;				   /* C1 coefficient */
+	u32 serdes_c2;				   /* C2 coefficient */
+	u32 serdes_cm;				   /* CM coefficient */
+	u32 serdes_att;				   /* attenuator */
+	u32 serdes_vreg;			   /* regulator voltage */
 	u32 rx_chan_config[KEYSTONE_RIO_MAX_PORT]; /* SerDes rx channel cfg
 						      (per-port) */
 	u32 tx_chan_config[KEYSTONE_RIO_MAX_PORT]; /* SerDes tx channel cfg
