@@ -111,8 +111,7 @@ static ssize_t rio_dev_write(struct file *filp, const char __user *buf,
 		int alloc_size = (size > RIO_MAX_DIO_CHUNK_SIZE) ?
 			RIO_MAX_DIO_CHUNK_SIZE : size;
 
-		p = src_buf = kmalloc(L1_CACHE_ALIGN(alloc_size), GFP_KERNEL);
-
+		p = src_buf = kmalloc(alloc_size, GFP_KERNEL | GFP_DMA);
 		if (!p) {
 			res = -ENOMEM;
 			goto out;
@@ -209,7 +208,8 @@ static ssize_t rio_dev_read(struct file *filp, char __user *buf,
 		int alloc_size = (size > RIO_MAX_DIO_CHUNK_SIZE) ?
 			RIO_MAX_DIO_CHUNK_SIZE : size;
 
-		p = dest_buf = kmalloc(L1_CACHE_ALIGN(alloc_size), GFP_KERNEL);
+		p = dest_buf = kmalloc(alloc_size,
+				       GFP_KERNEL | GFP_DMA | __GFP_COLD);
 		if (!p) {
 			res = -ENOMEM;
 			goto out;
