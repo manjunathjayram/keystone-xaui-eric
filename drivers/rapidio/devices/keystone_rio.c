@@ -717,7 +717,7 @@ static int keystone_rio_maint_read(struct keystone_rio_data *krio_priv,
 	struct device *dev = krio_priv->dev;
 	size_t align_len = L1_CACHE_ALIGN(len);
 
-	tbuf = kzalloc(align_len, GFP_KERNEL);
+	tbuf = kzalloc(align_len, GFP_KERNEL | GFP_DMA);
 	if (!tbuf)
 		return -ENOMEM;
 
@@ -767,7 +767,7 @@ static int keystone_rio_maint_write(struct keystone_rio_data *krio_priv,
 	struct device *dev = krio_priv->dev;
 	size_t align_len = L1_CACHE_ALIGN(len);
 
-	tbuf = kzalloc(align_len, GFP_KERNEL);
+	tbuf = kzalloc(align_len, GFP_KERNEL | GFP_DMA);
 	if (!tbuf)
 		return -ENOMEM;
 
@@ -2793,7 +2793,7 @@ static int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 	 * Copy the outbound message in a temporary buffer. This is needed for
 	 * RIO_CM.
 	 */
-	send_buffer = kmalloc(plen, GFP_ATOMIC);
+	send_buffer = kmalloc(plen, GFP_ATOMIC | GFP_DMA);
 	if (!send_buffer) {
 		dev_warn(krio_priv->dev, "failed to alloc send buffer\n");
 		return -ENOMEM;
