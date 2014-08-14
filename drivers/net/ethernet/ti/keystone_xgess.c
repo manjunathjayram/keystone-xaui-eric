@@ -2130,7 +2130,9 @@ static int init_slave(struct cpswx_priv *cpsw_dev,
 		cpsw_dev->link[slave_num] = XGMII_LINK_MAC_PHY;
 	}
 
-	cpsw_dev->phy_node[slave_num] = of_parse_phandle(node, "phy-handle", 0);
+	if (cpsw_dev->link[slave_num] == XGMII_LINK_MAC_PHY)
+		cpsw_dev->phy_node[slave_num] =
+			of_parse_phandle(node, "phy-handle", 0);
 
 	return 0;
 }
