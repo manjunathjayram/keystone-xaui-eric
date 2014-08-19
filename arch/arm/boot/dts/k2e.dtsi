@@ -708,9 +708,12 @@
 			dma-coherent;
 			/* rx-priority = <0>; */
 			/* tx-priority = <0>; */
-			logical-queue-managers	= <2>;
+			logical-queue-managers	= <4>;
 			queues-per-queue-manager = <4096>;
-			qm-base-address = <0x23a80000 0x23a90000>;
+			qm-base-address = <0x23a80000 0
+					   0x23a80000 0>; /* k2e xge cdma_txq_qmgr
+							     tied to 0x2 eventhough
+							     only 1 QM */
 
 			channels {
 				xgetx0 {
