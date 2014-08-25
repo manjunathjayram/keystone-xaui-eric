@@ -1499,19 +1499,25 @@ static ssize_t qnode_output_rate_store(struct khwq_qos_tree_node *qnode,
 {
 	struct khwq_qos_info *info = qnode->info;
 	int idx = qnode->sched_port_idx;
-	int error, val;
+	int error;
+	unsigned int new_rate;
+	u64 val64;
 
-	error = kstrtouint(buf, 0, &val);
+	error = kstrtouint(buf, 0, &new_rate);
 	if (error)
 		return error;
 	
-	qnode->output_rate = val;
-
-	val = qnode->output_rate / info->ticks_per_sec;
-	val <<= (qnode->acct == QOS_BYTE_ACCT) ?
+	val64 = new_rate;
+	val64 <<= (qnode->acct == QOS_BYTE_ACCT) ?
 			QOS_CREDITS_BYTE_SHIFT :
 			QOS_CREDITS_PACKET_SHIFT;
-	khwq_qos_set_sched_cir_credit(info, idx, val, true);
+	do_div(val64, info->ticks_per_sec);
+	if (val64 > (u64)S32_MAX)
+		return -ERANGE;
+
+	qnode->output_rate = new_rate;
+
+	khwq_qos_set_sched_cir_credit(info, idx, (u32)val64, true);
 
 	ktree_for_each_child(&qnode->node,
 			     qnode_output_rate_store_child, qnode);
@@ -1541,8 +1547,6 @@ static ssize_t qnode_burst_size_store(struct khwq_qos_tree_node *qnode,
 	if (error)
 		return error;
 	
-	qnode->burst_size = field;
-
 	error = khwq_qos_get_sched_cir_credit(info, idx, &cir_credit);
 	if (error)
 		return error;
@@ -1552,6 +1556,8 @@ static ssize_t qnode_burst_size_store(struct khwq_qos_tree_node *qnode,
 		(field << QOS_CREDITS_PACKET_SHIFT);
 	if (cir_max > (S32_MAX - cir_credit))
 		return -EINVAL;
+
+	qnode->burst_size = field;
 
 	khwq_qos_set_sched_cir_max(info, idx, (u32)cir_max, true);
 
@@ -2450,10 +2456,18 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 	if (WARN_ON(error))
 		return error;
 
-	cir_credit = qnode->output_rate / info->ticks_per_sec;
-	cir_credit <<= (qnode->acct == QOS_BYTE_ACCT) ?
+	tmp = qnode->output_rate;
+	tmp <<= (qnode->acct == QOS_BYTE_ACCT) ?
 			QOS_CREDITS_BYTE_SHIFT :
 			QOS_CREDITS_PACKET_SHIFT;
+	do_div(tmp, info->ticks_per_sec);
+	if (tmp > (u64)S32_MAX) {
+		dev_warn(kdev->dev, "node %s output-rate is too large.\n",
+				qnode->name);
+		tmp = S32_MAX;
+	}
+	cir_credit = (u32)tmp;
+
 	error = khwq_qos_set_sched_cir_credit(info, idx, cir_credit, sync);
 	if (WARN_ON(error))
 		return error;
