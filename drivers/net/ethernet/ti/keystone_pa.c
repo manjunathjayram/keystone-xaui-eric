@@ -45,10 +45,6 @@
 
 #define BITS(x) (BIT(x) - 1)
 
-#define DEVICE_PA_PDSP02_FIRMWARE "keystone/pa_pdsp02_classify1.fw"
-#define DEVICE_PA_PDSP3_FIRMWARE "keystone/pa_pdsp3_classify2.fw"
-#define DEVICE_PA_PDSP45_FIRMWARE "keystone/pa_pdsp45_pam.fw"
-
 #define BITS(x)			(BIT(x) - 1)
 
 #define	PA_NETIF_FEATURES	(NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM)
@@ -113,7 +109,7 @@
 
 #define PA_SGLIST_SIZE	3
 
-const u32 pap_pdsp_const_reg_map[6][4] =
+const u32 pap_pdsp_const_reg_map[DEVICE_PA_NUM_PDSPS][4] =
 {
 	/* PDSP0: C24-C31 */
 	{
@@ -304,6 +300,7 @@ struct pa_device {
 	struct pa_lut_entry		 *ip_lut;
 	u32				 ip_lut_size;
 	netdev_features_t		 netif_features;
+	const char			*pdsp_fw[DEVICE_PA_NUM_PDSPS];
 };
 
 #define pa_from_module(data)	container_of(data, struct pa_device, module)
@@ -699,7 +696,7 @@ static int keystone_pa_reset_control(struct pa_device *pa_dev, int new_state)
 		 * If any PDSPs are out of reset
 		 * a global init is not performed
 		 */
-		for (i = 0; i < 6; i++) {
+		for (i = 0; i < DEVICE_PA_NUM_PDSPS; i++) {
 			res = pa_pdsp_run(pa_dev, i);
 
 			if (res == PA_PDSP_ALREADY_ACTIVE)
@@ -718,14 +715,14 @@ static int keystone_pa_reset_control(struct pa_device *pa_dev, int new_state)
 
 			while (__raw_readl(&mailbox_reg->pdsp_mailbox_slot1) != 0);
 
-			for (i = 1; i < 6; i++) {
+			for (i = 1; i < DEVICE_PA_NUM_PDSPS; i++) {
 				struct pa_mailbox_regs __iomem *mbox_reg =
 					&pa_dev->reg_mailbox[i];
 				__raw_writel(0,
 					     &mbox_reg->pdsp_mailbox_slot0);
 			}
 		} else {
-			for (i = 0; i < 6; i++) {
+			for (i = 0; i < DEVICE_PA_NUM_PDSPS; i++) {
 				struct pa_mailbox_regs __iomem *mbox_reg =
 					&pa_dev->reg_mailbox[i];
 				__raw_writel(0,
@@ -2145,19 +2142,12 @@ static int pa_open(void *intf_priv, struct net_device *ndev)
 
 		keystone_pa_reset(pa_dev);
 
-		for (i = 0; i <= 5; i++) {
-			if (i <= 2)
-				ret = request_firmware(&fw,
-					       DEVICE_PA_PDSP02_FIRMWARE,
-					       pa_dev->dev);
-			else if (i == 3)
-				ret = request_firmware(&fw,
-					       DEVICE_PA_PDSP3_FIRMWARE,
-					       pa_dev->dev);
-			else if (i > 3)
-				ret = request_firmware(&fw,
-						DEVICE_PA_PDSP45_FIRMWARE,
-						pa_dev->dev);
+		for (i = 0; i < DEVICE_PA_NUM_PDSPS; ++i) {
+			if (!pa_dev->pdsp_fw[i])
+				continue;
+
+			ret = request_firmware(&fw, pa_dev->pdsp_fw[i],
+					pa_dev->dev);
 			if (ret != 0) {
 				dev_err(pa_dev->dev, "cant find fw for pdsp %d",
 					i);
@@ -2587,6 +2577,19 @@ static int pa_probe(struct netcp_device *netcp_device,
 
 	pa_dev->netcp_device = netcp_device;
 	pa_dev->dev = dev;
+
+	for (i = 0; i < DEVICE_PA_NUM_PDSPS; ++i) {
+		ret = of_property_read_string_index(node, "firmware",
+				i, &pa_dev->pdsp_fw[i]);
+		if (ret < 0) {
+			dev_warn(dev, "no firmware for pdsp %d\n", i);
+			pa_dev->pdsp_fw[i] = NULL;
+		} else {
+			/*FIXME: make me dev_dbg*/
+			dev_info(dev, "pdsp %d firmware: %s\n",
+					i, pa_dev->pdsp_fw[i]);
+		}
+	}
 
 	ret = of_property_read_u32(node, "tx_cmd_queue_depth",
 				   &pa_dev->tx_cmd_queue_depth);
