@@ -159,41 +159,6 @@ enum pa2_pdsp {
 #define PA2_PPU_IRAM_OFFSET		0x4000
 #define PA2_PPU_IRAM_SIZE		0x3000
 
-
-#define DEVICE_PA2_IN0_PDSP0_FIRMWARE "keystone/pa_in0_pdsp0.fw"
-#define DEVICE_PA2_IN0_PDSP1_FIRMWARE "keystone/pa_in0_pdsp1.fw"
-#define DEVICE_PA2_IN1_PDSP0_FIRMWARE "keystone/pa_in1_pdsp0.fw"
-#define DEVICE_PA2_IN1_PDSP1_FIRMWARE "keystone/pa_in1_pdsp1.fw"
-#define DEVICE_PA2_IN2_PDSP0_FIRMWARE "keystone/pa_in2_pdsp0.fw"
-#define DEVICE_PA2_IN3_PDSP0_FIRMWARE "keystone/pa_in3_pdsp0.fw"
-#define DEVICE_PA2_IN4_PDSP0_FIRMWARE "keystone/pa_in4_pdsp0.fw"
-#define DEVICE_PA2_IN4_PDSP1_FIRMWARE "keystone/pa_in4_pdsp1.fw"
-#define DEVICE_PA2_POST_PDSP0_FIRMWARE "keystone/pa_post_pdsp0.fw"
-#define DEVICE_PA2_POST_PDSP1_FIRMWARE "keystone/pa_post_pdsp1.fw"
-#define DEVICE_PA2_eg0_PDSP0_FIRMWARE "keystone/pa_eg0_pdsp0.fw"
-#define DEVICE_PA2_eg0_PDSP1_FIRMWARE "keystone/pa_eg0_pdsp1.fw"
-#define DEVICE_PA2_eg0_PDSP2_FIRMWARE "keystone/pa_eg0_pdsp2.fw"
-#define DEVICE_PA2_eg1_PDSP0_FIRMWARE "keystone/pa_eg1_pdsp0.fw"
-#define DEVICE_PA2_eg2_PDSP0_FIRMWARE "keystone/pa_eg2_pdsp0.fw"
-
-static const char *pa2_pdsp_fw[PA2_NUM_PDSPS] = {
-	DEVICE_PA2_IN0_PDSP0_FIRMWARE,
-	DEVICE_PA2_IN0_PDSP1_FIRMWARE,
-	DEVICE_PA2_IN1_PDSP0_FIRMWARE,
-	DEVICE_PA2_IN1_PDSP1_FIRMWARE,
-	DEVICE_PA2_IN2_PDSP0_FIRMWARE,
-	DEVICE_PA2_IN3_PDSP0_FIRMWARE,
-	DEVICE_PA2_IN4_PDSP0_FIRMWARE,
-	DEVICE_PA2_IN4_PDSP1_FIRMWARE,
-	DEVICE_PA2_POST_PDSP0_FIRMWARE,
-	DEVICE_PA2_POST_PDSP1_FIRMWARE,
-	DEVICE_PA2_eg0_PDSP0_FIRMWARE,
-	DEVICE_PA2_eg0_PDSP1_FIRMWARE,
-	DEVICE_PA2_eg0_PDSP2_FIRMWARE,
-	DEVICE_PA2_eg1_PDSP0_FIRMWARE,
-	DEVICE_PA2_eg2_PDSP0_FIRMWARE
-};
-
 struct pa2_cluster_pdsp_map {
 	u32 cluster;
 	u32 pdsp;
@@ -1106,6 +1071,7 @@ struct pa2_device {
 
 	u32				 ts_not_req;
 	int				 force_no_hwtstamp;
+	const char			*pdsp_fw[PA2_NUM_PDSPS];
 };
 
 #define pa2_from_module(data)	container_of(data, struct pa2_device, module)
@@ -2867,7 +2833,10 @@ static int pa2_open(void *intf_priv, struct net_device *ndev)
 		keystone_pa2_reset_control(pa_dev, PA2_STATE_RESET);
 
 		for (i = 0; i < PA2_NUM_PDSPS; i++) {
-			ret = request_firmware(&fw, pa2_pdsp_fw[i],
+			if (!pa_dev->pdsp_fw[i])
+				continue;
+
+			ret = request_firmware(&fw, pa_dev->pdsp_fw[i],
 						pa_dev->dev);
 			if (ret != 0) {
 				dev_err(pa_dev->dev,
@@ -3306,6 +3275,19 @@ static int pa2_probe(struct netcp_device *netcp_device,
 		goto exit;
 	}
 	dev_dbg(dev, "reg_base 0x%x\n", regs_base);
+
+	for (i = 0; i < PA2_NUM_PDSPS; ++i) {
+		ret = of_property_read_string_index(node, "firmware",
+				i, &pa_dev->pdsp_fw[i]);
+		if (ret < 0) {
+			dev_warn(dev, "no firmware for pdsp %d\n", i);
+			pa_dev->pdsp_fw[i] = NULL;
+		} else {
+			/*FIXME: make me dev_dbg*/
+			dev_info(dev, "pdsp %d firmware: %s\n",
+					i, pa_dev->pdsp_fw[i]);
+		}
+	}
 
 	ret = of_property_read_u32(node, "tx_cmd_queue_depth",
 				   &pa_dev->tx_cmd_queue_depth);
