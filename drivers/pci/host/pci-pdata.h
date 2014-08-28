@@ -15,11 +15,11 @@
  */
 
 /* platform specific setup for k2 serdes */
-int k2_pcie_platform_setup(void *pdata, struct device_node *);
+int k2_pcie_platform_setup(void *pdata, struct device_node *, int domain);
 
 /* keystone pcie pdata configurations */
 struct keystone_pcie_pdata {
-	int (*setup)(void *pdata, struct device_node *);
+	int (*setup)(void *pdata, struct device_node *, int);
 	int en_link_train;
 };
 
