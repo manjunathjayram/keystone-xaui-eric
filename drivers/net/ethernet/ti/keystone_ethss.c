@@ -304,89 +304,6 @@ struct cpsw_ale_regs {
 	u32	ale_portctl[6];
 };
 
-struct cpsw_priv {
-	struct device			*dev;
-	struct clk			*cpgmac;
-	struct netcp_device		*netcp_device;
-	u32				 num_slaves;
-	u32				 ale_ageout;
-	u32				 ale_entries;
-	u32				 ale_ports;
-	u32				 sgmii_module_ofs;
-	u32				 sgmii_module34_ofs;
-	u32				 switch_module_ofs;
-	u32				 host_port_reg_ofs;
-	u32				 slave_reg_ofs;
-	u32				 sliver_reg_ofs;
-	u32				 slave23_reg_ofs;
-	u32				 hw_stats_reg_ofs;
-	u32				 ale_reg_ofs;
-	u32				 cpts_reg_ofs;
-
-	int				 host_port;
-	u32				 rx_packet_max;
-
-	struct cpsw_regs __iomem	*regs;
-	struct cpsw_ss_regs __iomem	*ss_regs;
-	struct cpsw_hw_stats __iomem	*hw_stats_regs[2];
-	struct cpsw_host_regs __iomem	*host_port_regs;
-	struct cpsw_ale_regs __iomem	*ale_reg;
-
-	void __iomem			*sgmii_port_regs;
-	void __iomem			*sgmii_port34_regs;
-
-	struct cpsw_ale			*ale;
-	u32				 ale_refcnt;
-
-	u32				 link[MAX_SLAVES + 1];
-	struct device_node		*phy_node[MAX_SLAVES];
-
-	u32				 intf_tx_queues;
-
-	u32				 multi_if;
-	u32				 slaves_per_interface;
-	u32				 num_interfaces;
-	struct device_node		*interfaces;
-	struct list_head		 cpsw_intf_head;
-
-	u64				 hw_stats[MAX_SLAVES * 36];
-	int				 init_serdes_at_probe;
-	struct kobject			kobj;
-	struct kobject			tx_pri_kobj;
-	struct kobject			pvlan_kobj;
-	struct kobject			port_ts_kobj[MAX_SLAVES];
-	struct kobject			stats_kobj;
-	spinlock_t			hw_stats_lock;
-	struct cpts			cpts;
-	int				cpts_registered;
-	int				force_no_hwtstamp;
-	void __iomem			*serdes_regs[CPSW_SERDES_MAX_NUM];
-	u32				num_serdes;
-	u32				serdes_lanes;
-	struct serdes			serdes;
-};
-
-struct cpsw_intf {
-	struct net_device	*ndev;
-	struct device		*dev;
-	struct cpsw_priv	*cpsw_priv;
-	struct device_node	*phy_node;
-	u32			 num_slaves;
-	u32			 slave_port;
-	struct cpsw_slave	*slaves;
-	u32			 intf_tx_queues;
-	const char		*tx_chan_name;
-	u32			 tx_queue_depth;
-	struct netcp_tx_pipe	 tx_pipe;
-	u32			 multi_if;
-	struct list_head	 cpsw_intf_list;
-	struct timer_list	 timer;
-	u32			 sgmii_link;
-	unsigned long		 active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
-};
-
-static struct cpsw_priv *priv;		/* FIXME: REMOVE THIS!! */
-
 /*
  * Statistic management
  */
@@ -567,6 +484,90 @@ static const struct netcp_ethtool_stat et_stats[] = {
 };
 
 #define ETHTOOL_STATS_NUM ARRAY_SIZE(et_stats)
+
+struct cpsw_priv {
+	struct device			*dev;
+	struct clk			*cpgmac;
+	struct netcp_device		*netcp_device;
+	u32				 num_slaves;
+	u32				 ale_ageout;
+	u32				 ale_entries;
+	u32				 ale_ports;
+	u32				 sgmii_module_ofs;
+	u32				 sgmii_module34_ofs;
+	u32				 switch_module_ofs;
+	u32				 host_port_reg_ofs;
+	u32				 slave_reg_ofs;
+	u32				 sliver_reg_ofs;
+	u32				 slave23_reg_ofs;
+	u32				 hw_stats_reg_ofs;
+	u32				 ale_reg_ofs;
+	u32				 cpts_reg_ofs;
+
+	int				 host_port;
+	u32				 rx_packet_max;
+
+	struct cpsw_regs __iomem	*regs;
+	struct cpsw_ss_regs __iomem	*ss_regs;
+	struct cpsw_hw_stats __iomem	*hw_stats_regs[2];
+	struct cpsw_host_regs __iomem	*host_port_regs;
+	struct cpsw_ale_regs __iomem	*ale_reg;
+
+	void __iomem			*sgmii_port_regs;
+	void __iomem			*sgmii_port34_regs;
+
+	struct cpsw_ale			*ale;
+	u32				 ale_refcnt;
+
+	u32				 link[MAX_SLAVES + 1];
+	struct device_node		*phy_node[MAX_SLAVES];
+
+	u32				 intf_tx_queues;
+
+	u32				 multi_if;
+	u32				 slaves_per_interface;
+	u32				 num_interfaces;
+	struct device_node		*interfaces;
+	struct list_head		 cpsw_intf_head;
+
+	u64				 hw_stats[ETHTOOL_STATS_NUM];
+	u32				 hw_stats_prev[ETHTOOL_STATS_NUM];
+	int				 init_serdes_at_probe;
+	struct kobject			kobj;
+	struct kobject			tx_pri_kobj;
+	struct kobject			pvlan_kobj;
+	struct kobject			port_ts_kobj[MAX_SLAVES];
+	struct kobject			stats_kobj;
+	spinlock_t			hw_stats_lock;
+	struct cpts			cpts;
+	int				cpts_registered;
+	int				force_no_hwtstamp;
+	void __iomem			*serdes_regs[CPSW_SERDES_MAX_NUM];
+	u32				num_serdes;
+	u32				serdes_lanes;
+	struct serdes			serdes;
+};
+
+struct cpsw_intf {
+	struct net_device	*ndev;
+	struct device		*dev;
+	struct cpsw_priv	*cpsw_priv;
+	struct device_node	*phy_node;
+	u32			 num_slaves;
+	u32			 slave_port;
+	struct cpsw_slave	*slaves;
+	u32			 intf_tx_queues;
+	const char		*tx_chan_name;
+	u32			 tx_queue_depth;
+	struct netcp_tx_pipe	 tx_pipe;
+	u32			 multi_if;
+	struct list_head	 cpsw_intf_list;
+	struct timer_list	 timer;
+	u32			 sgmii_link;
+	unsigned long		 active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
+};
+
+static struct cpsw_priv *priv;		/* FIXME: REMOVE THIS!! */
 
 struct cpsw_attribute {
 	struct attribute attr;
@@ -1732,7 +1733,7 @@ static void cpsw_reset_mod_stats(struct cpsw_priv *cpsw_dev, int stat_mod)
 		if (et_stats[i].type == stat_mod) {
 			cpsw_dev->hw_stats[i] = 0;
 			p = base + et_stats[i].offset;
-			*p = 0xffffffff;
+			cpsw_dev->hw_stats_prev[i] = readl_relaxed(p);
 		}
 	}
 	return;
@@ -1895,9 +1896,11 @@ static void cpsw_update_stats(struct cpsw_priv *cpsw_dev, uint64_t *data)
 	struct cpsw_hw_stats __iomem *cpsw_statsa = cpsw_dev->hw_stats_regs[0];
 	struct cpsw_hw_stats __iomem *cpsw_statsb = cpsw_dev->hw_stats_regs[1];
 	u64 *hw_stats = &cpsw_dev->hw_stats[0];
+	u32 *hw_stats_prev = &cpsw_dev->hw_stats_prev[0];
 	void __iomem *base = NULL;
 	u32  __iomem *p;
-	u32 tmp = 0, val, pair_size = (ETHTOOL_STATS_NUM / 2);
+	u32 curr, delta;
+	u32 val, pair_size = (ETHTOOL_STATS_NUM / 2);
 	int i, j, pair;
 
 	for (pair = 0; pair < 2; pair++) {
@@ -1925,12 +1928,13 @@ static void cpsw_update_stats(struct cpsw_priv *cpsw_dev, uint64_t *data)
 			}
 
 			p = base + et_stats[j].offset;
-			tmp = *p;
-			hw_stats[j] += tmp;
+			curr = readl_relaxed(p);
+			delta = curr - hw_stats_prev[j];
+			hw_stats_prev[j] = curr;
+			hw_stats[j] += delta;
+
 			if (data)
 				data[j] = hw_stats[j];
-
-			*p = tmp;
 		}
 	}
 
@@ -2695,9 +2699,10 @@ static void cpsw_timer(unsigned long arg)
 			netif_carrier_off(cpsw_intf->ndev);
 	}
 
-	spin_lock_bh(&cpsw_dev->hw_stats_lock);
+	/* A timer runs as a BH, no need to block them */
+	spin_lock(&cpsw_dev->hw_stats_lock);
 	cpsw_update_stats(cpsw_dev, NULL);
-	spin_unlock_bh(&cpsw_dev->hw_stats_lock);
+	spin_unlock(&cpsw_dev->hw_stats_lock);
 
 	cpsw_intf->timer.expires = jiffies + (HZ/10);
 	add_timer(&cpsw_intf->timer);
@@ -3548,8 +3553,15 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 		netcp_create_interface(netcp_device, &ndev,
 					       NULL, cpsw_dev->intf_tx_queues,
 					       1, 0);
-	/* init the hw stats lock */
+
+	/* init the hw stats */
 	spin_lock_init(&cpsw_dev->hw_stats_lock);
+	spin_lock_bh(&cpsw_dev->hw_stats_lock);
+	cpsw_reset_mod_stats(cpsw_dev, CPSW_STATSA_MODULE);
+	cpsw_reset_mod_stats(cpsw_dev, CPSW_STATSB_MODULE);
+	cpsw_reset_mod_stats(cpsw_dev, CPSW_STATSC_MODULE);
+	cpsw_reset_mod_stats(cpsw_dev, CPSW_STATSD_MODULE);
+	spin_unlock_bh(&cpsw_dev->hw_stats_lock);
 
 	ret = cpsw_create_sysfs_entries(cpsw_dev);
 	if (ret)
