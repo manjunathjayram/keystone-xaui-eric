@@ -2686,9 +2686,10 @@ static void cpsw_timer(unsigned long arg)
 			netif_carrier_off(cpsw_intf->ndev);
 	}
 
-	spin_lock_bh(&cpsw_dev->hw_stats_lock);
+	/* A timer runs as a BH, no need to block them */
+	spin_lock(&cpsw_dev->hw_stats_lock);
 	cpsw_update_stats(cpsw_dev, NULL);
-	spin_unlock_bh(&cpsw_dev->hw_stats_lock);
+	spin_unlock(&cpsw_dev->hw_stats_lock);
 
 	cpsw_intf->timer.expires = jiffies + (HZ/10);
 	add_timer(&cpsw_intf->timer);
