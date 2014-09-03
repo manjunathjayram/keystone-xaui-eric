@@ -415,8 +415,11 @@ static void davinci_spi_cleanup(struct spi_device *spi)
 	struct davinci_spi_config *spicfg = spi->controller_data;
 
 	spi->controller_data = NULL;
-	if (spi->dev.of_node)
+	if (spi->dev.of_node) {
+		if (gpio_is_valid(spi->cs_gpio))
+			gpio_free(spi->cs_gpio);
 		kfree(spicfg);
+	}
 }
 
 /**
@@ -446,14 +449,30 @@ static int davinci_spi_setup(struct spi_device *spi)
 	if (!(spi->mode & SPI_NO_CS)) {
 		if (np && (master->cs_gpios != NULL) &&
 		    (spi->cs_gpio >= 0)) {
+			/*
+			 * If we get here from spidev, setup() is called
+			 * multiple times as part of IOCTL call. So release
+			 * GPIO if we requested before
+			 */
+			gpio_free(spi->cs_gpio);
+
 			retval = gpio_request(spi->cs_gpio, dev_name(&spi->dev));
 			if (retval) {
 				dev_err(&spi->dev,
-					"GPIO %d request failed\n", spi->cs_gpio);
-				return -ENODEV;
+					"GPIO %d request failed as CS\n",
+					spi->cs_gpio);
+				return retval;
 			}
-			gpio_direction_output(spi->cs_gpio,
+			retval = gpio_direction_output(spi->cs_gpio,
 					      !(spi->mode & SPI_CS_HIGH));
+			if (retval) {
+				dev_err(&spi->dev,
+					"GPIO %d failed to setup as CS",
+					spi->cs_gpio);
+				gpio_free(spi->cs_gpio);
+				return retval;
+			}
+
 			internal_cs = false;
 		} else if (pdata->chip_sel &&
 			   spi->chip_select < pdata->num_chipselect &&
