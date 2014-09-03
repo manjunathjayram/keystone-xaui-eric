@@ -25,6 +25,7 @@
 
 #define QOS_MAX_INPUTS			128
 #define	QOS_MAX_CHILDREN		8
+#define	QOS_MAX_TREES			8
 
 #define QOS_RETCODE_SUCCESS		1
 
@@ -155,7 +156,8 @@ struct khwq_qos_info {
 	u32				 refcount;
 	struct khwq_qos_shadow		 shadows[QOS_MAX_SHADOW];
 	struct khwq_qos_stats		 stats;
-	struct ktree			 qos_tree;
+	int				 qos_tree_count;
+	struct ktree			 qos_trees[QOS_MAX_TREES];
 	struct list_head		 drop_policies;
 	struct list_head		 stats_classes;
 	struct khwq_qos_drop_policy	*default_drop_policy;
@@ -231,8 +233,9 @@ struct khwq_qos_tree_node {
 	bool	 is_drop_input;		/* indicates that child's output
 					   feeds to the drop sched	*/
 	bool	 has_sched_port;	/* does this port need a sched?	*/
-	bool	 is_joint_port;		/* Even/odd joint pair*/
+	bool	 is_joint_port;		/* Even/odd joint pair		*/
 	int	 output_queue;		/* from DT or calculated	*/
+	int	 tree_index;		/* khwq_qos_info.qos_trees index */
 
 	/* allocated resources */
 	int	 sched_port_idx;	/* inherited by default nodes	*/
