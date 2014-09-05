@@ -148,9 +148,9 @@ netcp {
 		/* mark_mcast_match	= <0x12345a00 0xffffff00>; */
 		/* force_no_hwtstamp; */
 		firmware		= 
-				"keystone/pa_pdsp02_classify1.fw",	/* 0 */
-				"keystone/pa_pdsp02_classify1.fw",	/* 1 */
-				"keystone/pa_pdsp02_classify1.fw",	/* 2 */
+				"keystone/pa_pdsp0_classify1.fw",	/* 0 */
+				"keystone/pa_pdsp1_classify1.fw",	/* 1 */
+				"keystone/pa_pdsp2_classify1.fw",	/* 2 */
 				"keystone/pa_pdsp3_classify2.fw",	/* 3 */
 				"keystone/pa_pdsp45_pam.fw",		/* 4 */
 				"keystone/pa_pdsp45_pam.fw";		/* 5 */
