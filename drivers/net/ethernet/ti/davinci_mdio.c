@@ -371,7 +371,7 @@ static int davinci_mdio_probe(struct platform_device *pdev)
 	spin_lock_init(&data->lock);
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	data->regs = devm_ioremap_resource(dev, res);
+	data->regs = devm_ioremap_nocache(dev, res->start, resource_size(res));
 	if (IS_ERR(data->regs)) {
 		ret = PTR_ERR(data->regs);
 		goto bail_out;
