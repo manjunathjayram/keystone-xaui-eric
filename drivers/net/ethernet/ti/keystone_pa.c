@@ -533,6 +533,7 @@ static int pa_conv_routing_info(struct	pa_frm_forward *fwd_info,
 
 static int keystone_pa_reset(struct pa_device *pa_dev)
 {
+	struct pa_packet_id_alloc_regs __iomem	*packet_id_regs = pa_dev->reg_packet_id;
 	struct pa_lut2_control_regs __iomem	*lut2_regs = pa_dev->reg_lut2;
 	struct pa_statistics_regs   __iomem	*stats_regs = pa_dev->reg_stats;
 	u32 i;
@@ -548,6 +549,9 @@ static int keystone_pa_reset(struct pa_device *pa_dev)
 				PA_REG_VAL_PDSP_CTL_STATE))
 			rmb();
 	}
+
+	/* Reset packet Id */
+	__raw_writel(1, &packet_id_regs->soft_reset);
 
 	/* Reset LUT2 */
 	__raw_writel(1, &lut2_regs->soft_reset);
