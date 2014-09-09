@@ -116,42 +116,42 @@ const u32 pap_pdsp_const_reg_map[DEVICE_PA_NUM_PDSPS][4] =
 		0x0000007F,		/* C25-C24 */
 		0x0000006E,		/* C27-C26 */
 		0x00000000,		/* C29-C28 */
-		0x00000000		/* C31-C30 */
+		0x00000473		/* C31-C30 */
 	},
 	/* PDSP1: C24-C31 */
 	{
 		0x0001007F,		/* C25-C24 */
 		0x00480040,		/* C27-C26 */
 		0x00000000,		/* C29-C28 */
-		0x00000000		/* C31-C30 */
+		0x00000473		/* C31-C30 */
 	},
 	/* PDSP2: C24-C31 */
 	{
 		0x0002007F,		/* C25-C24 */
 		0x00490044,		/* C27-C26 */
 		0x00000000,		/* C29-C28 */
-		0x00000000		/* C31-C30 */
+		0x00000473		/* C31-C30 */
 	},
 	/* PDSP3: C24-C31 */
 	{
 		0x0003007F,		/* C25-C24 */
 		0x0000006E,		/* C27-C26 */
 		0x00000000,		/* C29-C28 */
-		0x00000000		/* C31-C30 */
+		0x00000473		/* C31-C30 */
 	},
 	/* PDSP4: C24-C31 */
 	{
 		0x0070007F,		/* C25-C24 */
 		0x00000003,		/* C27-C26 */
 		0x04080404,		/* C29-C28 */
-		0x00000000		/* C31-C30 */
+		0x00000473		/* C31-C30 */
 	},
 	/* PDSP5: C24-C31 */
 	{
 		0x0071007F,		/* C25-C24 */
 		0x00000003,		/* C27-C26 */
 		0x04080404,		/* C29-C28 */
-		0x00000000		/* C31-C30 */
+		0x00000473		/* C31-C30 */
 	}
 };
 
@@ -710,9 +710,12 @@ static int keystone_pa_reset_control(struct pa_device *pa_dev, int new_state)
 		/* If global reset is required any PDSP can do it */
 		if (do_global_reset) {
 			__raw_writel(1, &mailbox_reg->pdsp_mailbox_slot1);
+			wmb();
 			__raw_writel(0, &mailbox_reg->pdsp_mailbox_slot0);
+			mb();
 
-			while (__raw_readl(&mailbox_reg->pdsp_mailbox_slot1) != 0);
+			while (__raw_readl(&mailbox_reg->pdsp_mailbox_slot1) != 0)
+				rmb();
 
 			for (i = 1; i < DEVICE_PA_NUM_PDSPS; i++) {
 				struct pa_mailbox_regs __iomem *mbox_reg =
@@ -720,6 +723,7 @@ static int keystone_pa_reset_control(struct pa_device *pa_dev, int new_state)
 				__raw_writel(0,
 					     &mbox_reg->pdsp_mailbox_slot0);
 			}
+			wmb();
 		} else {
 			for (i = 0; i < DEVICE_PA_NUM_PDSPS; i++) {
 				struct pa_mailbox_regs __iomem *mbox_reg =
@@ -727,7 +731,7 @@ static int keystone_pa_reset_control(struct pa_device *pa_dev, int new_state)
 				__raw_writel(0,
 					     &mbox_reg->pdsp_mailbox_slot0);
 			}
-
+			wmb();
 		}
 
 		return (ret);
