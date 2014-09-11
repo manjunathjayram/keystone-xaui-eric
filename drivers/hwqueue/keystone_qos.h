@@ -64,10 +64,15 @@
 #define QOS_CREDITS_PACKET_SHIFT	20
 #define QOS_CREDITS_BYTE_SHIFT		11
 
-#define QOS_BYTE_NORMALIZATION_FACTOR	3000
-#define QOS_PACKET_NORMALIZATION_FACTOR	2
+#define QOS_WRR_PACKET_SHIFT		17
+#define QOS_WRR_BYTE_SHIFT		8
 
-#define	QOS_MAX_WEIGHT			((1 << 28) - 1)
+#define QOS_BYTE_NORMALIZATION_FACTOR	(1500u << QOS_WRR_BYTE_SHIFT)
+#define QOS_PACKET_NORMALIZATION_FACTOR	(2u << QOS_WRR_PACKET_SHIFT)
+
+#define	QOS_MAX_WEIGHT			U32_MAX
+#define	QOS_MAX_CREDITS			S32_MAX
+#define QOS_MIN_CREDITS_WARN		100
 
 #define to_qnode(_n)	container_of(_n, struct khwq_qos_tree_node, node)
 
@@ -229,7 +234,6 @@ struct khwq_qos_tree_node {
 	int	 child_count;		/* number of children		*/
 	int	 parent_input;		/* input number of parent	*/
 	u32	 child_weight[QOS_MAX_CHILDREN];
-	u32	 child_weight_sum;	/* sum of child weights		*/
 	bool	 is_drop_input;		/* indicates that child's output
 					   feeds to the drop sched	*/
 	bool	 has_sched_port;	/* does this port need a sched?	*/
