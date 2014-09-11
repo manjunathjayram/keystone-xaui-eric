@@ -104,7 +104,7 @@ fw-shipped-$(CONFIG_TI_KEYSTONE) += keystone/sa_pdsp0_1_0_2_1.fw \
 				    keystone/pa_pdsp3_classify2.fw \
 				    keystone/pa_pdsp45_pam.fw \
 				    keystone/qmss_pdsp_acc48_k2_le_1_0_0_9.fw \
-				    keystone/qmss_pdsp_qos_k2_le_2_0_1_7.fw \
+				    keystone/qmss_pdsp_qos_k2_le_2_0_1_8.fw \
 				    keystone/pa_in0_pdsp0.fw \
 				    keystone/pa_in0_pdsp1.fw \
 				    keystone/pa_in1_pdsp0.fw \
