@@ -1387,14 +1387,77 @@ static ssize_t qnode_weight_show(struct khwq_qos_tree_node *qnode,
 	return snprintf(buf, PAGE_SIZE, "%d\n", qnode->weight);
 }
 
+static inline u64 khwq_qos_wrr_calc(
+		u32 child_weight, u32 norm, u32 min_weight)
+{
+	u64 temp;
+
+	temp = child_weight;
+	temp *= norm;
+	temp += min_weight / 2;
+	do_div(temp, min_weight);
+
+	return temp;
+}
+
+static void khwq_qos_wrr_norm(struct khwq_qos_tree_node *qnode, u32 credits[])
+{
+	int	i, child_low, child_high;
+	u64	max_credits;
+	u32	norm, min_credits;
+	u32	min_weight, max_weight;
+
+	memset(credits, 0, sizeof(qnode->child_weight));
+	if (qnode->wrr_children == 0)
+		return;
+
+	/* Determine the range of WRR children */
+	child_low = qnode->prio_children;
+	child_high = child_low + qnode->wrr_children;
+
+	/* Determine the lowest and highest WRR weights */
+	max_weight = 0;
+	min_weight = UINT_MAX;
+	for (i = child_low; i < child_high; ++i) {
+		if (qnode->child_weight[i] > max_weight)
+			max_weight = qnode->child_weight[i];
+		if (qnode->child_weight[i] < min_weight)
+			min_weight = qnode->child_weight[i];
+	}
+
+	/* Calculate a conversion factor that won't cause overflow */
+	norm = (qnode->acct == QOS_BYTE_ACCT) ?
+			QOS_BYTE_NORMALIZATION_FACTOR :
+			QOS_PACKET_NORMALIZATION_FACTOR;
+	max_credits = khwq_qos_wrr_calc(max_weight, norm, min_weight);
+	while (max_credits > (uint64_t)QOS_MAX_CREDITS) {
+		norm /= 2;
+		max_credits /= 2;
+	}
+
+	/* Warn if min_credits will end up very small */
+	min_credits = khwq_qos_wrr_calc(min_weight, norm, min_weight);
+	if (min_credits < QOS_MIN_CREDITS_WARN) {
+		dev_warn(qnode->info->kdev->dev, "Warning: max/min weight "
+			"ratio of %u on node %s may cause significant "
+			"performance degradation!\n",
+			(max_weight / min_weight), qnode->name);
+	}
+
+	/* Convert weights to credits */
+	for (i = child_low; i < child_high; ++i)
+		credits[i] = khwq_qos_wrr_calc(qnode->child_weight[i],
+						norm, min_weight);
+}
+
 static ssize_t qnode_weight_store(struct khwq_qos_tree_node *qnode,
 				  const char *buf, size_t size)
 {
 	struct khwq_qos_tree_node *parent = qnode->parent;
 	struct khwq_qos_info *info = qnode->info;
+	u32 wrr_credits[QOS_MAX_CHILDREN];
 	unsigned int weight;
-	int inputs, i, error, val, idx;
-	u64 scale, tmp;
+	int i, error, val, idx;
 
 	if (!parent || (parent->wrr_children == 0))
 		return -EINVAL;
@@ -1407,20 +1470,12 @@ static ssize_t qnode_weight_store(struct khwq_qos_tree_node *qnode,
 		return -EINVAL;
 
 	qnode->weight = weight;
-
-	parent->child_weight_sum -= parent->child_weight[qnode->parent_input];
-	parent->child_weight_sum += weight;
 	parent->child_weight[qnode->parent_input] = weight;
 
-	inputs = parent->child_count;
-	scale = parent->wrr_children * ((parent->acct == QOS_BYTE_ACCT) ?
-				QOS_BYTE_NORMALIZATION_FACTOR :
-				QOS_PACKET_NORMALIZATION_FACTOR);
-	scale <<= 48;
-	do_div(scale, parent->child_weight_sum);
+	khwq_qos_wrr_norm(parent, wrr_credits);
 
 	idx = parent->sched_port_idx;
-	for (i = inputs - 1; i >= 0; --i) {
+	for (i = parent->child_count - 1; i >= 0; --i) {
 		int port, queue;
 
 		if (parent->is_joint_port && (i >= info->inputs_per_port)) {
@@ -1431,22 +1486,7 @@ static ssize_t qnode_weight_store(struct khwq_qos_tree_node *qnode,
 			queue = i;
 		}
 
-		val = 0;
-		if ((i >= parent->prio_children) &&
-		    (i < (parent->prio_children + parent->wrr_children))) {
-			tmp = parent->child_weight[i];
-			tmp *= scale;
-
-			if (parent->acct == QOS_BYTE_ACCT) {
-				tmp += 1ULL << (47 - QOS_CREDITS_BYTE_SHIFT);
-				tmp >>= (48 - QOS_CREDITS_BYTE_SHIFT);
-			} else {
-				tmp += 1ULL << (47 - QOS_CREDITS_PACKET_SHIFT);
-				tmp >>= (48 - QOS_CREDITS_PACKET_SHIFT);
-			}
-			val = (u32)(tmp);
-		}
-
+		val = wrr_credits[i];
 		khwq_qos_set_sched_wrr_credit(info, port, queue, val, (queue == 0));
 	}
 
@@ -2271,7 +2311,6 @@ static int khwq_qos_tree_map_nodes(struct ktree_node *node, void *arg)
 	qnode->child_port_count	=  0;
 	qnode->child_count	=  0;
 	qnode->parent_input	=  0;
-	qnode->child_weight_sum	=  0;
 	qnode->is_drop_input	= false;
 
 	if (qnode->drop_policy)
@@ -2284,7 +2323,6 @@ static int khwq_qos_tree_map_nodes(struct ktree_node *node, void *arg)
 		parent->child_weight[parent->child_count] = qnode->weight;
 		/* provide our parent with info */
 		parent->child_count++;
-		parent->child_weight_sum += qnode->weight;
 
 		/* inherit if parent is an input to drop sched */
 		if (parent->is_drop_input)
@@ -2413,7 +2451,8 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 	struct khwq_device *kdev = info->kdev;
 	bool sync = false;
 	int inputs, i, cir_credit;
-	u64 scale = 0ULL, tmp;
+	u32 wrr_credits[QOS_MAX_CHILDREN];
+	u64 tmp;
 	u64 cir_max;
 
 	if (!qnode->has_sched_port)
@@ -2506,13 +2545,7 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 	if (WARN_ON(error))
 		return error;
 
-	if (qnode->wrr_children > 0) {
-		scale = qnode->wrr_children * ((qnode->acct == QOS_BYTE_ACCT) ?
-					QOS_BYTE_NORMALIZATION_FACTOR :
-					QOS_PACKET_NORMALIZATION_FACTOR);
-		scale <<= 48;
-		do_div(scale, qnode->child_weight_sum);
-	}
+	khwq_qos_wrr_norm(qnode, wrr_credits);
 
 	for (i = 0; i < inputs; i++) {
 		int port, queue;
@@ -2530,26 +2563,7 @@ static int khwq_qos_tree_start_port(struct khwq_qos_info *info,
 		if (WARN_ON(error))
 			return error;
 
-		val = 0;
-		if ((i >= qnode->prio_children) &&
-		    (i < (qnode->prio_children + qnode->wrr_children))) {
-			tmp = qnode->child_weight[i];
-			tmp *= scale;
-
-			if (qnode->acct == QOS_BYTE_ACCT) {
-				tmp += 1ULL << (47 - QOS_CREDITS_BYTE_SHIFT);
-				tmp >>= (48 - QOS_CREDITS_BYTE_SHIFT);
-			} else {
-				tmp += 1ULL << (47 - QOS_CREDITS_PACKET_SHIFT);
-				tmp >>= (48 - QOS_CREDITS_PACKET_SHIFT);
-			}
-			val = (u32)(tmp);
-
-			dev_dbg(kdev->dev, "node %s input %d "
-				"weight = %d, credits = %d\n",
-				qnode->name, i, qnode->child_weight[i], val);
-		}
-
+		val = wrr_credits[i];
 		error = khwq_qos_set_sched_wrr_credit(info, port, queue, val, sync);
 		if (WARN_ON(error))
 			return error;
