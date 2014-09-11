@@ -132,6 +132,17 @@
 		};
 		/include/ "k2e-netcp.dtsi"
 
+		pcie1_phy: pciephy@2326000 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			#phy-cells = <0>;
+			compatible = "ti,keystone-serdes-phy";
+			reg = <0x02326000 0x4000>;
+			reg-names = "reg_serdes";
+			ti,serdes-lane-1;
+			ti,serdes-lane-2;
+		};
+
 		pcie@21020000 {
 			compatible = "ti,keystone-pcie","snps,dw-pcie";
 			clocks = <&clkpcie1>;
@@ -144,6 +155,10 @@
 
 			device_type = "pci";
 			num-lanes = <2>;
+
+			/* PCIE phy */
+			phys = <&pcie1_phy>;
+			phy-names = "pcie-phy";
 
 			#interrupt-cells = <1>;
 			interrupt-map-mask = <0 0 0 7>;
