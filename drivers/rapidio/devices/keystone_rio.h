@@ -454,9 +454,11 @@ struct keystone_rio_data {
 
 	struct work_struct      reset_work;
 
+	u32                     ports;
+	spinlock_t		port_chk_lock;
 	u32			ports_registering;
 	u32			port_chk_cnt;
-	struct delayed_work     port_chk_task;
+	struct delayed_work	port_chk_task;
 
 	struct tasklet_struct	task;
 
