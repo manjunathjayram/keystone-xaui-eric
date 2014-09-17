@@ -18,7 +18,6 @@
  * GNU General Public License for more details.
  */
 #include <linux/clk.h>
-#include <linux/timer.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
@@ -64,10 +63,11 @@ struct keystone_rio_data {
 	u32                     pe_cnt;
 	struct delayed_work     pe_work;
 
+	u32                     ports;
 	u32			ports_registering;
+	spinlock_t		port_chk_lock;
 	u32			port_chk_cnt;
-	struct work_struct	port_chk_task;
-	struct timer_list	timer;
+	struct delayed_work	port_chk_task;
 
 	struct tasklet_struct	task;
 
@@ -3544,32 +3544,12 @@ static void keystone_rio_get_controller_defaults(struct device_node *node,
 	}
 }
 
-static void keystone_rio_port_status_timer(unsigned long data)
+static int keystone_rio_port_chk(struct keystone_rio_data *krio_priv)
 {
-	struct keystone_rio_data *krio_priv = (struct keystone_rio_data *)data;
-	u32 ports = krio_priv->ports_registering;
-	u32 port_chk_cnt_timeout = krio_priv->board_rio_cfg.port_register_timeout /
-		(KEYSTONE_RIO_REGISTER_DELAY / HZ);
-
-	if ((krio_priv->port_chk_cnt)++ >= port_chk_cnt_timeout) {
-		dev_info(krio_priv->dev,
-			 "RIO port register timeout, port mask 0x%x not ready\n",
-			 ports);
-		return;
-	}
-
-	schedule_work(&krio_priv->port_chk_task);
-}
-
-static void keystone_rio_port_chk_task(struct work_struct *work)
-{
-	struct keystone_rio_data *krio_priv =
-		container_of(work, struct keystone_rio_data, port_chk_task);
 	u32 ports = krio_priv->ports_registering;
 	u32 size  = krio_priv->board_rio_cfg.size;
 	struct rio_mport *mport;
 
-	krio_priv->ports_registering = 0;
 	while (ports) {
 		int status;
 		u32 port = __ffs(ports);
@@ -3577,32 +3557,164 @@ static void keystone_rio_port_chk_task(struct work_struct *work)
 
 		status = keystone_rio_port_status(port, krio_priv);
 		if (status == 0) {
-			/* Register this port  */
-			mport = keystone_rio_register_mport(port, size, krio_priv);
-			if (!mport)
-				return;
+			unsigned long flags;
 
-			/* update routing after discovery/enumeration with new dev id */
+			/*
+			 * The link has been established from an hw standpoint
+			 * so do not try to check the port again.
+			 * Only mport registration may fail now.
+			 */
+			spin_lock_irqsave(&krio_priv->port_chk_lock, flags);
+			krio_priv->ports |= (1 << port);
+			krio_priv->ports_registering &= ~(1 << port);
+			spin_unlock_irqrestore(&krio_priv->port_chk_lock,
+					       flags);
+
+			/* Register mport only if this is initial port check */
+			if (!krio_priv->mport[port]) {
+				mport = keystone_rio_register_mport(port, size,
+								    krio_priv);
+				if (!mport) {
+					dev_err(krio_priv->dev,
+						"failed to register mport %d\n",
+						port);
+					return -1;
+				}
+				dev_info(krio_priv->dev,
+					 "port RIO%d host_deviceid %d "
+					 "registered\n",
+					 port, mport->host_deviceid);
+			} else {
+				dev_info(krio_priv->dev,
+					 "port RIO%d host_deviceid %d ready\n",
+					 port,
+					 krio_priv->mport[port]->host_deviceid);
+			}
+
+			/*
+			 * update routing after discovery/enumeration
+			 * with new dev id
+			 */
 			if (krio_priv->board_rio_cfg.pkt_forwarding)
 				keystone_rio_port_set_routing(port, krio_priv);
 
-			dev_info(krio_priv->dev,
-				 "port RIO%d host_deviceid %d registered\n",
-				 port, mport->host_deviceid);
 		} else {
-			krio_priv->ports_registering |= (1 << port);
-
 			dev_dbg(krio_priv->dev, "port %d not ready\n", port);
 		}
 	}
 
-	if (krio_priv->ports_registering) {
-		/* setup and start a timer to poll status */
-		krio_priv->timer.function = keystone_rio_port_status_timer;
-		krio_priv->timer.data = (unsigned long)krio_priv;
-		krio_priv->timer.expires = jiffies + KEYSTONE_RIO_REGISTER_DELAY;
-		add_timer(&krio_priv->timer);
+	return krio_priv->ports_registering;
+}
+
+static void keystone_rio_port_chk_task(struct work_struct *work)
+{
+	struct keystone_rio_data *krio_priv = container_of(
+		to_delayed_work(work), struct keystone_rio_data, port_chk_task);
+	int res;
+
+	res = keystone_rio_port_chk(krio_priv);
+	if (res) {
+		unsigned long flags;
+
+		/* If port check failed schedule next check (if any) */
+		spin_lock_irqsave(&krio_priv->port_chk_lock, flags);
+		if (krio_priv->port_chk_cnt-- > 1) {
+			spin_unlock_irqrestore(&krio_priv->port_chk_lock,
+					       flags);
+
+			schedule_delayed_work(&krio_priv->port_chk_task,
+					      KEYSTONE_RIO_REGISTER_DELAY);
+		} else {
+			spin_unlock_irqrestore(&krio_priv->port_chk_lock,
+					       flags);
+
+			dev_info(krio_priv->dev,
+				 "RIO port register timeout, "
+				 "port mask 0x%x not ready",
+				 krio_priv->ports_registering);
+		}
 	}
+}
+
+/*
+ * Sysfs management
+ */
+static ssize_t keystone_rio_ports_store(struct device *dev,
+					struct device_attribute *attr,
+					const char *buf,
+					size_t count)
+{
+	struct keystone_rio_data *krio_priv = (struct keystone_rio_data *)
+		dev->platform_data;
+	long unsigned int ports;
+	unsigned long flags;
+
+	if (kstrtoul(buf, 0, &ports))
+		return -EINVAL;
+
+	if (ports > ((1 << KEYSTONE_RIO_MAX_PORT) - 1))
+		return -EINVAL;
+
+	/*
+	 * Only the ports defined in DTS can be rescanned because SerDes
+	 * initialization is not restarted here, only link status check.
+	 */
+	ports &=  krio_priv->board_rio_cfg.ports;
+
+	spin_lock_irqsave(&krio_priv->port_chk_lock, flags);
+	krio_priv->ports_registering = (ports & ~krio_priv->ports);
+	spin_unlock_irqrestore(&krio_priv->port_chk_lock, flags);
+
+	if (krio_priv->ports_registering) {
+		unsigned long flags;
+
+		dev_dbg(dev, "initializing link for port mask 0x%x\n",
+			krio_priv->ports_registering);
+
+		spin_lock_irqsave(&krio_priv->port_chk_lock, flags);
+		krio_priv->port_chk_cnt =
+			krio_priv->board_rio_cfg.port_register_timeout /
+			(KEYSTONE_RIO_REGISTER_DELAY / HZ);
+		spin_unlock_irqrestore(&krio_priv->port_chk_lock, flags);
+
+		schedule_delayed_work(&krio_priv->port_chk_task, 0);
+	}
+
+	return count;
+}
+
+static ssize_t keystone_rio_ports_show(struct device *dev,
+				       struct device_attribute *attr,
+				       char *buf)
+{
+	struct keystone_rio_data *krio_priv = (struct keystone_rio_data *)
+		dev->platform_data;
+
+	if (krio_priv == NULL)
+		return -EINVAL;
+
+	return scnprintf(buf, PAGE_SIZE, "0x%x\n", krio_priv->ports);
+}
+
+static DEVICE_ATTR(ports,
+		   S_IRUGO | S_IWUSR,
+		   keystone_rio_ports_show,
+		   keystone_rio_ports_store);
+
+static void keystone_rio_sysfs_remove(struct device *dev)
+{
+	device_remove_file(dev, &dev_attr_ports);
+}
+
+static int keystone_rio_sysfs_create(struct device *dev)
+{
+	int res = 0;
+
+	res = device_create_file(dev, &dev_attr_ports);
+	if (res)
+		dev_err(dev, "unable create sysfs ports file\n");
+
+	return res;
 }
 
 /*
@@ -3620,6 +3732,7 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 	int res = 0;
 	struct rio_mport *mport;
 	char str[8];
+	unsigned long flags;
 
 	size      = krio_priv->board_rio_cfg.size;
 	ports     = krio_priv->board_rio_cfg.ports;
@@ -3705,7 +3818,10 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 	}
 
 	/* Use and check ports status (but only the requested ones) */
+	spin_lock_irqsave(&krio_priv->port_chk_lock, flags);
 	krio_priv->ports_registering = 0;
+	spin_unlock_irqrestore(&krio_priv->port_chk_lock, flags);
+
 	while (ports) {
 		int status;
 		u32 port = __ffs(ports);
@@ -3734,27 +3850,42 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 			if (!mport)
 				goto out;
 
-			/* update routing after discovery/enumeration with new dev id */
+			/*
+			 * Update routing after discovery/enumeration
+			 * with new dev id
+			 */
 			if (krio_priv->board_rio_cfg.pkt_forwarding)
 				keystone_rio_port_set_routing(port, krio_priv);
+
+			spin_lock_irqsave(&krio_priv->port_chk_lock, flags);
+			krio_priv->ports |= (1 << port);
+			spin_unlock_irqrestore(&krio_priv->port_chk_lock,
+					       flags);
 
 			dev_info(&pdev->dev,
 				 "port RIO%d host_deviceid %d registered\n",
 				 port, mport->host_deviceid);
 		} else {
+			spin_lock_irqsave(&krio_priv->port_chk_lock, flags);
 			krio_priv->ports_registering |= (1 << port);
+			spin_unlock_irqrestore(&krio_priv->port_chk_lock,
+					       flags);
+
 			dev_warn(&pdev->dev, "port %d not ready\n", port);
 		}
 	}
 
 	if (krio_priv->ports_registering) {
-		/* setup and start a timer to poll status */
-		init_timer(&krio_priv->timer);
-		krio_priv->port_chk_cnt = 0;
-		krio_priv->timer.function = keystone_rio_port_status_timer;
-		krio_priv->timer.data = (unsigned long)krio_priv;
-		krio_priv->timer.expires = jiffies + KEYSTONE_RIO_REGISTER_DELAY;
-		add_timer(&krio_priv->timer);
+		unsigned long flags;
+
+		spin_lock_irqsave(&krio_priv->port_chk_lock, flags);
+		krio_priv->port_chk_cnt =
+			krio_priv->board_rio_cfg.port_register_timeout /
+			(KEYSTONE_RIO_REGISTER_DELAY / HZ);
+		spin_unlock_irqrestore(&krio_priv->port_chk_lock, flags);
+
+		schedule_delayed_work(&krio_priv->port_chk_task,
+				      KEYSTONE_RIO_REGISTER_DELAY);
 	}
 
 out:
@@ -3788,7 +3919,9 @@ static int keystone_rio_probe(struct platform_device *pdev)
 	/* sRIO main driver (global ressources) */
 	mutex_init(&krio_priv->lsu_lock);
 	init_completion(&krio_priv->lsu_completion);
-	INIT_WORK(&krio_priv->port_chk_task, keystone_rio_port_chk_task);
+	spin_lock_init(&krio_priv->port_chk_lock);
+	INIT_DELAYED_WORK(&krio_priv->port_chk_task,
+			  keystone_rio_port_chk_task);
 
 	regs = ioremap(krio_priv->board_rio_cfg.boot_cfg_regs_base,
 		       krio_priv->board_rio_cfg.boot_cfg_regs_size);
@@ -3832,6 +3965,10 @@ static int keystone_rio_probe(struct platform_device *pdev)
 		ndelay(100);
 		clk_prepare_enable(krio_priv->clk);
 	}
+
+	pdev->dev.platform_data = (void *) krio_priv;
+
+	keystone_rio_sysfs_create(&pdev->dev);
 
 	dev_info(&pdev->dev, "KeyStone RapidIO driver %s\n", DRIVER_VER);
 
@@ -3887,6 +4024,9 @@ static void keystone_rio_shutdown(struct platform_device *pdev)
 static int __exit keystone_rio_remove(struct platform_device *pdev)
 {
 	keystone_rio_shutdown(pdev);
+
+	keystone_rio_sysfs_remove(&pdev->dev);
+
 	return 0;
 }
 
