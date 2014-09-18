@@ -3711,11 +3711,14 @@ static int khwq_qos_init_range(struct khwq_range_info *range)
 	struct khwq_device *kdev;
 	u32 command, magic, version;
 	int error, i, idx, timer_config;
+	unsigned long pdsp_clock_rate;
 	char name[24];
 
 	info = range->qos_info;
 	pdsp = info->pdsp;
 	kdev = info->kdev;
+
+	pdsp_clock_rate = clk_get_rate(kdev->clk);
 
 	range->inst_ops.push = khwq_qos_push;
 
@@ -3767,7 +3770,7 @@ static int khwq_qos_init_range(struct khwq_range_info *range)
 	}
 
 	/* calculate the timer config from the pdsp tick */
-	timer_config = (clk_get_rate(kdev->clk) / info->ticks_per_sec);
+	timer_config = pdsp_clock_rate / info->ticks_per_sec;
 	timer_config /= 2;
 	command = (QOS_CMD_SET_TIMER_CONFIG | ((timer_config & 0xffff) << 16));
 	error = khwq_qos_write_cmd(info, command);
