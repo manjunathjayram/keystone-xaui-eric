@@ -8,6 +8,24 @@
  * published by the Free Software Foundation.
  */
 
+mdio: mdio@26200f00 {
+	compatible	= "ti,davinci_mdio";
+	#address-cells	= <1>;
+	#size-cells	= <0>;
+	reg		= <0x26200f00 0x100>;
+	bus_freq	= <2500000>;
+	clocks		= <&clkcpgmac>;
+	clock-names	= "fck";
+	phy0: phy@0 {
+		compatible = "marvell,88e1510";
+		reg = <0>;
+	};
+	phy1: phy@1 {
+		compatible = "marvell,88e1510";
+		reg = <1>;
+	};
+};
+
 netcp {
 	reg = <0x26000000 0xf00
 		0x2620110 0x8>;
@@ -127,11 +145,13 @@ netcp {
 		slaves {
 			slave0 {
 				label		= "slave0";
-				link-interface	= <4>;
+				link-interface	= <1>;
+				phy-handle      = <&phy0>;
 			};
 			slave1 {
 				label		= "slave1";
-				link-interface	= <4>;
+				link-interface	= <1>;
+				phy-handle      = <&phy1>;
 			};
 			slave2 {
 				label		= "slave2";
