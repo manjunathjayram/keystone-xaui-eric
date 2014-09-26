@@ -89,9 +89,6 @@
 #define KEYSTONE_MAX_PORTS_PATH_MODE_3  0x5 /* 2 ports */
 #define KEYSTONE_MAX_PORTS_PATH_MODE_4  0x1 /* 1 ports */
 
-#define SERDES_LANE(lane_num)	                (0x01 << lane_num)
-#define IS_SERDES_LANE_USED(lanes, lane_num)	(lanes & SERDES_LANE(lane_num))
-
 /*
  * Various RIO defines
  */

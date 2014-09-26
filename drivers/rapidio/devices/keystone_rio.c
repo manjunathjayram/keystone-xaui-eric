@@ -36,11 +36,6 @@
 
 #define DRIVER_VER	        "v1.2"
 
-#define K2_SERDES(p)            ((p)->board_rio_cfg.keystone2_serdes)
-
-#define reg_rmw(addr, value, mask) \
-	__raw_writel(((__raw_readl(addr) & (~(mask))) | (value)), (addr))
-
 /*
  * Main KeyStone RapidIO driver data
  */
@@ -245,7 +240,7 @@ static int keystone_rio_interrupt_setup(struct keystone_rio_data *krio_priv)
 		     &(krio_priv->regs->doorbell_int[3].clear));
 	__raw_writel(0xffffffff,
 		     &(krio_priv->regs->lsu_int[krio_priv->lsu_dio].clear));
-	__raw_writel(0x00010f07,
+	__raw_writel(KEYSTONE_RIO_ERR_RST_EVNT_MASK,
 		     &(krio_priv->regs->err_rst_evnt_int_clear));
 
 	/* LSU interrupts are routed to RIO interrupt dest 0 (LSU) */
@@ -889,18 +884,21 @@ out:
 	case KEYSTONE_RIO_LSU_CC_ERROR:
 	case KEYSTONE_RIO_LSU_CC_INVALID:
 	case KEYSTONE_RIO_LSU_CC_DMA:
-		return -EIO;
+		res = -EIO;
+		/* LSU Reg 6 - Flush this transaction */
+		__raw_writel(1 , &(krio_priv->regs->lsu_reg[lsu].busy_full));
 		break;
 	case KEYSTONE_RIO_LSU_CC_RETRY:
-		return -EBUSY;
+		res = -EBUSY;
 		break;
 	case KEYSTONE_RIO_LSU_CC_CANCELED:
-		return -EAGAIN;
+		res = -EAGAIN;
 		break;
 	default:
 		break;
 	}
-	return 0;
+
+	return res;
 }
 
 static int keystone_rio_maint_read(struct keystone_rio_data *krio_priv,
@@ -1003,6 +1001,857 @@ static int keystone_rio_maint_write(struct keystone_rio_data *krio_priv,
 	return res;
 }
 
+/*------------------------- RapidIO SerDes setup ---------------------*/
+
+#define K2_SERDES(p)      ((p)->board_rio_cfg.keystone2_serdes)
+#define SERDES_LANE(lane) (1 << (lane))
+#define SERDES_MAX_LANES  4   /* Max number of lanes for SRIO */
+#define SERDES_LANE_MASK  0xf /* lane mask */
+
+#define for_each_lanes(lane_mask, lane)					\
+	for_each_set_bit((lane),					\
+			 (const long unsigned int *) &(lane_mask),	\
+			 SERDES_MAX_LANES)
+
+#define reg_rmw(addr, value, mask)					\
+	__raw_writel(((__raw_readl(addr) & (~(mask))) | ((value) & (mask))), \
+		     (addr))
+
+#define reg_fmkr(msb, lsb, val) \
+	(((val) & ((1 << ((msb) - (lsb) + 1)) - 1)) << (lsb))
+
+#define reg_finsr(addr, msb, lsb, val)					\
+	__raw_writel(((__raw_readl(addr)				\
+		       & ~(((1 << ((msb) - (lsb) + 1)) - 1) << (lsb)))	\
+		      | reg_fmkr(msb, lsb, val)), (addr))
+
+/*
+ * Main code to Read TBUS on PHY-A and generate attenuation and boost values
+ * for a lane given at serdes_base_address and lane_no
+ */
+static void k2_rio_serdes_sb_write_tbus_addr(void __iomem *regs,
+					     int select,
+					     int offset)
+{
+	int two_laner;
+
+	two_laner = (__raw_readl(regs + 0x1fc0) >> 16) & 0x0ffff;
+
+	if ((two_laner == 0x4eb9) || (two_laner == 0x4ebd))
+		two_laner = 0;
+	else
+		two_laner = 1;
+
+	if (select && two_laner)
+		select++;
+
+	reg_rmw(regs + 0x0008, ((select << 5) + offset) << 24, 0xff000000);
+}
+
+static u32 k2_rio_serdes_sb_read_tbus_val(void __iomem *regs)
+{
+	u32 tmp;
+
+	tmp = (__raw_readl(regs + 0x0ec) >> 24) & 0x000ff;
+	tmp |= (__raw_readl(regs + 0x0fc) >> 16) & 0x00f00;
+
+	return tmp;
+}
+
+static u32 k2_rio_serdes_sb_read_selected_tbus(void __iomem *regs,
+					       int select,
+					       int offset)
+{
+	k2_rio_serdes_sb_write_tbus_addr(regs, select, offset);
+
+	return k2_rio_serdes_sb_read_tbus_val(regs);
+}
+
+/*
+ * Wait SerDes RX valid
+ * To be performed after SerDes is configured and bit lock achieved
+ */
+static int k2_rio_serdes_wait_rx_valid(void __iomem *regs, int lane)
+{
+	unsigned long timeout = jiffies
+		+ msecs_to_jiffies(KEYSTONE_PLL_LOCK_TIMEOUT);
+	unsigned int stat;
+
+       /*
+	* Check for lnX_stat[3:2] to go high on both lanes, this indicates that
+	* adaptation has completed timeout for lanes that are not connected.
+	*/
+	stat = (k2_rio_serdes_sb_read_selected_tbus(regs, lane + 1, 0x2)
+		& 0x0060) >> 5;
+
+	while (stat != 3) {
+		stat = (k2_rio_serdes_sb_read_selected_tbus(regs, lane + 1, 0x2)
+			& 0x0060) >> 5;
+
+		if (time_after(jiffies, timeout))
+			return 1;
+
+		usleep_range(10, 50);
+	}
+
+	return 0;
+}
+
+static void k2_rio_serdes_reg_fill_field(void __iomem *regs,
+					 int offset,
+					 int width,
+					 u32 value)
+{
+	u32 mask;
+	int i;
+
+	for (i = 0, mask = 0; i < width; i++)
+		mask = (mask << 1) | 1;
+
+	value &= mask;
+	value <<= offset;
+	mask  <<= offset;
+
+	reg_rmw(regs, value, mask);
+}
+
+/*
+ * Do the Att and Boost workaround
+ *
+ * This is only valid for SerDes PHY-A (i.e. all SerDes except XGE)
+ */
+static void k2_rio_serdes_att_boost(void __iomem *regs, int lane)
+{
+	u32 boost_read = 0;
+	u32 att_read   = 0;
+	u32 att_start  = 0;
+
+	if (k2_rio_serdes_wait_rx_valid(regs, lane))
+		return;
+
+	/* First read initial att start value */
+	att_start = (__raw_readl(regs + (lane * 0x200) + 0x200 + 0x8c)
+		     >> 8) & 0xf;
+
+	/*
+	 * Check att value, fix this as start value turn off att adaptation
+	 * and do boost readaptation
+	 */
+	att_read = (k2_rio_serdes_sb_read_selected_tbus(regs, lane + 1, 0x11)
+		    >> 4) & 0xf;
+
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x8c,
+				     8, 4, att_read); /* att_start */
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x84,
+				     0, 1, 0);
+	k2_rio_serdes_reg_fill_field(regs + 0x0a00 + 0x8c, 24, 1, 0);
+
+	/* Force cal */
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0xac,
+				     11, 1, 1);
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0xac,
+				     11, 1, 0);
+
+	k2_rio_serdes_wait_rx_valid(regs, lane);
+
+	/* Check boost value */
+	boost_read = (k2_rio_serdes_sb_read_selected_tbus(regs, lane + 1, 0x11)
+		      >> 8) & 0xf;
+
+	/* If boost = 0, increment by 1 */
+	if (boost_read != 0)
+		goto do_not_inc;
+
+	/* Set rxeq_ovr_en to 1 */
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x2c,
+				     2, 1, 1);
+
+	/* Set rxeq_ovr_load_en for boost only */
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x2c,
+				     12, 7, 0x2);
+
+	/* Set rxeq_ovr_load for a value of 1 */
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x2c,
+				     3, 7, 0x1);
+
+	/* Latch in new boost value */
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x2c,
+				     10, 1, 0x1);
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x2c,
+				     10, 1, 0x0);
+
+	/* Reset previous registers */
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x2c,
+				     2, 1, 0x0);
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x2c,
+				     12, 7, 0x0);
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x2c,
+				     3, 7, 0x0);
+
+do_not_inc:
+	/* Write back initial att start value */
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x8c,
+				     8, 4, att_start);
+
+	/* Turn back on att adaptation */
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x84,
+				     0, 1, 1);
+	k2_rio_serdes_reg_fill_field(regs + 0x0a00 + 0x8c, 24, 1, 1);
+
+	k2_rio_serdes_wait_rx_valid(regs, lane);
+}
+
+/*
+ * Read termination on TX-N and TX-P
+ */
+static inline u32 k2_rio_serdes_get_termination(void __iomem *regs)
+{
+	return k2_rio_serdes_sb_read_selected_tbus(regs, 1, 0x1b) & 0x00ff;
+}
+
+/*
+ * Do the termination workaround
+ */
+static void k2_rio_serdes_termination_config(void __iomem *regs,
+					     u32 lane, u32 tx_term_np)
+{
+	/* Set tx termination */
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x7c,
+				     24, 8, tx_term_np);
+
+	/* Set termination override */
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x7c,
+				     20, 1, 1);
+}
+
+static void k2_rio_serdes_display_att_boost(void __iomem *regs, int lane,
+					    struct device *dev)
+{
+	u32 att;
+	u32 boost;
+
+	/*  Read att and boost */
+	att = boost = k2_rio_serdes_sb_read_selected_tbus(regs, lane + 1, 0x11);
+	att   = (att   >> 4) & 0x0f;
+	boost = (boost >> 8) & 0x0f;
+
+	dev_dbg(dev, "SerDes: lane %d att = %d, boost = %d\n", lane, att,
+		boost);
+
+	return;
+}
+
+/*
+ * Forcing the Tx idle on the transmitter will prevent the receiver from
+ * adapting to the un-terminated Tx and un-programmed pre and post cursor
+ * settings
+ */
+static inline void k2_rio_serdes_force_tx_idle(void __iomem *regs, u32 lane)
+{
+	k2_rio_serdes_reg_fill_field(regs + (lane * 4) + 0x1fc0 + 0x20,
+				     24, 2, 3);
+}
+
+static inline void k2_rio_serdes_force_tx_normal(void __iomem *regs, u32 lane)
+{
+	k2_rio_serdes_reg_fill_field(regs + (lane * 4) + 0x1fc0 + 0x20,
+				     24, 2, 0);
+}
+
+/*
+ * Assert reset while preserving the lnX_ctrl_i bits
+ */
+static void k2_rio_serdes_sb_assert_reset(void __iomem *regs, u32 lane)
+{
+	unsigned int ui_tmpo;
+	unsigned int ui_tmp0;
+	unsigned int ui_tmp1;
+
+	/* Read lnX_ctrl_i/lnX_pd_i */
+	ui_tmp0 = k2_rio_serdes_sb_read_selected_tbus(regs, lane + 1, 0);
+
+	/* Read lnX_rate_i */
+	ui_tmp1 = k2_rio_serdes_sb_read_selected_tbus(regs, lane + 1, 1);
+
+	ui_tmpo = 0;                              /* set reset state */
+	ui_tmpo |= ((ui_tmp1 >> 9) & 0x003) << 1; /* add user rate */
+	ui_tmpo |= ((ui_tmp0) & 0x003) << 3;      /* add user pd */
+	ui_tmpo |= ((ui_tmp0 >> 2) & 0x1FF) << 5; /* add user ctrl_i */
+	ui_tmpo |= (1 << 14);                     /* set override */
+	ui_tmpo &= ~0x60;                         /* clear the tx valid bits */
+
+	/* Only modify the reset bit and the overlay bit */
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x28,
+				     15, 15, ui_tmpo);
+}
+
+static void k2_rio_serdes_sb_deassert_reset(void __iomem *regs, u32 lane)
+{
+	/* Clear the reset bit */
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x28,
+				     15, 1, 1);
+}
+
+static void k2_rio_serdes_sb_clear_overlay_bit29(void __iomem *regs, u32 lane)
+{
+	/* Clear overlay bit, bring the lane out of reset */
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x28,
+				     29, 1, 0);
+}
+
+static void k2_rio_serdes_init_3g(void __iomem *reg)
+{
+	/* Uses 6G half rate configuration */
+	reg_finsr((reg + 0x0000), 31, 24, 0x00);
+	reg_finsr((reg + 0x0014),  7,  0, 0x82);
+	reg_finsr((reg + 0x0014), 15,  8, 0x82);
+	reg_finsr((reg + 0x0060),  7,  0, 0x48);
+	reg_finsr((reg + 0x0060), 15,  8, 0x2c);
+	reg_finsr((reg + 0x0060), 23, 16, 0x13);
+	reg_finsr((reg + 0x0064), 15,  8, 0xc7);
+	reg_finsr((reg + 0x0064), 23, 16, 0xc3);
+	reg_finsr((reg + 0x0078), 15,  8, 0xc0);
+
+	/*  Setting lane 0 SerDes to 3GHz */
+	reg_finsr((reg + 0x0204),  7,  0, 0x80);
+	reg_finsr((reg + 0x0204), 31, 24, 0x78);
+	reg_finsr((reg + 0x0208),  7,  0, 0x24);
+	reg_finsr((reg + 0x020c), 31, 24, 0x02);
+	reg_finsr((reg + 0x0210), 31, 24, 0x1b);
+	reg_finsr((reg + 0x0214),  7,  0, 0x7c);
+	reg_finsr((reg + 0x0214), 15,  8, 0x6e);
+	reg_finsr((reg + 0x0218),  7,  0, 0xe4);
+	reg_finsr((reg + 0x0218), 23, 16, 0x80);
+	reg_finsr((reg + 0x0218), 31, 24, 0x75);
+	reg_finsr((reg + 0x022c), 15,  8, 0x08);
+	reg_finsr((reg + 0x022c), 23, 16, 0x20);
+	reg_finsr((reg + 0x0280),  7,  0, 0x70);
+	reg_finsr((reg + 0x0280), 23, 16, 0x70);
+	reg_finsr((reg + 0x0284),  7,  0, 0x85);
+	reg_finsr((reg + 0x0284), 23, 16, 0x0f);
+	reg_finsr((reg + 0x0284), 31, 24, 0x1d);
+	reg_finsr((reg + 0x028c), 15,  8, 0x3b);
+
+	/*  Setting lane 1 SerDes to 3GHz */
+	reg_finsr((reg + 0x0404),  7,  0, 0x80);
+	reg_finsr((reg + 0x0404), 31, 24, 0x78);
+	reg_finsr((reg + 0x0408),  7,  0, 0x24);
+	reg_finsr((reg + 0x040c), 31, 24, 0x02);
+	reg_finsr((reg + 0x0410), 31, 24, 0x1b);
+	reg_finsr((reg + 0x0414),  7,  0, 0x7c);
+	reg_finsr((reg + 0x0414), 15,  8, 0x6e);
+	reg_finsr((reg + 0x0418),  7,  0, 0xe4);
+	reg_finsr((reg + 0x0418), 23, 16, 0x80);
+	reg_finsr((reg + 0x0418), 31, 24, 0x75);
+	reg_finsr((reg + 0x042c), 15,  8, 0x08);
+	reg_finsr((reg + 0x042c), 23, 16, 0x20);
+	reg_finsr((reg + 0x0480),  7,  0, 0x70);
+	reg_finsr((reg + 0x0480), 23, 16, 0x70);
+	reg_finsr((reg + 0x0484),  7,  0, 0x85);
+	reg_finsr((reg + 0x0484), 23, 16, 0x0f);
+	reg_finsr((reg + 0x0484), 31, 24, 0x1d);
+	reg_finsr((reg + 0x048c), 15,  8, 0x3b);
+
+	/*  Setting lane 2 SerDes to 3GHz */
+	reg_finsr((reg + 0x0604),  7,  0, 0x80);
+	reg_finsr((reg + 0x0604), 31, 24, 0x78);
+	reg_finsr((reg + 0x0608),  7,  0, 0x24);
+	reg_finsr((reg + 0x060c), 31, 24, 0x02);
+	reg_finsr((reg + 0x0610), 31, 24, 0x1b);
+	reg_finsr((reg + 0x0614),  7,  0, 0x7c);
+	reg_finsr((reg + 0x0614), 15,  8, 0x6e);
+	reg_finsr((reg + 0x0618),  7,  0, 0xe4);
+	reg_finsr((reg + 0x0618), 23, 16, 0x80);
+	reg_finsr((reg + 0x0618), 31, 24, 0x75);
+	reg_finsr((reg + 0x062c), 15,  8, 0x08);
+	reg_finsr((reg + 0x062c), 23, 16, 0x20);
+	reg_finsr((reg + 0x0680),  7,  0, 0x70);
+	reg_finsr((reg + 0x0680), 23, 16, 0x70);
+	reg_finsr((reg + 0x0684),  7,  0, 0x85);
+	reg_finsr((reg + 0x0684), 23, 16, 0x0f);
+	reg_finsr((reg + 0x0684), 31, 24, 0x1d);
+	reg_finsr((reg + 0x068c), 15,  8, 0x3b);
+
+	/*  Setting lane 3 SerDes to 3GHz */
+	reg_finsr((reg + 0x0804),  7,  0, 0x80);
+	reg_finsr((reg + 0x0804), 31, 24, 0x78);
+	reg_finsr((reg + 0x0808),  7,  0, 0x24);
+	reg_finsr((reg + 0x080c), 31, 24, 0x02);
+	reg_finsr((reg + 0x0810), 31, 24, 0x1b);
+	reg_finsr((reg + 0x0814),  7,  0, 0x7c);
+	reg_finsr((reg + 0x0814), 15,  8, 0x6e);
+	reg_finsr((reg + 0x0818),  7,  0, 0xe4);
+	reg_finsr((reg + 0x0818), 23, 16, 0x80);
+	reg_finsr((reg + 0x0818), 31, 24, 0x75);
+	reg_finsr((reg + 0x082c), 15,  8, 0x08);
+	reg_finsr((reg + 0x082c), 23, 16, 0x20);
+	reg_finsr((reg + 0x0880),  7,  0, 0x70);
+	reg_finsr((reg + 0x0880), 23, 16, 0x70);
+	reg_finsr((reg + 0x0884),  7,  0, 0x85);
+	reg_finsr((reg + 0x0884), 23, 16, 0x0f);
+	reg_finsr((reg + 0x0884), 31, 24, 0x1d);
+	reg_finsr((reg + 0x088c), 15,  8, 0x3b);
+
+	reg_finsr((reg + 0x0a00), 15,  8, 0x08);
+	reg_finsr((reg + 0x0a08), 23, 16, 0x72);
+	reg_finsr((reg + 0x0a08), 31, 24, 0x37);
+	reg_finsr((reg + 0x0a30), 15,  8, 0x77);
+	reg_finsr((reg + 0x0a30), 23, 16, 0x77);
+	reg_finsr((reg + 0x0a84), 15,  8, 0x06);
+	reg_finsr((reg + 0x0a94), 31, 24, 0x10);
+	reg_finsr((reg + 0x0aa0), 31, 24, 0x81);
+	reg_finsr((reg + 0x0abc), 31, 24, 0xff);
+	reg_finsr((reg + 0x0ac0),  7,  0, 0x8b);
+	reg_finsr((reg + 0x0a48), 15,  8, 0x8c);
+	reg_finsr((reg + 0x0a48), 23, 16, 0xfd);
+	reg_finsr((reg + 0x0a54),  7,  0, 0x72);
+	reg_finsr((reg + 0x0a54), 15,  8, 0xec);
+	reg_finsr((reg + 0x0a54), 23, 16, 0x2f);
+	reg_finsr((reg + 0x0a58), 15,  8, 0x21);
+	reg_finsr((reg + 0x0a58), 23, 16, 0xf9);
+	reg_finsr((reg + 0x0a58), 31, 24, 0x00);
+	reg_finsr((reg + 0x0a5c),  7,  0, 0x60);
+	reg_finsr((reg + 0x0a5c), 15,  8, 0x00);
+	reg_finsr((reg + 0x0a5c), 23, 16, 0x04);
+	reg_finsr((reg + 0x0a5c), 31, 24, 0x00);
+	reg_finsr((reg + 0x0a60),  7,  0, 0x00);
+	reg_finsr((reg + 0x0a60), 15,  8, 0x80);
+	reg_finsr((reg + 0x0a60), 23, 16, 0x00);
+	reg_finsr((reg + 0x0a60), 31, 24, 0x00);
+	reg_finsr((reg + 0x0a64),  7,  0, 0x20);
+	reg_finsr((reg + 0x0a64), 15,  8, 0x12);
+	reg_finsr((reg + 0x0a64), 23, 16, 0x58);
+	reg_finsr((reg + 0x0a64), 31, 24, 0x0c);
+	reg_finsr((reg + 0x0a68),  7,  0, 0x02);
+	reg_finsr((reg + 0x0a68), 15,  8, 0x06);
+	reg_finsr((reg + 0x0a68), 23, 16, 0x3b);
+	reg_finsr((reg + 0x0a68), 31, 24, 0xe1);
+	reg_finsr((reg + 0x0a6c),  7,  0, 0xc1);
+	reg_finsr((reg + 0x0a6c), 15,  8, 0x4c);
+	reg_finsr((reg + 0x0a6c), 23, 16, 0x07);
+	reg_finsr((reg + 0x0a6c), 31, 24, 0xb8);
+	reg_finsr((reg + 0x0a70),  7,  0, 0x89);
+	reg_finsr((reg + 0x0a70), 15,  8, 0xe9);
+	reg_finsr((reg + 0x0a70), 23, 16, 0x02);
+	reg_finsr((reg + 0x0a70), 31, 24, 0x3f);
+	reg_finsr((reg + 0x0a74),  7,  0, 0x01);
+	reg_finsr((reg + 0x0b20), 23, 16, 0x37);
+	reg_finsr((reg + 0x0b1c), 31, 24, 0x37);
+	reg_finsr((reg + 0x0b20),  7,  0, 0x5d);
+	reg_finsr((reg + 0x0000),  7,  0, 0x03);
+	reg_finsr((reg + 0x0a00),  7,  0, 0x5f);
+}
+
+static void k2_rio_serdes_init_5g(void __iomem *reg)
+{
+	/* Uses 5Gbps full rate configuration by default */
+	reg_finsr((reg + 0x0000), 31, 24, 0x00);
+	reg_finsr((reg + 0x0014),  7,  0, 0x82);
+	reg_finsr((reg + 0x0014), 15,  8, 0x82);
+	reg_finsr((reg + 0x0060),  7,  0, 0x38);
+	reg_finsr((reg + 0x0060), 15,  8, 0x24);
+	reg_finsr((reg + 0x0060), 23, 16, 0x14);
+	reg_finsr((reg + 0x0064), 15,  8, 0xc7);
+	reg_finsr((reg + 0x0064), 23, 16, 0xc3);
+	reg_finsr((reg + 0x0078), 15,  8, 0xc0);
+
+	/*  Setting lane 0 SerDes to 5GHz */
+	reg_finsr((reg + 0x0204),  7,  0, 0x80);
+	reg_finsr((reg + 0x0204), 31, 24, 0x78);
+	reg_finsr((reg + 0x0208),  7,  0, 0x26);
+	reg_finsr((reg + 0x020c), 31, 24, 0x02);
+	reg_finsr((reg + 0x0214),  7,  0, 0x38);
+	reg_finsr((reg + 0x0214), 15,  8, 0x6f);
+	reg_finsr((reg + 0x0218),  7,  0, 0xe4);
+	reg_finsr((reg + 0x0218), 23, 16, 0x80);
+	reg_finsr((reg + 0x0218), 31, 24, 0x75);
+	reg_finsr((reg + 0x022c), 15,  8, 0x08);
+	reg_finsr((reg + 0x022c), 23, 16, 0x20);
+	reg_finsr((reg + 0x0280),  7,  0, 0x86);
+	reg_finsr((reg + 0x0280), 23, 16, 0x86);
+	reg_finsr((reg + 0x0284),  7,  0, 0x85);
+	reg_finsr((reg + 0x0284), 23, 16, 0x0f);
+	reg_finsr((reg + 0x0284), 31, 24, 0x1d);
+	reg_finsr((reg + 0x028c), 15,  8, 0x2c);
+
+	/*  Setting lane 1 SerDes to 5GHz */
+	reg_finsr((reg + 0x0404),  7,  0, 0x80);
+	reg_finsr((reg + 0x0404), 31, 24, 0x78);
+	reg_finsr((reg + 0x0408),  7,  0, 0x26);
+	reg_finsr((reg + 0x040c), 31, 24, 0x02);
+	reg_finsr((reg + 0x0414),  7,  0, 0x38);
+	reg_finsr((reg + 0x0414), 15,  8, 0x6f);
+	reg_finsr((reg + 0x0418),  7,  0, 0xe4);
+	reg_finsr((reg + 0x0418), 23, 16, 0x80);
+	reg_finsr((reg + 0x0418), 31, 24, 0x75);
+	reg_finsr((reg + 0x042c), 15,  8, 0x08);
+	reg_finsr((reg + 0x042c), 23, 16, 0x20);
+	reg_finsr((reg + 0x0480),  7,  0, 0x86);
+	reg_finsr((reg + 0x0480), 23, 16, 0x86);
+	reg_finsr((reg + 0x0484),  7,  0, 0x85);
+	reg_finsr((reg + 0x0484), 23, 16, 0x0f);
+	reg_finsr((reg + 0x0484), 31, 24, 0x1d);
+	reg_finsr((reg + 0x048c), 15,  8, 0x2c);
+
+	/*  Setting lane 2 SerDes to 5GHz */
+	reg_finsr((reg + 0x0604),  7,  0, 0x80);
+	reg_finsr((reg + 0x0604), 31, 24, 0x78);
+	reg_finsr((reg + 0x0608),  7,  0, 0x26);
+	reg_finsr((reg + 0x060c), 31, 24, 0x02);
+	reg_finsr((reg + 0x0614),  7,  0, 0x38);
+	reg_finsr((reg + 0x0614), 15,  8, 0x6f);
+	reg_finsr((reg + 0x0618),  7,  0, 0xe4);
+	reg_finsr((reg + 0x0618), 23, 16, 0x80);
+	reg_finsr((reg + 0x0618), 31, 24, 0x75);
+	reg_finsr((reg + 0x062c), 15,  8, 0x08);
+	reg_finsr((reg + 0x062c), 23, 16, 0x20);
+	reg_finsr((reg + 0x0680),  7,  0, 0x86);
+	reg_finsr((reg + 0x0680), 23, 16, 0x86);
+	reg_finsr((reg + 0x0684),  7,  0, 0x85);
+	reg_finsr((reg + 0x0684), 23, 16, 0x0f);
+	reg_finsr((reg + 0x0684), 31, 24, 0x1d);
+	reg_finsr((reg + 0x068c), 15,  8, 0x2c);
+
+	/*  Setting lane 3 SerDes to 5GHz */
+	reg_finsr((reg + 0x0804),  7,  0, 0x80);
+	reg_finsr((reg + 0x0804), 31, 24, 0x78);
+	reg_finsr((reg + 0x0808),  7,  0, 0x26);
+	reg_finsr((reg + 0x080c), 31, 24, 0x02);
+	reg_finsr((reg + 0x0814),  7,  0, 0x38);
+	reg_finsr((reg + 0x0814), 15,  8, 0x6f);
+	reg_finsr((reg + 0x0818),  7,  0, 0xe4);
+	reg_finsr((reg + 0x0818), 23, 16, 0x80);
+	reg_finsr((reg + 0x0818), 31, 24, 0x75);
+	reg_finsr((reg + 0x082c), 15,  8, 0x08);
+	reg_finsr((reg + 0x082c), 23, 16, 0x20);
+	reg_finsr((reg + 0x0880),  7,  0, 0x86);
+	reg_finsr((reg + 0x0880), 23, 16, 0x86);
+	reg_finsr((reg + 0x0884),  7,  0, 0x85);
+	reg_finsr((reg + 0x0884), 23, 16, 0x0f);
+	reg_finsr((reg + 0x0884), 31, 24, 0x1d);
+	reg_finsr((reg + 0x088c), 15,  8, 0x2c);
+
+	reg_finsr((reg + 0x0a00), 15,  8, 0x80);
+	reg_finsr((reg + 0x0a08), 23, 16, 0xd2);
+	reg_finsr((reg + 0x0a08), 31, 24, 0x38);
+	reg_finsr((reg + 0x0a30), 15,  8, 0x8d);
+	reg_finsr((reg + 0x0a30), 23, 16, 0x8d);
+	reg_finsr((reg + 0x0a84), 15,  8, 0x06);
+	reg_finsr((reg + 0x0a94), 31, 24, 0x10);
+	reg_finsr((reg + 0x0aa0), 31, 24, 0x81);
+	reg_finsr((reg + 0x0abc), 31, 24, 0xff);
+	reg_finsr((reg + 0x0ac0),  7,  0, 0x8b);
+	reg_finsr((reg + 0x0a48), 15,  8, 0x8c);
+	reg_finsr((reg + 0x0a48), 23, 16, 0xfd);
+	reg_finsr((reg + 0x0a54),  7,  0, 0x72);
+	reg_finsr((reg + 0x0a54), 15,  8, 0xec);
+	reg_finsr((reg + 0x0a54), 23, 16, 0x2f);
+	reg_finsr((reg + 0x0a58), 15,  8, 0x21);
+	reg_finsr((reg + 0x0a58), 23, 16, 0xf9);
+	reg_finsr((reg + 0x0a58), 31, 24, 0x00);
+	reg_finsr((reg + 0x0a5c),  7,  0, 0x60);
+	reg_finsr((reg + 0x0a5c), 15,  8, 0x00);
+	reg_finsr((reg + 0x0a5c), 23, 16, 0x04);
+	reg_finsr((reg + 0x0a5c), 31, 24, 0x00);
+	reg_finsr((reg + 0x0a60),  7,  0, 0x00);
+	reg_finsr((reg + 0x0a60), 15,  8, 0x80);
+	reg_finsr((reg + 0x0a60), 23, 16, 0x00);
+	reg_finsr((reg + 0x0a60), 31, 24, 0x00);
+	reg_finsr((reg + 0x0a64),  7,  0, 0x20);
+	reg_finsr((reg + 0x0a64), 15,  8, 0x12);
+	reg_finsr((reg + 0x0a64), 23, 16, 0x58);
+	reg_finsr((reg + 0x0a64), 31, 24, 0x0c);
+	reg_finsr((reg + 0x0a68),  7,  0, 0x02);
+	reg_finsr((reg + 0x0a68), 15,  8, 0x06);
+	reg_finsr((reg + 0x0a68), 23, 16, 0x3b);
+	reg_finsr((reg + 0x0a68), 31, 24, 0xe1);
+	reg_finsr((reg + 0x0a6c),  7,  0, 0xc1);
+	reg_finsr((reg + 0x0a6c), 15,  8, 0x4c);
+	reg_finsr((reg + 0x0a6c), 23, 16, 0x07);
+	reg_finsr((reg + 0x0a6c), 31, 24, 0xb8);
+	reg_finsr((reg + 0x0a70),  7,  0, 0x89);
+	reg_finsr((reg + 0x0a70), 15,  8, 0xe9);
+	reg_finsr((reg + 0x0a70), 23, 16, 0x02);
+	reg_finsr((reg + 0x0a70), 31, 24, 0x3f);
+	reg_finsr((reg + 0x0a74),  7,  0, 0x01);
+	reg_finsr((reg + 0x0b20), 23, 16, 0x37);
+	reg_finsr((reg + 0x0b1c), 31, 24, 0x37);
+	reg_finsr((reg + 0x0b20),  7,  0, 0x5d);
+	reg_finsr((reg + 0x0000),  7,  0, 0x03);
+	reg_finsr((reg + 0x0a00),  7,  0, 0x5f);
+}
+
+static void k2_rio_serdes_lane_init(u32 lane, u32 rate, void __iomem *regs)
+{
+	/* Bring this lane out of reset by clearing override bit 29 */
+	k2_rio_serdes_sb_clear_overlay_bit29(regs, lane);
+
+	/* Set lane control rate, force lane enable, rates, width and tx idle */
+	switch (rate) {
+	case KEYSTONE_RIO_FULL_RATE:
+		__raw_writel(0xf3c0f0f0, regs + 0x1fe0 + (4 * lane));
+		break;
+	case KEYSTONE_RIO_HALF_RATE:
+		__raw_writel(0xf7c0f4f0, regs + 0x1fe0 + (4 * lane));
+		break;
+	case KEYSTONE_RIO_QUARTER_RATE:
+		__raw_writel(0xfbc0f8f0, regs + 0x1fe0 + (4 * lane));
+		break;
+	default:
+		return;
+	}
+}
+
+static inline void k2_rio_serdes_lane_enable(u32 lane, void __iomem *regs)
+{
+	reg_rmw(regs + 0x1fe0 + (4 * lane),
+		BIT(29) | BIT(30) | BIT(13) | BIT(14),
+		BIT(29) | BIT(30) | BIT(13) | BIT(14));
+}
+
+static inline void k2_rio_serdes_lane_disable(u32 lane, void __iomem *regs)
+{
+	reg_rmw(regs + 0x1fe0 + (4 * lane),
+		0,
+		BIT(29) | BIT(30) | BIT(13) | BIT(14));
+}
+
+/*
+ * Wait lanes to be OK by checking LNn_OK_STATE bits
+ */
+static int k2_rio_serdes_wait_lanes_ok(u32 lanes, void __iomem *regs)
+{
+	u32 val;
+	unsigned long timeout;
+	u32 val_mask;
+
+	/* LNn_OK_STATE bits */
+	val_mask = lanes << 8;
+
+	/* Wait for the SerDes LANE_OK lock */
+	timeout = jiffies + msecs_to_jiffies(KEYSTONE_PLL_LOCK_TIMEOUT);
+	while (1) {
+		/* Read PLL_CTRL */
+		val = __raw_readl(regs + 0x1ff4);
+		if ((val & val_mask) == val_mask)
+			break;
+		if (time_after(jiffies, timeout))
+			return -1;
+		usleep_range(10, 50);
+	}
+
+	return 0;
+}
+
+/*
+ * Configure SerDes with appropriate baudrate and do Tx termination workaround
+ * Note that all lanes are configured but Serdes are then disabled
+ */
+static int k2_rio_serdes_config(u32 lanes, u32 baud, struct device *dev,
+				void __iomem *regs)
+{
+	u32 rate;
+	u32 val;
+	u32 lane;
+	u32 tx_term_np;
+	int res;
+
+	dev_dbg(dev, "SerDes: configuring SerDes for lane mask 0x%x\n", lanes);
+
+	/* Disable PLL before configuring the SerDes registers */
+	__raw_writel(0x80000000, regs + 0x1ff4);
+
+	switch (baud) {
+	case KEYSTONE_RIO_BAUD_1_250:
+		rate = KEYSTONE_RIO_QUARTER_RATE;
+		k2_rio_serdes_init_5g(regs);
+		break;
+	case KEYSTONE_RIO_BAUD_2_500:
+		rate = KEYSTONE_RIO_HALF_RATE;
+		k2_rio_serdes_init_5g(regs);
+		break;
+	case KEYSTONE_RIO_BAUD_5_000:
+		rate = KEYSTONE_RIO_FULL_RATE;
+		k2_rio_serdes_init_5g(regs);
+		break;
+	case KEYSTONE_RIO_BAUD_3_125:
+		rate = KEYSTONE_RIO_HALF_RATE;
+		k2_rio_serdes_init_3g(regs);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	/* We need to always use lane 0 even if not part of the lane mask */
+	lanes |= SERDES_LANE(0);
+
+	/* Disable transmitter for all lanes */
+	for_each_lanes(lanes, lane) {
+		k2_rio_serdes_force_tx_idle(regs, lane);
+	}
+
+	/* Initialize SerDes for requested lanes */
+	for_each_lanes(lanes, lane) {
+		k2_rio_serdes_lane_init(lane, rate, regs);
+	}
+
+	/* Enable PLL via the PLL_ctrl */
+	__raw_writel(0xe0000000, regs + 0x1ff4);
+
+	/* Wait PLL OK: should be done in no more than 400us */
+	do {
+		val = __raw_readl(regs + 0x1ff4);
+	} while (!(val & BIT(28)));
+
+	/* Wait lanes OK */
+	res = k2_rio_serdes_wait_lanes_ok(lanes, regs);
+	if (res < 0) {
+		dev_dbg(dev, "SerDes: %s() lane mask 0x%x not OK\n",
+			__func__, lanes);
+		return -1;
+	}
+
+	/* Read the Tx termination */
+	tx_term_np = k2_rio_serdes_get_termination(regs);
+	dev_dbg(dev, "SerDes: termination tx is 0x%x\n", tx_term_np);
+
+	for_each_lanes(lanes, lane) {
+		/* Set the saved Tx termination */
+		k2_rio_serdes_termination_config(regs, lane, tx_term_np);
+
+		/* Disable SerDes for this lane */
+		k2_rio_serdes_lane_disable(lane, regs);
+	}
+
+	return 0;
+}
+
+static int k2_rio_serdes_shutdown(void __iomem *regs, u32 lanes)
+{
+	u32 lane;
+
+	for_each_lanes(lanes, lane) {
+		/* Disable SerDes for this lane */
+		k2_rio_serdes_lane_disable(lane, regs);
+	}
+
+	/* Disable PLL */
+	__raw_writel(0x80000000, regs + 0x1ff4);
+
+	/* Reset CMU PLL for all lanes */
+	reg_rmw(regs + 0x10, BIT(28), BIT(28));
+
+	return 0;
+}
+
+static void k2_rio_serdes_fix_unstable_single_lane(int lane,
+						   struct device *dev,
+						   void __iomem *regs)
+{
+	dev_dbg(dev, "SerDes: fix unstable lane %d\n", lane);
+
+	/* Display serdes boost/att */
+	k2_rio_serdes_display_att_boost(regs, lane, dev);
+
+	/* Force SerDes signal detect LO (reset CDR, Att and Boost) */
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x04,
+				     1, 2, 2);
+
+	usleep_range(10, 50);
+
+	/* Allow SerDes to re-acquire signal detect */
+	k2_rio_serdes_reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x04,
+				     1, 2, 0);
+
+	dev_dbg(dev, "SerDes: lane %d Rx path reset done\n", lane);
+
+	/* Perform SerDes boost/att workaround */
+	k2_rio_serdes_att_boost(regs, lane);
+
+	dev_dbg(dev, "SerDes: lane %d boost/att workaround done\n", lane);
+
+	/* Display serdes boost/att */
+	k2_rio_serdes_display_att_boost(regs, lane, dev);
+
+	dev_dbg(dev, "SerDes: lane %d fixed\n", lane);
+}
+
+static void k2_rio_serdes_fix_unstable_lanes(u32 lanes,
+					     struct device *dev,
+					     void __iomem *regs)
+{
+	unsigned int stat;
+	unsigned int i_dlpf;
+	u32 lane;
+
+	for_each_lanes(lanes, lane) {
+		/* Check rx valid */
+		stat = (k2_rio_serdes_sb_read_selected_tbus(regs,
+							    lane + 1,
+							    0x2) & 0x0060) >> 5;
+
+		dev_dbg(dev, "SerDes: check rx valid for lane %d, stat = %d\n",
+			lane, stat);
+
+		if (stat == 3) {
+			i_dlpf = k2_rio_serdes_sb_read_selected_tbus(
+				regs, lane + 1, 5) >> 10;
+
+			if ((i_dlpf == 0) || (i_dlpf == 3))
+				k2_rio_serdes_fix_unstable_single_lane(
+					lane, dev, regs);
+		}
+	}
+}
+
+static int k2_rio_serdes_tx_lanes_start(
+	u32 lanes,
+	struct device *dev,
+	void __iomem *regs,
+	struct keystone_serdes_config *serdes_config)
+{
+	u32 val;
+	u32 lane;
+
+	for_each_lanes(lanes, lane) {
+		dev_dbg(dev, "SerDes: start transmit for lane %d\n", lane);
+
+		/* Serdes assert reset */
+		k2_rio_serdes_sb_assert_reset(regs, lane);
+
+		/* Set c1/c2/cm */
+		val = (serdes_config->serdes_c1)
+			| ((serdes_config->serdes_c2) << 8)
+			| ((serdes_config->serdes_cm) << 12);
+		reg_rmw(regs + 0x008 + (0x200 * (lane + 1)), val, 0x0000ff1f);
+
+		/* Set att and 1lsb */
+		val = (serdes_config->serdes_att << 25)
+			| (serdes_config->serdes_1sb << 31);
+		reg_rmw(regs + 0x004 + (0x200 * (lane + 1)), val, 0x9e000000);
+
+		/* Set vreg */
+		val = serdes_config->serdes_vreg << 5;
+		reg_rmw(regs + 0x084 + (0x200 * (lane + 1)), val, 0x000000e0);
+
+		/* Force Tx normal to enable the transmitter */
+		k2_rio_serdes_force_tx_normal(regs, lane);
+
+		/* Serdes de-assert reset */
+		k2_rio_serdes_sb_deassert_reset(regs, lane);
+
+		/* Enable corresponding lane */
+		k2_rio_serdes_lane_enable(lane, regs);
+	}
+
+	for_each_lanes(lanes, lane) {
+		/* Clear overlay bit to bring lane is out of reset */
+		k2_rio_serdes_sb_clear_overlay_bit29(regs, lane);
+	}
+
+	return 0;
+}
+
 /*------------------------- RapidIO hw controller setup ---------------------*/
 
 /* Retrieve the corresponding lanes bitmask from ports bitmask and path_mode */
@@ -1021,354 +1870,62 @@ static int keystone_rio_get_lane_config(u32 ports, u32 path_mode)
 		for (lane = keystone_lane_configs[path_mode][port].start;
 		     lane < keystone_lane_configs[path_mode][port].end;
 		     lane++) {
-			lanes |= (1 << lane);
+			lanes |= SERDES_LANE(lane);
 		}
 	}
 	return (int) lanes;
 }
 
-static void k2_rio_serdes_init_3g(u32 lanes, struct keystone_rio_data *krio_priv)
+/**
+ * keystone_rio_lanes_init_and_wait - Initialize and wait lanes for a given
+ * RIO port
+ *
+ * @port: RIO port
+ * @start: if non null, lanes will be started
+ *
+ * Returns %0 on success or %1 if lane is not OK during the expected timeout
+ */
+static int keystone_rio_lanes_init(u32 port, int start,
+				   struct keystone_rio_data *krio_priv)
 {
-	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
-	u32 val;
-	int i;
+	u32 path_mode = krio_priv->board_rio_cfg.path_mode;
+	int lanes     = keystone_rio_get_lane_config(1 << port,
+						     path_mode);
+	void __iomem *regs =
+		(void __iomem *) krio_priv->serdes_regs;
+	struct keystone_serdes_config *serdes_config =
+		&(krio_priv->board_rio_cfg.serdes_config[port]);
+	int res;
 
-	/* Uses Half Rate configuration */
-	reg_rmw(regs + 0x000, 0x00000000, 0xff000000);
-	reg_rmw(regs + 0x014, 0x00008282, 0x0000ffff);
-	reg_rmw(regs + 0x060, 0x00132c48, 0x00ffffff);
-	reg_rmw(regs + 0x064, 0x00c3c700, 0x00ffff00);
-	reg_rmw(regs + 0x078, 0x0000c000, 0x0000ff00);
+	/* This is only needed for K2 SerDes */
+	if (!K2_SERDES(krio_priv))
+		return 1;
 
-	if (IS_SERDES_LANE_USED(lanes, 0)) {
-		dev_dbg(krio_priv->dev, "setting lane 0 SerDes to 3GHz\n");
-		reg_rmw(regs + 0x204, 0x78000080, 0xff0000ff);
-		reg_rmw(regs + 0x208, 0x00000024, 0x000000ff);
-		reg_rmw(regs + 0x20c, 0x02000000, 0xff000000);
-		reg_rmw(regs + 0x210, 0x1b000000, 0xff000000);
-		reg_rmw(regs + 0x214, 0x00006e7c, 0x0000ffff);
-		reg_rmw(regs + 0x218, 0x758000e4, 0xffff00ff);
-		reg_rmw(regs + 0x22c, 0x00100800, 0x00ffff00);
-		reg_rmw(regs + 0x280, 0x00700070, 0x00ff00ff);
-		reg_rmw(regs + 0x284, 0x1d0f0085, 0xffff00ff);
-		reg_rmw(regs + 0x28c, 0x00003b00, 0x0000ff00);
+	dev_dbg(krio_priv->dev,
+		"Initializing lane mask 0x%x for port %d",
+		lanes, port);
+
+	/* Eventually start the lanes */
+	if (start) {
+		dev_dbg(krio_priv->dev,
+			"Starting lane mask 0x%x for port %d",
+			lanes, port);
+
+		k2_rio_serdes_tx_lanes_start((u32) lanes,
+					     krio_priv->dev,
+					     krio_priv->serdes_regs,
+					     serdes_config);
 	}
 
-	if (IS_SERDES_LANE_USED(lanes, 1)) {
-		dev_dbg(krio_priv->dev, "setting lane 1 SerDes to 3GHz\n");
-		reg_rmw(regs + 0x404, 0x78000080, 0xff0000ff);
-		reg_rmw(regs + 0x408, 0x00000024, 0x000000ff);
-		reg_rmw(regs + 0x40c, 0x02000000, 0xff000000);
-		reg_rmw(regs + 0x410, 0x1b000000, 0xff000000);
-		reg_rmw(regs + 0x414, 0x00006e7c, 0x0000ffff);
-		reg_rmw(regs + 0x418, 0x758000e4, 0xffff0000);
-		reg_rmw(regs + 0x42c, 0x00100800, 0x00ffff00);
-		reg_rmw(regs + 0x480, 0x00700070, 0x00ff00ff);
-		reg_rmw(regs + 0x484, 0x1d0f0085, 0xffff00ff);
-		reg_rmw(regs + 0x48c, 0x00003b00, 0x0000ff00);
+	/* Wait lanes to be OK */
+	res = k2_rio_serdes_wait_lanes_ok(lanes, regs);
+	if (res < 0) {
+		dev_dbg(krio_priv->dev,
+			"port %d lane mask 0x%x is not OK\n",
+			port, lanes);
+
+		return 1;
 	}
-
-	if (IS_SERDES_LANE_USED(lanes, 2)) {
-		dev_dbg(krio_priv->dev, "setting lane 2 SerDes to 3GHz\n");
-		reg_rmw(regs + 0x604, 0x78000080, 0xff0000ff);
-		reg_rmw(regs + 0x608, 0x00000024, 0x000000ff);
-		reg_rmw(regs + 0x60c, 0x02000000, 0xff000000);
-		reg_rmw(regs + 0x610, 0x1b000000, 0xff000000);
-		reg_rmw(regs + 0x614, 0x00006e7c, 0x0000ffff);
-		reg_rmw(regs + 0x618, 0x758000e4, 0xffff00ff);
-		reg_rmw(regs + 0x62c, 0x00100800, 0x00ffff00);
-		reg_rmw(regs + 0x680, 0x00700070, 0x00ff00ff);
-		reg_rmw(regs + 0x684, 0x1d0f0085, 0xffff00ff);
-		reg_rmw(regs + 0x68c, 0x00003b00, 0x0000ff00);
-	}
-
-	if (IS_SERDES_LANE_USED(lanes, 3)) {
-		dev_dbg(krio_priv->dev, "setting lane 3 SerDes to 3GHz\n");
-		reg_rmw(regs + 0x804, 0x78000080, 0xff0000ff);
-		reg_rmw(regs + 0x808, 0x00000024, 0x000000ff);
-		reg_rmw(regs + 0x80c, 0x02000000, 0xff000000);
-		reg_rmw(regs + 0x810, 0x1b000000, 0xff000000);
-		reg_rmw(regs + 0x814, 0x00006e7c, 0x0000ffff);
-		reg_rmw(regs + 0x818, 0x758000e4, 0xffff00ff);
-		reg_rmw(regs + 0x82c, 0x00100800, 0x00ffff00);
-		reg_rmw(regs + 0x880, 0x00700070, 0x00ff00ff);
-		reg_rmw(regs + 0x884, 0x1d0f0085, 0xffff00ff);
-		reg_rmw(regs + 0x88c, 0x00003b00, 0x0000ff00);
-	}
-
-	for (i = 0; i < 4; i++) {
-		struct keystone_serdes_config *serdes_config =
-			&(krio_priv->board_rio_cfg.serdes_config[i]);
-
-		val = (serdes_config->serdes_c1)
-			| ((serdes_config->serdes_c2) << 8)
-			| ((serdes_config->serdes_cm) << 12);
-		reg_rmw(regs + 0x008 + (0x200 * (i + 1)), val, 0x0000ff0f);
-
-		val = (serdes_config->serdes_att << 25)
-			| (serdes_config->serdes_1sb << 31);
-		reg_rmw(regs + 0x004 + (0x200 * (i + 1)), val, 0x1e000000);
-
-		val = serdes_config->serdes_vreg << 5;
-		reg_rmw(regs + 0x084 + (0x200 * (i + 1)), val, 0x000000e0);
-	}
-
-	reg_rmw(regs + 0xa00, 0x00000800, 0x0000ff00);
-	reg_rmw(regs + 0xa08, 0x37720000, 0xffff0000);
-	reg_rmw(regs + 0xa30, 0x00777700, 0x00ffff00);
-	reg_rmw(regs + 0xa84, 0x00000600, 0x0000ff00);
-	reg_rmw(regs + 0xa94, 0x10000000, 0xff000000);
-	reg_rmw(regs + 0xaa0, 0x81000000, 0xff000000);
-	reg_rmw(regs + 0xabc, 0xff000000, 0xff000000);
-	reg_rmw(regs + 0xac0, 0x0000008b, 0x000000ff);
-
-	reg_rmw(regs + 0x000, 0x00000003, 0x000000ff);
-	reg_rmw(regs + 0xa00, 0x0000005f, 0x000000ff);
-}
-
-static void k2_rio_serdes_init_5g(u32 lanes, struct keystone_rio_data *krio_priv)
-{
-	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
-	u32 val;
-	int i;
-
-	/* Uses Full Rate configuration by default */
-	reg_rmw(regs + 0x000, 0x00000000, 0xff000000);
-	reg_rmw(regs + 0x014, 0x00008282, 0x0000ffff);
-	reg_rmw(regs + 0x060, 0x00142438, 0x00ffffff);
-	reg_rmw(regs + 0x064, 0x00c3c700, 0x00ffff00);
-	reg_rmw(regs + 0x078, 0x0000c000, 0x0000ff00);
-
-	if (IS_SERDES_LANE_USED(lanes, 0)) {
-		dev_dbg(krio_priv->dev, "setting lane 0 SerDes to 5GHz\n");
-		reg_rmw(regs + 0x204, 0x78000080, 0xff0000ff);
-		reg_rmw(regs + 0x208, 0x00000026, 0x000000ff);
-		reg_rmw(regs + 0x20c, 0x02000000, 0xff000000);
-		reg_rmw(regs + 0x214, 0x00006f38, 0x0000ffff);
-		reg_rmw(regs + 0x218, 0x758000e4, 0xffff00ff);
-		reg_rmw(regs + 0x22c, 0x00200800, 0x00ffff00);
-		reg_rmw(regs + 0x280, 0x00860086, 0x00ff00ff);
-		reg_rmw(regs + 0x284, 0x1d0f0085, 0xffff00ff);
-		reg_rmw(regs + 0x28c, 0x00002c00, 0x0000ff00);
-	}
-
-	if (IS_SERDES_LANE_USED(lanes, 1)) {
-		dev_dbg(krio_priv->dev, "setting lane 1 SerDes to 5GHz\n");
-		reg_rmw(regs + 0x404, 0x78000080, 0xff0000ff);
-		reg_rmw(regs + 0x408, 0x00000026, 0x000000ff);
-		reg_rmw(regs + 0x40c, 0x02000000, 0xff000000);
-		reg_rmw(regs + 0x414, 0x00006f38, 0x0000ffff);
-		reg_rmw(regs + 0x418, 0x758000e4, 0xffff00ff);
-		reg_rmw(regs + 0x42c, 0x00200800, 0x00ffff00);
-		reg_rmw(regs + 0x480, 0x00860086, 0x00ff00ff);
-		reg_rmw(regs + 0x484, 0x1d0f0085, 0xffff00ff);
-		reg_rmw(regs + 0x48c, 0x00002c00, 0x0000ff00);
-	}
-
-	if (IS_SERDES_LANE_USED(lanes, 2)) {
-		dev_dbg(krio_priv->dev, "setting lane 2 SerDes to 5GHz\n");
-		reg_rmw(regs + 0x604, 0x78000080, 0xff0000ff);
-		reg_rmw(regs + 0x608, 0x00000026, 0x000000ff);
-		reg_rmw(regs + 0x60c, 0x02000000, 0xff000000);
-		reg_rmw(regs + 0x614, 0x00006f38, 0x0000ffff);
-		reg_rmw(regs + 0x618, 0x758000e4, 0xffff00ff);
-		reg_rmw(regs + 0x62c, 0x00200800, 0x00ffff00);
-		reg_rmw(regs + 0x680, 0x00860086, 0x00ff00ff);
-		reg_rmw(regs + 0x684, 0x1d0f0085, 0xffff00ff);
-		reg_rmw(regs + 0x68c, 0x00002c00, 0x0000ff00);
-	}
-
-	if (IS_SERDES_LANE_USED(lanes, 3)) {
-		dev_dbg(krio_priv->dev, "setting lane 3 SerDes to 5GHz\n");
-		reg_rmw(regs + 0x804, 0x78000080, 0xff0000ff);
-		reg_rmw(regs + 0x808, 0x00000026, 0x000000ff);
-		reg_rmw(regs + 0x80c, 0x02000000, 0xff000000);
-		reg_rmw(regs + 0x814, 0x00006f38, 0x0000ffff);
-		reg_rmw(regs + 0x818, 0x758000e4, 0xffff00ff);
-		reg_rmw(regs + 0x82c, 0x00200800, 0x00ffff00);
-		reg_rmw(regs + 0x880, 0x00860086, 0x00ff00ff);
-		reg_rmw(regs + 0x884, 0x1d0f0085, 0xffff00ff);
-		reg_rmw(regs + 0x88c, 0x00002c00, 0x0000ff00);
-	}
-
-	for (i = 0; i < 4; i++) {
-		struct keystone_serdes_config *serdes_config =
-			&(krio_priv->board_rio_cfg.serdes_config[i]);
-
-		val = (serdes_config->serdes_c1)
-			| ((serdes_config->serdes_c2) << 8)
-			| ((serdes_config->serdes_cm) << 12);
-		reg_rmw(regs + 0x008 + (0x200 * (i + 1)), val, 0x0000ff0f);
-
-		val = (serdes_config->serdes_att << 25)
-			| (serdes_config->serdes_1sb << 31);
-		reg_rmw(regs + 0x004 + (0x200 * (i + 1)), val, 0x1e000000);
-
-		val = serdes_config->serdes_vreg << 5;
-		reg_rmw(regs + 0x084 + (0x200 * (i + 1)), val, 0x000000e0);
-	}
-
-	reg_rmw(regs + 0xa00, 0x00008000, 0x0000ff00);
-	reg_rmw(regs + 0xa08, 0x38d20000, 0xffff0000);
-	reg_rmw(regs + 0xa30, 0x008d8d00, 0x00ffff00);
-	reg_rmw(regs + 0xa84, 0x00000600, 0x0000ff00);
-	reg_rmw(regs + 0xa94, 0x10000000, 0xff000000);
-	reg_rmw(regs + 0xaa0, 0x81000000, 0xff000000);
-	reg_rmw(regs + 0xabc, 0xff000000, 0xff000000);
-	reg_rmw(regs + 0xac0, 0x0000008b, 0x000000ff);
-	reg_rmw(regs + 0x000, 0x00000003, 0x000000ff);
-	reg_rmw(regs + 0xa00, 0x0000005f, 0x000000ff);
-
-	reg_rmw(regs + 0xa48, 0x00fd8c00, 0x00ffff00);
-	reg_rmw(regs + 0xa54, 0x002fec72, 0x00ffffff);
-	reg_rmw(regs + 0xa58, 0x00f92100, 0xffffff00);
-	reg_rmw(regs + 0xa5c, 0x00040060, 0xffffffff);
-	reg_rmw(regs + 0xa60, 0x00008000, 0xffffffff);
-	reg_rmw(regs + 0xa64, 0x0c581220, 0xffffffff);
-	reg_rmw(regs + 0xa68, 0xe13b0602, 0xffffffff);
-	reg_rmw(regs + 0xa6c, 0xb8074cc1, 0xffffffff);
-	reg_rmw(regs + 0xa70, 0x3f02e989, 0xffffffff);
-	reg_rmw(regs + 0xa74, 0x00000001, 0x000000ff);
-	reg_rmw(regs + 0xb20, 0x00370000, 0x00ff0000);
-	reg_rmw(regs + 0xb1c, 0x37000000, 0xff000000);
-	reg_rmw(regs + 0xb20, 0x0000005d, 0x000000ff);
-}
-
-static void k2_rio_serdes_lane_enable(u32 lane, u32 rate, struct keystone_rio_data *krio_priv)
-{
-	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
-	u32 val;
-
-	/* Bring this lane out of reset by clearing override bit 29 */
-	val = __raw_readl(regs + 0x200 * (lane + 1) + 0x28);
-	val &= ~BIT(29);
-	__raw_writel(val, regs + 0x200 * (lane + 1) + 0x28);
-
-	/* Set Lane Control Rate */
-	switch (rate) {
-	case KEYSTONE_RIO_FULL_RATE:
-		__raw_writel(0xF0C0F0F0, regs + 0x1fe0 + 4 * lane);
-		break;
-	case KEYSTONE_RIO_HALF_RATE:
-		__raw_writel(0xF4C0F4F0, regs + 0x1fe0 + 4 * lane);
-		break;
-	case KEYSTONE_RIO_QUARTER_RATE:
-		__raw_writel(0xF8C0F8F0, regs + 0x1fe0 + 4 * lane);
-		break;
-	default:
-		return;
-	}
-}
-
-static void k2_rio_serdes_lane_disable(u32 lane, struct keystone_rio_data *krio_priv)
-{
-	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
-	u32 val;
-
-	val = __raw_readl(regs + 0x1fe0 + 4 * lane);
-	val &= ~(BIT(29) | BIT(30) | BIT(13) | BIT(14));
-	__raw_writel(val, regs + 0x1fe0 + 4 * lane);
-}
-
-static int k2_rio_serdes_config(u32 lanes, u32 baud, struct keystone_rio_data *krio_priv)
-{
-	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
-	u32 rate;
-	u32 val;
-
-	/* Disable pll before configuring the SerDes registers */
-	__raw_writel(0x00000000, regs + 0x1ff4);
-
-	switch (baud) {
-	case KEYSTONE_RIO_BAUD_1_250:
-		rate = KEYSTONE_RIO_QUARTER_RATE;
-		k2_rio_serdes_init_5g(lanes, krio_priv);
-		break;
-	case KEYSTONE_RIO_BAUD_2_500:
-		rate = KEYSTONE_RIO_HALF_RATE;
-		k2_rio_serdes_init_5g(lanes, krio_priv);
-		break;
-	case KEYSTONE_RIO_BAUD_5_000:
-		rate = KEYSTONE_RIO_FULL_RATE;
-		k2_rio_serdes_init_5g(lanes, krio_priv);
-		break;
-	case KEYSTONE_RIO_BAUD_3_125:
-		rate = KEYSTONE_RIO_HALF_RATE;
-		k2_rio_serdes_init_3g(lanes, krio_priv);
-		break;
-	default:
-		dev_warn(krio_priv->dev, "unsupported baud rate %d\n", baud);
-		return -EINVAL;
-	}
-
-	/* Enable serdes for requested lanes */
-	while (lanes) {
-		u32 lane = __ffs(lanes);
-		lanes &= ~(1 << lane);
-
-		if (lane >= KEYSTONE_RIO_MAX_PORT)
-			return -EINVAL;
-
-		k2_rio_serdes_lane_enable(lane, rate, krio_priv);
-	}
-
-	/* Enable pll via the pll_ctrl */
-	__raw_writel(0xe0000000, regs + 0x1ff4);
-
-	/* Wait until CMU_OK bit is set */
-	do {
-		val = __raw_readl(regs + 0xbf8);
-	} while (!(val & BIT(16)));
-
-	return 0;
-}
-
-static int k2_rio_serdes_wait_lock(struct keystone_rio_data *krio_priv, u32 lanes)
-{
-	u32 val;
-	unsigned long timeout;
-	volatile void *regs = (volatile void *) krio_priv->serdes_regs;
-	u32 val_mask;
-
-	val_mask = lanes | (lanes << 8);
-
-	/* Wait for the SerDes PLL lock */
-	timeout = jiffies + msecs_to_jiffies(KEYSTONE_PLL_LOCK_TIMEOUT);
-	while (1) {
-		/* read PLL_CTRL */
-		val = __raw_readl(regs + 0x1ff4);
-		if ((val & val_mask) == val_mask)
-			break;
-		if (time_after(jiffies, timeout))
-			return -1;
-		usleep_range(10, 50);
-	}
-	return 0;
-}
-
-static int k2_rio_serdes_shutdown(struct keystone_rio_data *krio_priv, u32 lanes)
-{
-	void __iomem *regs = (void __iomem *) krio_priv->serdes_regs;
-	u32 val;
-
-	while (lanes) {
-		u32 lane = __ffs(lanes);
-		lanes &= ~(1 << lane);
-
-		if (lane >= KEYSTONE_RIO_MAX_PORT)
-			return -EINVAL;
-
-		/* Disable SerDes for this lane */
-		k2_rio_serdes_lane_disable(lane, krio_priv);
-	}
-
-	/* Disable pll */
-	__raw_writel(0x00000000, regs + 0x1ff4);
-
-	/* Reset CMU PLL for all lanes */
-	val = __raw_readl(regs + 0x10);
-	val |= BIT(28);
-	__raw_writel(val, regs + 0x10);
 
 	return 0;
 }
@@ -1380,15 +1937,16 @@ static int k2_rio_serdes_shutdown(struct keystone_rio_data *krio_priv, u32 lanes
  *
  * Returns %0 on success or %-EINVAL or %-EIO on failure.
  */
-static int keystone_rio_hw_init(u32 mode, u32 baud, struct keystone_rio_data *krio_priv)
+static int keystone_rio_hw_init(u32 mode, u32 baud,
+				struct keystone_rio_data *krio_priv)
 {
+	struct keystone_serdes_config *serdes_config
+		= &(krio_priv->board_rio_cfg.serdes_config[mode]);
 	u32 val;
 	u32 block;
 	u32 port;
 	int res = 0;
 	int i;
-	struct keystone_serdes_config *serdes_config
-		= &(krio_priv->board_rio_cfg.serdes_config[mode]);
 
 	/* Reset blocks */
 	__raw_writel(0, &krio_priv->regs->gbl_en);
@@ -1459,7 +2017,16 @@ static int keystone_rio_hw_init(u32 mode, u32 baud, struct keystone_rio_data *kr
 		res = keystone_rio_get_lane_config(ports, path_mode);
 		if (res > 0) {
 			u32 lanes = (u32) res;
-			res = k2_rio_serdes_config(lanes, baud, krio_priv);
+
+			/* Initialize KeyStone 2 Serdes */
+			res = k2_rio_serdes_config(lanes, baud, krio_priv->dev,
+						   krio_priv->serdes_regs);
+		}
+
+		if (res < 0) {
+			dev_err(krio_priv->dev,
+				"invalid lane config for port mask 0x%x\n",
+				ports);
 		}
 	}
 
@@ -1674,20 +2241,20 @@ static int keystone_rio_port_error_recovery(u32 port, struct keystone_rio_data *
 	if (unlikely(port >= KEYSTONE_RIO_MAX_PORT))
 		return -EINVAL;
 
-	/*
-	 * Normally remote port are either set in DTS or retrieved during link
-	 * test. We may have special conditions (e.g. if link partner rebooted
-	 * before we did the link test) were remote port is not yet set.
-	 */
-	if (r_port < 0)
-		return -EINVAL;
-
 	err_stat   = __raw_readl(&krio_priv->serial_port_regs->sp[port].err_stat);
 	err_det    = __raw_readl(&krio_priv->err_mgmt_regs->sp_err[port].det);
 	plm_status = __raw_readl(&krio_priv->phy_regs->phy_sp[port].status);
+
 	dev_dbg(krio_priv->dev,
-		"port %d: err_stat = 0x%08x, err_det = 0x%08x, plm_status = 0x%08x\n",
+		"ER port %d: err_stat = 0x%08x, err_det = 0x%08x, "
+		"plm_status = 0x%08x\n",
 		port, err_stat, err_det, plm_status);
+
+	if (unlikely(!(err_stat & RIO_PORT_N_ERR_STS_PORT_OK))) {
+		dev_dbg(krio_priv->dev,
+			"ER port %d not initialized - PORT_OK not set\n", port);
+		return -EINVAL;
+	}
 
 	/* Acknowledge errors on this port */
 	__raw_writel(err_stat & KEYSTONE_RIO_PORT_ERROR_MASK,
@@ -1696,9 +2263,6 @@ static int keystone_rio_port_error_recovery(u32 port, struct keystone_rio_data *
 	__raw_writel(plm_status & KEYSTONE_RIO_PORT_PLM_STATUS_ERRORS,
 		     &krio_priv->phy_regs->phy_sp[port].status);
 
-	if (unlikely(!(err_stat & RIO_PORT_N_ERR_STS_PORT_OK)))
-		return -EINVAL;
-
 	if (err_stat & RIO_PORT_N_ERR_STS_PW_OUT_ES) {
 		u32 lm_resp;
 		u32 ackid_stat;
@@ -1706,7 +2270,7 @@ static int keystone_rio_port_error_recovery(u32 port, struct keystone_rio_data *
 		u32 r_ackid;
 
 		dev_dbg(krio_priv->dev,
-			"port %d: Output Error-Stopped recovery\n", port);
+			"ER port %d: Output Error-Stopped recovery\n", port);
 
 		/*
 		 * Clear valid bit in maintenance response register.
@@ -1720,7 +2284,8 @@ static int keystone_rio_port_error_recovery(u32 port, struct keystone_rio_data *
 		do {
 			if (++i > KEYSTONE_RIO_TIMEOUT_CNT) {
 				dev_dbg(krio_priv->dev,
-					"port %d: Input-Status response timeout\n", port);
+					"ER port %d: Input-Status response "
+					"timeout\n", port);
 				goto oes_rd_err;
 			}
 
@@ -1730,20 +2295,32 @@ static int keystone_rio_port_error_recovery(u32 port, struct keystone_rio_data *
 		} while (!(lm_resp & RIO_PORT_N_MNT_RSP_RVAL));
 
 		dev_dbg(krio_priv->dev,
-			"port %d: Input-Status response = 0x%08x\n", port, lm_resp);
+			"ER port %d: Input-Status response = 0x%08x\n",
+			port, lm_resp);
 
 		/* Set outbound ackID to the value expected by link partner */
 		ackid_stat = __raw_readl(
 			&krio_priv->serial_port_regs->sp[port].ackid_stat);
 
 		dev_dbg(krio_priv->dev,
-			"port %d: ackid_stat = 0x%08x\n", port, ackid_stat);
+			"ER port %d: ackid_stat = 0x%08x\n", port, ackid_stat);
 
 		l_ackid = (ackid_stat & RIO_PORT_N_ACK_INBOUND) >> 24;
 		r_ackid = (lm_resp & RIO_PORT_N_MNT_RSP_ASTAT) >> 5;
 
 		__raw_writel((l_ackid << 24) | r_ackid,
 			     &krio_priv->serial_port_regs->sp[port].ackid_stat);
+
+		/*
+		 * We do not know the remote port but we may be lucky where
+		 * ackId did not changed...
+		 */
+		if (r_port < 0) {
+			dev_dbg(krio_priv->dev,
+				"ER port %d: remote port not yet detected!\n",
+				port);
+			return -EINVAL;
+		}
 
 		udelay(50);
 
@@ -1755,7 +2332,7 @@ static int keystone_rio_port_error_recovery(u32 port, struct keystone_rio_data *
 			&krio_priv->serial_port_regs->sp[port].ackid_stat);
 
 		dev_dbg(krio_priv->dev,
-			"port %d: ackid_stat = 0x%08x\n", port, ackid_stat);
+			"ER port %d: ackid_stat = 0x%08x\n", port, ackid_stat);
 
 		r_ackid = ackid_stat & RIO_PORT_N_ACK_OUTBOUND;
 
@@ -1775,23 +2352,24 @@ static int keystone_rio_port_error_recovery(u32 port, struct keystone_rio_data *
 
 		if (res < 0) {
 			dev_dbg(krio_priv->dev,
-				"port %d: failed to align ackIDs with link partner port %d\n",
-				port, r_port);
+				"ER port %d: failed to align ackIDs with link "
+				"partner port %d\n", port, r_port);
 		}
-
-oes_rd_err:
-		err_stat = __raw_readl(&krio_priv->serial_port_regs->sp[port].err_stat);
-		err_det = __raw_readl(&krio_priv->err_mgmt_regs->sp_err[port].det);
-		plm_status = __raw_readl(&krio_priv->phy_regs->phy_sp[port].status);
-
-		dev_dbg(krio_priv->dev,
-			"port %d: err_stat = 0x%08x, err_det = 0x%08x, plm_status = 0x%08x\n",
-			port, err_stat, err_det, plm_status);
 	}
 
+oes_rd_err:
+
 	if (err_stat & RIO_PORT_N_ERR_STS_PW_INP_ES) {
+
+		if (r_port < 0) {
+			dev_dbg(krio_priv->dev,
+				"ER port %d: remote port not yet detected!\n",
+				port);
+			return -EINVAL;
+		}
+
 		dev_dbg(krio_priv->dev,
-			"port %d: Input Error-Stopped recovery\n", port);
+			"ER port %d: Input Error-Stopped recovery\n", port);
 
 		res = keystone_rio_maint_write(krio_priv,
 					       port,
@@ -1803,21 +2381,22 @@ oes_rd_err:
 					       RIO_MNT_REQ_CMD_IS);
 
 		if (res < 0) {
-			dev_err(krio_priv->dev,
-				"port %d: failed to issue Input-Status request from link partner port %d\n",
+			dev_dbg(krio_priv->dev,
+				"ER port %d: failed to issue Input-Status "
+				"request from link partner port %d\n",
 				port, r_port);
 		}
 
 		udelay(50);
-
-		err_stat = __raw_readl(&krio_priv->serial_port_regs->sp[port].err_stat);
-		err_det = __raw_readl(&krio_priv->err_mgmt_regs->sp_err[port].det);
-		plm_status = __raw_readl(&krio_priv->phy_regs->phy_sp[port].status);
-
-		dev_dbg(krio_priv->dev,
-			"port %d: err_stat = 0x%08x, err_det = 0x%08x, plm_status = 0x%08x\n",
-			port, err_stat, err_det, plm_status);
 	}
+
+	err_stat = __raw_readl(&krio_priv->serial_port_regs->sp[port].err_stat);
+	err_det = __raw_readl(&krio_priv->err_mgmt_regs->sp_err[port].det);
+	plm_status = __raw_readl(&krio_priv->phy_regs->phy_sp[port].status);
+
+	dev_dbg(krio_priv->dev,
+		"ER port %d: ending with err_stat = 0x%08x, err_det = 0x%08x, "
+		"plm_status = 0x%08x\n", port, err_stat, err_det, plm_status);
 
 	return err_stat & KEYSTONE_RIO_PORT_ERRORS;
 }
@@ -1833,27 +2412,48 @@ static void keystone_rio_pe_dpc(struct work_struct *work)
 	for (port = 0; port < KEYSTONE_RIO_MAX_PORT; port++) {
 		if (test_and_clear_bit(port, (void *)&krio_priv->pe_ports)) {
 
-			/*  Recover from port error state */
-			if (keystone_rio_port_error_recovery(port, krio_priv)) {
+			/* Wait lanes to be OK */
+			if (keystone_rio_lanes_init(port, 0, krio_priv)) {
+				dev_dbg(krio_priv->dev,
+					"port %d: lanes are not OK\n", port);
+				goto retry;
+			}
 
-				/* If error recovery failed schedule another one if there is time left */
-				if (krio_priv->pe_cnt-- > 1) {
-					krio_priv->pe_ports |= BIT(port);
-					schedule_delayed_work(&krio_priv->pe_work,
-							      KEYSTONE_RIO_REGISTER_DELAY);
-					continue;
-				} else {
-					dev_err(krio_priv->dev,
-						"port %d: failed to recover from errors\n",
-						port);
-					continue;
-				}
+			/*  Recover from port error state */
+			if (keystone_rio_port_error_recovery(port,
+							     krio_priv)) {
+				dev_dbg(krio_priv->dev,
+					"port %d: failed to perform error"
+					" recovery\n",
+					port);
+				goto retry;
 			}
 
 			/* Perform test read on successful recovery */
 			if (keystone_rio_test_link(port, krio_priv)) {
+				dev_dbg(krio_priv->dev,
+					"port %d: link test failed after "
+					"error recovery\n",
+					port);
+				goto retry;
+			}
+
+			/* Continue to next port */
+			continue;
+retry:
+			/*
+			 * If error recovery failed schedule another one if
+			 * there is time left
+			 */
+			if (krio_priv->pe_cnt-- > 1) {
+				krio_priv->pe_ports |= BIT(port);
+				schedule_delayed_work(
+					&krio_priv->pe_work,
+					KEYSTONE_RIO_REGISTER_DELAY);
+			} else {
 				dev_err(krio_priv->dev,
-					"port %d: link test failed after error recovery\n",
+					"port %d: failed to recover from "
+					"errors\n",
 					port);
 			}
 		}
@@ -1870,24 +2470,38 @@ static int keystone_rio_port_status(int port, struct keystone_rio_data *krio_pri
 {
 	unsigned int count = 0, value;
 	int res = 0;
+	int solid_ok = 0;
 
 	if (port >= KEYSTONE_RIO_MAX_PORT)
 		return -EINVAL;
 
 	/* Check port status */
-	for (count = 0; count < 100; count++) {
+	for (count = 0; count < 300; count++) {
 		value = __raw_readl(&(krio_priv->serial_port_regs->sp[port].err_stat));
-		if ((value & RIO_PORT_N_ERR_STS_PORT_OK) != 0)
-			break;
+		if (value & RIO_PORT_N_ERR_STS_PORT_OK) {
+			solid_ok++;
+			if (solid_ok == 100)
+				break;
+		} else {
+			if (solid_ok) {
+				dev_dbg(krio_priv->dev,
+					"unstable port %d (solid_ok = %d)\n",
+					port, solid_ok);
+				goto port_error;
+			}
+			solid_ok = 0;
+		}
 		usleep_range(10, 50);
 	}
 
-	if ((value & RIO_PORT_N_ERR_STS_PORT_OK) != 0) {
+	if (solid_ok == 100) {
+		/* Test the link with a dummy maintenance read */
 		res = keystone_rio_test_link(port, krio_priv);
 		if (res != 0) {
 			dev_dbg(krio_priv->dev,
 				"link test failed on port %d\n", port);
-			return -EIO;
+
+			goto port_error;
 		}
 
 		/* Check if we need to retrieve the corresponding remote port */
@@ -1908,12 +2522,31 @@ static int keystone_rio_port_status(int port, struct keystone_rio_data *krio_pri
 		}
 	} else {
 		dev_dbg(krio_priv->dev,
-			"port %d is not initialized - PORT_OK not set\n",
+			"port %d is not initialized - port is not solid ok\n",
 			port);
-		return -EIO;
+
+		goto port_error;
 	}
 
-	return 0; /* port must be solid OK */
+	return 0; /* Port must be solid OK */
+
+port_error:
+	/* We encountered an error on the port, try to fix the unstable lane */
+	if (K2_SERDES(krio_priv)) {
+		u32 path_mode = krio_priv->board_rio_cfg.path_mode;
+		int lanes = keystone_rio_get_lane_config(1 << port,
+							 path_mode);
+
+		dev_dbg(krio_priv->dev,
+			"fix unstable lane mask 0x%x for port %d\n",
+			lanes, port);
+
+		k2_rio_serdes_fix_unstable_lanes(lanes,
+						 krio_priv->dev,
+						 krio_priv->serdes_regs);
+	}
+
+	return -EIO;
 }
 
 /**
@@ -1943,6 +2576,9 @@ static int keystone_rio_port_init(u32 port, u32 path_mode, struct keystone_rio_d
 		__raw_writel(0x20000000,
 			     &(krio_priv->phy_regs->phy_sp[port].discovery_timer));
 	}
+
+	/* Increase the number of valid code-groups required for sync */
+	__raw_writel(0x0f030300, &(krio_priv->phy_regs->phy_sp[port].vmin_exp));
 
 	/* Enable port in input and output */
 	__raw_writel(0x600000, &(krio_priv->serial_port_regs->sp[port].ctl));
@@ -2007,6 +2643,15 @@ static int keystone_rio_port_activate(u32 port, struct keystone_rio_data *krio_p
 {
 	u32 val;
 
+	/* Enable all errors */
+	__raw_writel(0xffffffff,
+		     &(krio_priv->err_mgmt_regs->sp_err[port].rate_en));
+
+	/* Cleanup port error status */
+	__raw_writel(KEYSTONE_RIO_PORT_ERROR_MASK,
+		     &(krio_priv->serial_port_regs->sp[port].err_stat));
+	__raw_writel(0, &(krio_priv->err_mgmt_regs->sp_err[port].det));
+
 	/* Enable interrupt for reset request */
 	val = __raw_readl(&(krio_priv->evt_mgmt_regs->evt_mgmt_rst_int_en));
 	__raw_writel(val | (1 << port),
@@ -2016,15 +2661,6 @@ static int keystone_rio_port_activate(u32 port, struct keystone_rio_data *krio_p
 	__raw_writel(0xffffffff,
 		     &(krio_priv->phy_regs->phy_sp[port].int_enable));
 	__raw_writel(1, &(krio_priv->phy_regs->phy_sp[port].all_int_en));
-
-	/* Enable all errors */
-	__raw_writel(0xffffffff,
-		     &(krio_priv->err_mgmt_regs->sp_err[port].rate_en));
-
-	/* Cleanup port error status */
-	__raw_writel(KEYSTONE_RIO_PORT_ERROR_MASK,
-		     &(krio_priv->serial_port_regs->sp[port].err_stat));
-	__raw_writel(0, &(krio_priv->err_mgmt_regs->sp_err[port].det));
 
 	/* Set multicast and packet forwarding mode otherwise unicast mode */
 	val = krio_priv->board_rio_cfg.pkt_forwarding ? 0x00209000 : 0x00109000;
@@ -3555,6 +4191,11 @@ static int keystone_rio_port_chk(struct keystone_rio_data *krio_priv)
 		u32 port = __ffs(ports);
 		ports &= ~(1 << port);
 
+		/* Wait lanes to be OK */
+		if (keystone_rio_lanes_init(port, 0, krio_priv))
+			return -1;
+
+		/* Check port status */
 		status = keystone_rio_port_status(port, krio_priv);
 		if (status == 0) {
 			unsigned long flags;
@@ -3599,6 +4240,9 @@ static int keystone_rio_port_chk(struct keystone_rio_data *krio_priv)
 				keystone_rio_port_set_routing(port, krio_priv);
 
 		} else {
+			if (status == -EINVAL)
+				return -1;
+
 			dev_dbg(krio_priv->dev, "port %d not ready\n", port);
 		}
 	}
@@ -3802,21 +4446,6 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 	/* Start the controller */
 	keystone_rio_start(krio_priv);
 
-	if (K2_SERDES(krio_priv)) {
-		int lanes = keystone_rio_get_lane_config(ports, path_mode);
-
-		if (lanes > 0) {
-			res = k2_rio_serdes_wait_lock(krio_priv, (u32) lanes);
-			if (res < 0) {
-				dev_info(&pdev->dev,
-					 "SerDes for lane mask 0x%x on %s Gbps not locked\n",
-					 lanes, str);
-			    /* We will retry to lock SerDes after checking the port status */
-			    res = 0;
-			}
-		}
-	}
-
 	/* Use and check ports status (but only the requested ones) */
 	spin_lock_irqsave(&krio_priv->port_chk_lock, flags);
 	krio_priv->ports_registering = 0;
@@ -3836,6 +4465,10 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 
 		/* Start the port */
 		keystone_rio_port_activate(port, krio_priv);
+
+		/* Start lanes and wait them to be OK */
+		if (keystone_rio_lanes_init(port, 1, krio_priv))
+			goto port_not_ready;
 
 		/*
 		 * Check the port status here before calling the generic RapidIO
@@ -3865,14 +4498,17 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 			dev_info(&pdev->dev,
 				 "port RIO%d host_deviceid %d registered\n",
 				 port, mport->host_deviceid);
-		} else {
-			spin_lock_irqsave(&krio_priv->port_chk_lock, flags);
-			krio_priv->ports_registering |= (1 << port);
-			spin_unlock_irqrestore(&krio_priv->port_chk_lock,
-					       flags);
 
-			dev_warn(&pdev->dev, "port %d not ready\n", port);
+			continue;
 		}
+		if (status == -EINVAL)
+			return status;
+port_not_ready:
+		spin_lock_irqsave(&krio_priv->port_chk_lock, flags);
+		krio_priv->ports_registering |= (1 << port);
+		spin_unlock_irqrestore(&krio_priv->port_chk_lock, flags);
+
+		dev_warn(&pdev->dev, "port %d not ready\n", port);
 	}
 
 	if (krio_priv->ports_registering) {
@@ -3887,7 +4523,6 @@ static int keystone_rio_setup_controller(struct platform_device *pdev,
 		schedule_delayed_work(&krio_priv->port_chk_task,
 				      KEYSTONE_RIO_REGISTER_DELAY);
 	}
-
 out:
 	return res;
 }
@@ -4009,7 +4644,7 @@ static void keystone_rio_shutdown(struct platform_device *pdev)
 
 	/* Shutdown associated SerDes */
 	if (!K2_SERDES(krio_priv))
-		k2_rio_serdes_shutdown(krio_priv, lanes);
+		k2_rio_serdes_shutdown(krio_priv->serdes_regs, lanes);
 
 	if (krio_priv->clk) {
 		clk_disable_unprepare(krio_priv->clk);
