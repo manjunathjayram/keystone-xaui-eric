@@ -67,12 +67,12 @@
 #define QOS_WRR_PACKET_SHIFT		17
 #define QOS_WRR_BYTE_SHIFT		8
 
-#define QOS_BYTE_NORMALIZATION_FACTOR	(1500u << QOS_WRR_BYTE_SHIFT)
+#define QOS_BYTE_NORMALIZATION_FACTOR	(50u << QOS_WRR_BYTE_SHIFT)
 #define QOS_PACKET_NORMALIZATION_FACTOR	(2u << QOS_WRR_PACKET_SHIFT)
 
 #define	QOS_MAX_WEIGHT			U32_MAX
-#define	QOS_MAX_CREDITS			S32_MAX
-#define QOS_MIN_CREDITS_WARN		100
+#define	QOS_MAX_CREDITS			0x1fffffff
+#define QOS_MIN_CREDITS_WARN		(50u << QOS_WRR_BYTE_SHIFT)
 
 #define to_qnode(_n)	container_of(_n, struct khwq_qos_tree_node, node)
 
