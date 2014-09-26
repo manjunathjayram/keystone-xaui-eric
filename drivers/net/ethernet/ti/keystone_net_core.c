@@ -969,8 +969,16 @@ static int netcp_poll(struct napi_struct *napi, int budget)
 static void netcp_rx_notify(struct dma_chan *chan, void *arg)
 {
 	struct netcp_priv *netcp = arg;
+	enum netcp_rx_state rx_state;
 
-	BUG_ON(netcp->rx_state != RX_STATE_INTERRUPT);
+	rx_state = netcp->rx_state;
+	if (rx_state != RX_STATE_INTERRUPT) {
+		WARN_ONCE((rx_state != RX_STATE_TEARDOWN),
+			"rx_state == %d: %s",
+			rx_state, netcp_rx_state_str(netcp));
+		return;
+	}
+
 	dmaengine_pause(netcp->rx_channel);
 	netcp_set_rx_state(netcp, RX_STATE_SCHEDULED);
 	napi_schedule(&netcp->napi);
@@ -1137,8 +1145,15 @@ static int netcp_tx_poll(struct napi_struct *napi, int budget)
 static void netcp_tx_notify(struct dma_chan *chan, void *arg)
 {
 	struct netcp_tx_pipe *tx_pipe = arg;
+	enum netcp_tx_state tx_state;
 
-	BUG_ON(tx_pipe->dma_poll_state != TX_STATE_INTERRUPT);
+	tx_state = tx_pipe->dma_poll_state;
+	if (tx_state != TX_STATE_INTERRUPT) {
+		WARN_ONCE(true, "tx_state == %d: %s",
+			tx_state, netcp_tx_state_str(tx_state));
+		return;
+	}
+
 	dmaengine_pause(tx_pipe->dma_channel);
 	netcp_set_txpipe_state(tx_pipe, TX_STATE_SCHEDULED);
 	napi_schedule(&tx_pipe->dma_poll_napi);
