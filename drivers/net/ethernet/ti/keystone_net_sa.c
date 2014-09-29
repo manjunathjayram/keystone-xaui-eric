@@ -147,8 +147,12 @@ static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 #define SA_RXHOOK_ORDER	30
 
 /* Version 0 of sa_rx_hook definitions (for NETCP 1.0 on K2HK) */
+#define BITS(x) (BIT(x) - 1)
+#define BITMASK(n, s)          (BITS(n) << (s))
 #define SA_IS_IPSEC_ESP_MASK	BIT(25)
 #define SA_IS_FLAG_FRAG_MASK	BIT(3)
+#define SA_NUM_IP_HEADERS_SHIFT	8
+#define SA_NUM_IP_HEADERS_MASK BITMASK(3, SA_NUM_IP_HEADERS_SHIFT)
 
 static int sa_rx_hook(int order, void *data, struct netcp_packet *p_info)
 {
@@ -159,6 +163,13 @@ static int sa_rx_hook(int order, void *data, struct netcp_packet *p_info)
 	 * This is valid only for first fragment.
 	 */
 	if (!(p_info->psdata[3] & SA_IS_IPSEC_ESP_MASK))
+		return 0;
+
+	/* Make sure there is just one IP header. If 2 ipheaders then we
+	 * passed IPSEC
+	 */
+	if (((p_info->psdata[3] & SA_NUM_IP_HEADERS_MASK) >>
+	     SA_NUM_IP_HEADERS_SHIFT) != 1)
 		return 0;
 
 	/* See if packet is the first fragment, if so, mark the local_df
@@ -174,6 +185,8 @@ static int sa_rx_hook(int order, void *data, struct netcp_packet *p_info)
 /* Version 1 of sa_rx_hook definitions (for NSS 1.0 on K2L and K2E) */
 #define SA_IS_IPSEC_ESP_MASK_VER1	BIT(8)
 #define SA_IS_FLAG_FRAG_MASK_VER1	BIT(19)
+#define SA_NUM_IP_HEADERS_SHIFT_VER1	0
+#define SA_NUM_IP_HEADERS_MASK_VER1	BITMASK(3, SA_NUM_IP_HEADERS_SHIFT_VER1)
 
 static int sa_rx_hook_ver1(int order, void *data, struct netcp_packet *p_info)
 {
@@ -182,14 +195,21 @@ static int sa_rx_hook_ver1(int order, void *data, struct netcp_packet *p_info)
 	/* Check to see if this is an ESP packet, if not just return.
 	 * ESP packet indication is in word 3, bit 25 of psdata
 	 * This is valid only for first fragment.
-	*/
+	 */
 	if (!(p_info->psdata[3] & SA_IS_IPSEC_ESP_MASK_VER1))
+		return 0;
+
+	/* make sure there is just one IP header.  If 2 ipheaders then we
+	 * passed IPSEC
+	 */
+	if (((p_info->psdata[4] & SA_NUM_IP_HEADERS_MASK_VER1) >>
+	     SA_NUM_IP_HEADERS_SHIFT_VER1) != 1)
 		return 0;
 
 	/* See if packet is the first fragment, if so, mark the local_df
 	 * flag of skb which will be checked by the ipsecmgr kernel module
 	 * to indicate packet has not been decrypted by NETCP SA.
-	*/
+	 */
 	if (p_info->psdata[0] & SA_IS_FLAG_FRAG_MASK_VER1)
 		skb->local_df = 1;
 	return 0;
