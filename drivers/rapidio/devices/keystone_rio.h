@@ -72,16 +72,6 @@
 /* Mask for receiving both error and good completion LSU interrupts */
 #define KEYSTONE_RIO_ICSR_LSU0(src_id)    ((0x10001) << (src_id))
 
-/* Keystone2 supported baud rates */
-#define KEYSTONE_RIO_BAUD_1_250		0
-#define KEYSTONE_RIO_BAUD_2_500		1
-#define KEYSTONE_RIO_BAUD_3_125		2
-#define KEYSTONE_RIO_BAUD_5_000		3
-
-#define KEYSTONE_RIO_FULL_RATE		0
-#define KEYSTONE_RIO_HALF_RATE		1
-#define KEYSTONE_RIO_QUARTER_RATE	2
-
 /* Max ports configuration per path modes */
 #define KEYSTONE_MAX_PORTS_PATH_MODE_0  0xf /* 4 ports */
 #define KEYSTONE_MAX_PORTS_PATH_MODE_1  0xd /* 3 ports */
@@ -101,8 +91,6 @@
 #define KEYSTONE_RIO_TIMEOUT_NSEC         1000
 #define KEYSTONE_RIO_RETRY_CNT            4
 #define KEYSTONE_RIO_REGISTER_DELAY	  (3*HZ)
-
-#define KEYSTONE_PLL_LOCK_TIMEOUT         100  /* 100ms timeout */
 
 /*
  * RIO error, reset and special event interrupt defines
@@ -217,25 +205,6 @@
 #define RIO_PACKET_TYPE_MESSAGE         11 /* Message */
 
 /*
- * SerDes configurations
- */
-struct keystone_serdes_config {
-	u32 cfg_cntl;                              /* setting control reg cfg */
-	u16 serdes_cfg_pll;                        /* SerDes PLL cfg */
-	u16 prescalar_srv_clk;                     /* prescalar fo ip_clk */
-	u32 serdes_1sb;				   /* 1 lsb pre emphasis */
-	u32 serdes_c1;				   /* C1 coefficient */
-	u32 serdes_c2;				   /* C2 coefficient */
-	u32 serdes_cm;				   /* CM coefficient */
-	u32 serdes_att;				   /* attenuator */
-	u32 serdes_vreg;			   /* regulator voltage */
-	u32 rx_chan_config[KEYSTONE_RIO_MAX_PORT]; /* SerDes rx channel cfg
-						      (per-port) */
-	u32 tx_chan_config[KEYSTONE_RIO_MAX_PORT]; /* SerDes tx channel cfg
-						      (per-port) */
-};
-
-/*
  * Routing configuration for packet forwarding
  */
 struct keystone_routing_config {
@@ -259,13 +228,11 @@ struct keystone_rio_board_controller_info {
 
 	u32             ports;  /* bitfield of port(s) to probe on this controller */
 	int             ports_remote[KEYSTONE_RIO_MAX_PORT]; /* remote link partner port numbers */
-	u32             mode;   /* hw mode (default serdes cfg). idx into serdes_config[] */
 	u32             id;     /* host id */
 	u32             size;   /* RapidIO common transport system size.
 				 * 0 - Small size. 256 devices.
 				 * 1 - Large size, 65536 devices. */
-	u16             keystone2_serdes;
-	u16             serdes_config_num;
+	u16             serdes_type;
 	u32             serdes_baudrate;
 	u32             path_mode;
 	u32             port_register_timeout;
@@ -274,7 +241,7 @@ struct keystone_rio_board_controller_info {
 	int             rio_irq;
 	int             lsu_irq;
 
-	struct keystone_serdes_config serdes_config[4];
+	struct keystone_serdes_config  serdes_config;
 	struct keystone_routing_config routing_config[8];
 };
 
@@ -331,15 +298,6 @@ struct port_write_msg {
 /*
  * RapidIO Registers
  */
-
-struct keystone_srio_serdes_regs {
-	u32	pll;
-
-	struct {
-		u32	rx;
-		u32	tx;
-	} channel[4];
-};
 
 /* RIO Registers  0000 - 2fff */
 struct keystone_rio_regs {
