@@ -1978,8 +1978,10 @@ static int keystone_rio_hw_init(u32 mode, u32 baud,
 	/* Set control register 1 configuration */
 	__raw_writel(0x00000000, &krio_priv->regs->per_set_cntl1);
 
-	/* Set control register (disable promiscuous) */
-	__raw_writel(0x00053800, &krio_priv->regs->per_set_cntl);
+	/* Set control register */
+	__raw_writel(0x0009c000 | (krio_priv->board_rio_cfg.pkt_forwarding ?
+				   BIT(21) | BIT(8) : 0),
+		     &krio_priv->regs->per_set_cntl);
 
 	if (!K2_SERDES(krio_priv)) {
 		unsigned long timeout;
@@ -2116,12 +2118,12 @@ static int keystone_rio_hw_init(u32 mode, u32 baud,
 	/* allows SELF_RESET and PWDN_PORT resets to clear stcky reg bits */
 	__raw_writel(0x00000001, &krio_priv->link_regs->reg_rst_ctl);
 
-	/* Set error detection mode */
 	/* clear all errors */
 	__raw_writel(0x00000000, &krio_priv->err_mgmt_regs->err_det);
 
-	/* enable all error detection */
+	/* disable all error detection */
 	__raw_writel(0x00000000, &krio_priv->err_mgmt_regs->err_en);
+	__raw_writel(0x00000000, &krio_priv->link_regs->local_err_en);
 
 	/* set err det block header */
 	val = (((KEYSTONE_RIO_ERR_HDR_NEXT_BLK_PTR & 0xffff) << 16) |
@@ -2643,8 +2645,12 @@ static int keystone_rio_port_activate(u32 port, struct keystone_rio_data *krio_p
 {
 	u32 val;
 
-	/* Enable all errors */
-	__raw_writel(0xffffffff,
+	/*
+	 * Disable all errors reporting if using packet forwarding
+	 * otherwise enable them.
+	 */
+	__raw_writel((krio_priv->board_rio_cfg.pkt_forwarding) ?
+		     0x0 : 0xffffffff,
 		     &(krio_priv->err_mgmt_regs->sp_err[port].rate_en));
 
 	/* Cleanup port error status */
@@ -2665,6 +2671,25 @@ static int keystone_rio_port_activate(u32 port, struct keystone_rio_data *krio_p
 	/* Set multicast and packet forwarding mode otherwise unicast mode */
 	val = krio_priv->board_rio_cfg.pkt_forwarding ? 0x00209000 : 0x00109000;
 	__raw_writel(val, &(krio_priv->transport_regs->transport_sp[port].control));
+
+	/* Disable generation of port-write request if packet forwarding used */
+	if (krio_priv->board_rio_cfg.pkt_forwarding) {
+		val = __raw_readl(
+			&(krio_priv->evt_mgmt_regs->evt_mgmt_dev_port_wr_en));
+		__raw_writel(
+			val & 0xfffffffe,
+			&(krio_priv->evt_mgmt_regs->evt_mgmt_dev_port_wr_en));
+
+		__raw_writel(
+			0,
+			&(krio_priv->phy_regs->phy_sp[port].port_wr_enable));
+
+		val = __raw_readl(
+			&(krio_priv->phy_regs->phy_sp[port].all_port_wr_en));
+		__raw_writel(
+			val & 0xfffffffe,
+			&(krio_priv->phy_regs->phy_sp[port].all_port_wr_en));
+	}
 
 	/* Enable Port-write reception capture */
 	__raw_writel(0, &(krio_priv->port_write_regs->port_wr_rx_capt[port]));
