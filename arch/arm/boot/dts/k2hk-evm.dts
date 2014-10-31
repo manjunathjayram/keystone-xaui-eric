@@ -214,5 +214,15 @@
 				ti,serdes_cm = <3>;
 			};
 		};
+
+		uio_srio: srio {
+			compatible = "ti,uio-module-drv";
+			mem  = <0x0232C000 0x00002000
+				0x02900000 0x00040000
+				0x0232C000 0x00002000>;
+			clocks=<&clksrio>;
+			interrupts = <0 154 0xf01>;
+			label = "srio";
+		};
 	};
 };
