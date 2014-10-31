@@ -25,6 +25,7 @@ Optional properties:
 	ti,serdes_c1	: Serdes c1 coefficient (0-31)
 	ti,serdes_c2	: Serdes c2 coefficient (0-15)
 	ti,serdes_cm	: Serdes cm coefficient (0-15)
+	ti,qm-queue     : QMSS queue associated with qpend binding
 
 Example:
 
