@@ -512,6 +512,57 @@
 			label = "edma3";
 		};
 
+		uio_qmss: qmss {
+			compatible = "ti,uio-module-drv";
+			mem  = <0x02a00000 0x00100000
+				0x23a00000 0x00200000>;
+			label = "qmss";
+		};
+
+		uio_qpend0: qpend0 {
+			compatible = "ti,uio-module-drv";
+			label = "qpend0";
+			interrupts = <0 44 0xf04>;
+			interrupt-mode = <1>; /* Interrupt mode oneshot */
+			cfg-params
+			{
+				ti,qm-queue = <662>;
+			};
+		};
+
+		uio_qpend1: qpend1 {
+			compatible = "ti,uio-module-drv";
+			label = "qpend1";
+			interrupts = <0 45 0xf04>;
+			interrupt-mode = <1>; /* Interrupt mode oneshot */
+			cfg-params
+			{
+				ti,qm-queue = <663>;
+			};
+		};
+
+		uio_qpend2: qpend2 {
+			compatible = "ti,uio-module-drv";
+			label = "qpend2";
+			interrupts = <0 46 0xf04>;
+			interrupt-mode = <1>; /* Interrupt mode oneshot */
+			cfg-params
+			{
+				ti,qm-queue = <664>;
+			};
+		};
+
+		uio_qpend3: qpend3 {
+			compatible = "ti,uio-module-drv";
+			label = "qpend3";
+			interrupts = <0 47 0xf04>;
+			interrupt-mode = <1>; /* Interrupt mode oneshot */
+			cfg-params
+			{
+				ti,qm-queue = <665>;
+			};
+		};
+
 		pci-controller@21800000 {
 			device_type = "pci";
 			#address-cells = <3>;

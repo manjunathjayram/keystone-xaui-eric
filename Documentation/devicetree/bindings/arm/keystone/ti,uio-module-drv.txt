@@ -29,6 +29,9 @@ Optional properties:
 	ti,serdes_tx_att 		: Serdes TX attenuation (0-15)
 	ti,serdes_tx_vreg_lev	: Serdes regulator voltage setting for TX driver slices
 							: (0-7)
+	Non-serdes configurations
+	ti,qm-queue     : QMSS queue associated with qpend binding
+
 Example:
 
 	uio_hyperlink0: hyperlink0 {
