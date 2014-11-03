@@ -36,9 +36,8 @@ hwqueue0: hwqueue@2a40000 {
 	};
 	queues {
 		qpend-arm-low {
-			values = <658 8>;
-			interrupts = <0 40 0xf04 0 41 0xf04 0 42 0xf04 0 43 0xf04
-				      0 44 0xf04 0 45 0xf04 0 46 0xf04 0 47 0xf04>;
+			values = <658 4>;
+			interrupts = <0 40 0xf04 0 41 0xf04 0 42 0xf04 0 43 0xf04>;
 			reserved;
 		};
 		qpend-arm-hi {
