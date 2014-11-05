@@ -33,6 +33,7 @@
 #include <linux/etherdevice.h>
 #include <linux/platform_device.h>
 #include <linux/ptp_classify.h>
+#include <linux/atomic.h>
 
 #include "cpsw_ale.h"
 #include "keystone_net.h"
@@ -517,7 +518,7 @@ struct cpsw_priv {
 	void __iomem			*sgmii_port34_regs;
 
 	struct cpsw_ale			*ale;
-	u32				 ale_refcnt;
+	atomic_t			 ale_refcnt;
 
 	u32				 link[MAX_SLAVES + 1];
 	struct device_node		*phy_node[MAX_SLAVES];
@@ -567,7 +568,7 @@ struct cpsw_intf {
 	unsigned long		 active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
 };
 
-static struct cpsw_priv *priv;		/* FIXME: REMOVE THIS!! */
+static struct cpsw_priv *global_priv;		/* FIXME: REMOVE THIS!! */
 
 struct cpsw_attribute {
 	struct attribute attr;
@@ -1945,9 +1946,9 @@ static void keystone_get_ethtool_stats(struct net_device *ndev,
 				       struct ethtool_stats *stats,
 				       uint64_t *data)
 {
-	spin_lock_bh(&priv->hw_stats_lock);
-	cpsw_update_stats(priv, data);
-	spin_unlock_bh(&priv->hw_stats_lock);
+	spin_lock_bh(&global_priv->hw_stats_lock);
+	cpsw_update_stats(global_priv, data);
+	spin_unlock_bh(&global_priv->hw_stats_lock);
 
 	return;
 }
@@ -2279,43 +2280,61 @@ static void cpsw_slave_open(struct cpsw_slave *slave,
 	}
 }
 
-static void cpsw_init_host_port(struct cpsw_priv *priv,
-				struct cpsw_intf *cpsw_intf)
+static int cpsw_init_ale(struct cpsw_priv *cpsw_dev)
 {
-	int bypass_en = 1;
+	struct cpsw_ale_params ale_params;
 
+	memset(&ale_params, 0, sizeof(ale_params));
+
+	ale_params.dev			= cpsw_dev->dev;
+	ale_params.ale_regs		= (void *)((u32)cpsw_dev->ale_reg);
+	ale_params.ale_ageout		= cpsw_dev->ale_ageout;
+	ale_params.ale_entries		= cpsw_dev->ale_entries;
+	ale_params.ale_ports		= cpsw_dev->ale_ports;
+
+	cpsw_dev->ale = cpsw_ale_create(&ale_params);
+	if (!cpsw_dev->ale) {
+		dev_err(cpsw_dev->dev, "error initializing ale engine\n");
+		return -ENODEV;
+	}
+
+	dev_info(cpsw_dev->dev, "Created a cpsw ale engine\n");
+
+	cpsw_ale_start(cpsw_dev->ale);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0, ALE_BYPASS,
+			cpsw_dev->multi_if ? 1 : 0);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0, ALE_NO_PORT_VLAN, 1);
+
+	cpsw_ale_control_set(cpsw_dev->ale, cpsw_dev->host_port,
+			     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0,
+			     ALE_PORT_UNKNOWN_VLAN_MEMBER,
+			     CPSW_MASK_ALL_PORTS);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0,
+			     ALE_PORT_UNKNOWN_MCAST_FLOOD,
+			     CPSW_MASK_PHYS_PORTS);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0,
+			     ALE_PORT_UNKNOWN_REG_MCAST_FLOOD,
+			     CPSW_MASK_ALL_PORTS);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0,
+			     ALE_PORT_UNTAGGED_EGRESS,
+			     CPSW_MASK_ALL_PORTS);
+
+	return 0;
+}
+
+static void cpsw_init_host_port(struct cpsw_priv *priv)
+{
 	/* Max length register */
 	__raw_writel(MAX_SIZE_STREAM_BUFFER,
 		     &priv->host_port_regs->rx_maxlen);
 
-	if (priv->ale_refcnt == 1)
-		cpsw_ale_start(priv->ale);
-
-	if (!priv->multi_if)
-		bypass_en = 0;
-
-	cpsw_ale_control_set(priv->ale, 0, ALE_BYPASS, bypass_en);
-
-	cpsw_ale_control_set(priv->ale, 0, ALE_NO_PORT_VLAN, 1);
-
-	cpsw_ale_control_set(priv->ale, priv->host_port,
-			     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
-
-	cpsw_ale_control_set(priv->ale, 0,
-			     ALE_PORT_UNKNOWN_VLAN_MEMBER,
-			     CPSW_MASK_ALL_PORTS);
-
-	cpsw_ale_control_set(priv->ale, 0,
-			     ALE_PORT_UNKNOWN_MCAST_FLOOD,
-			     CPSW_MASK_PHYS_PORTS);
-
-	cpsw_ale_control_set(priv->ale, 0,
-			     ALE_PORT_UNKNOWN_REG_MCAST_FLOOD,
-			     CPSW_MASK_ALL_PORTS);
-
-	cpsw_ale_control_set(priv->ale, 0,
-			     ALE_PORT_UNTAGGED_EGRESS,
-			     CPSW_MASK_ALL_PORTS);
 }
 
 /* Sliver regs memmap are contiguous but slave port regs are not */
@@ -3020,7 +3039,6 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 	struct cpsw_intf *cpsw_intf = intf_priv;
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 	struct netcp_priv *netcp = netdev_priv(ndev);
-	struct cpsw_ale_params ale_params;
 	int ret = 0;
 	u32 reg;
 
@@ -3053,23 +3071,13 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 		cpsw_intf->tx_pipe.dma_channel,
 		cpsw_intf->tx_pipe.dma_psflags);
 
-	cpsw_dev->ale_refcnt++;
-	if (cpsw_dev->ale_refcnt == 1) {
-		memset(&ale_params, 0, sizeof(ale_params));
-
-		ale_params.dev			= cpsw_dev->dev;
-		ale_params.ale_regs		= (void *)((u32)priv->ale_reg);
-		ale_params.ale_ageout		= cpsw_dev->ale_ageout;
-		ale_params.ale_entries		= cpsw_dev->ale_entries;
-		ale_params.ale_ports		= cpsw_dev->ale_ports;
-
-		cpsw_dev->ale = cpsw_ale_create(&ale_params);
-		if (!cpsw_dev->ale) {
-			dev_err(cpsw_dev->dev, "error initializing ale engine\n");
-			ret = -ENODEV;
+	if (atomic_inc_return(&cpsw_dev->ale_refcnt) == 1) {
+		ret = cpsw_init_ale(cpsw_dev);
+		if (ret < 0) {
+			atomic_dec(&cpsw_dev->ale_refcnt);
 			goto ale_fail;
-		} else
-			dev_info(cpsw_dev->dev, "Created a cpsw ale engine\n");
+		}
+		cpsw_init_host_port(cpsw_dev);
 	}
 
 	for_each_slave(cpsw_intf, cpsw_slave_init, cpsw_dev);
@@ -3079,9 +3087,6 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 	/* Serdes init */
 	if (cpsw_dev->init_serdes_at_probe == 0)
 		cpsw_serdes_init(cpsw_dev);
-
-	/* initialize host and slave ports */
-	cpsw_init_host_port(cpsw_dev, cpsw_intf);
 
 	/* disable priority elevation and enable statistics on all ports */
 	__raw_writel(0, &cpsw_dev->regs->ptype);
@@ -3093,6 +3098,7 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 	__raw_writel(CPSW_REG_VAL_STAT_ENABLE_ALL,
 		     &cpsw_dev->regs->stat_port_en);
 
+	/* initialize slave ports */
 	for_each_slave(cpsw_intf, cpsw_slave_open, cpsw_intf);
 
 	init_timer(&cpsw_intf->timer);
@@ -3135,8 +3141,7 @@ static int cpsw_close(void *intf_priv, struct net_device *ndev)
 
 	del_timer_sync(&cpsw_intf->timer);
 
-	cpsw_dev->ale_refcnt--;
-	if (!cpsw_dev->ale_refcnt)
+	if (atomic_dec_return(&cpsw_dev->ale_refcnt) == 0)
 		cpsw_ale_stop(cpsw_dev->ale);
 
 	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_intf);
@@ -3316,7 +3321,7 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	cpsw_dev->dev = dev;
 	cpsw_dev->netcp_device = netcp_device;
 
-	priv = cpsw_dev;	/* FIXME: Remove this!! */
+	global_priv = cpsw_dev;	/* FIXME: Remove this!! */
 
 	ret = of_property_read_u32(node, "num_serdes",
 				   &cpsw_dev->num_serdes);
