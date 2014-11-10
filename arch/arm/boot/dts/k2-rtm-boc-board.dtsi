@@ -1,0 +1,44 @@
+/*
+ * Copyright 2014 Texas Instruments, Inc.
+ *
+ * Keystone 2 RTM BOC expansion board
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+
+/ {
+	mdiox_gpio: mdiox-gpio {
+		compatible = "virtual,mdio-gpio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		gpios = <&gpio0 2 0x2 /* mdc */
+				&gpio0 0 0x2>; /* mdio */
+
+		phyx0: phyx@0 {
+			compatible = "Marvell,88x2242", "ethernet-phy-ieee802.3-c45";
+			reg = <0>;
+			reset-gpios = <&pca9555 8 GPIO_ACTIVE_HIGH>,
+					<&pca9555 9 GPIO_ACTIVE_HIGH>,
+					<&pca9555 10 GPIO_ACTIVE_HIGH>;
+		};
+
+		phyx1: phyx@1 {
+			compatible = "Marvell,88x2242", "ethernet-phy-ieee802.3-c45";
+			reg = <1>;
+			reset-gpios = <&pca9555 8 GPIO_ACTIVE_HIGH>,
+					<&pca9555 9 GPIO_ACTIVE_HIGH>,
+					<&pca9555 10 GPIO_ACTIVE_HIGH>;
+		};
+	};
+};
+
+&i2c2 {
+	pca9555: pca@20 {
+		compatible = "nxp,pca9555";
+		gpio-controller;
+		#gpio-cells = <2>;
+		reg = <0x20>;
+	};
+};
