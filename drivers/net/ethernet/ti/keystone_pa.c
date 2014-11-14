@@ -572,13 +572,20 @@ static int keystone_pa_reset(struct pa_device *pa_dev)
 /*
  *  Convert a raw PA timer count to nanoseconds
  */
-static inline u64 tstamp_raw_to_ns(struct pa_device *pa_dev, u64 raw)
+static inline u64 tstamp_raw_to_ns(struct pa_device *pa_dev, u32 lo, u32 hi)
 {
-	return (raw * pa_dev->timestamp_info.mult)
-		>> pa_dev->timestamp_info.shift;
+	u32 mult = pa_dev->timestamp_info.mult;
+	u32 shift = pa_dev->timestamp_info.shift;
+	u64 result;
+
+	/* Minimize overflow errors by doing this in pieces */
+	result  = ((u64)lo * mult) >> shift;
+	result += ((u64)hi << (32 - shift)) * mult;
+
+	return result;
 }
 
-static u64 pa_to_sys_time(struct pa_device *pa_dev, u64 pa_ticks)
+static u64 pa_to_sys_time(struct pa_device *pa_dev, u64 pa_ns)
 {
 	s64 temp;
 	u64 result;
@@ -591,28 +598,9 @@ static u64 pa_to_sys_time(struct pa_device *pa_dev, u64 pa_ticks)
 
 	temp = ktime_to_ns(ktime_get_monotonic_offset());
 	result = (u64)((s64)pa_dev->timestamp_info.system_offset - temp +
-			(s64)tstamp_raw_to_ns(pa_dev, pa_ticks));
+			(s64)pa_ns);
 
 	return result;
-}
-
-static inline u64 tstamp_get_raw(struct pa_device *pa_dev)
-{
-	struct pa_pdsp_timer_regs __iomem *timer_reg = &pa_dev->reg_timer[0];
-	u32 low, high, high2;
-	u64 raw;
-	int count;
-
-	count = 0;
-	do {
-		high  = __raw_readl(pa_dev->pa_sram + 0x6460);
-		low   = __raw_readl(&timer_reg->timer_value);
-		high2 = __raw_readl(pa_dev->pa_sram + 0x6460);
-	} while((high != high2) && (++count < 32));
-
-	raw = (((u64)high) << 16) | (u64)(0x0000ffff - (low & 0x0000ffff));
-
-	return raw;
 }
 
 /*
@@ -623,22 +611,37 @@ static inline u64 tstamp_get_raw(struct pa_device *pa_dev)
  */
 static void pa_calibrate_with_system_timer(struct pa_device *pa_dev)
 {
+	struct pa_pdsp_timer_regs __iomem *timer_reg = &pa_dev->reg_timer[0];
 	ktime_t ktime1, ktime2;
-	u64 pa_ticks;
-	u64 pa_ns;
-	u64 sys_ns1, sys_ns2;
+	u32 timer, low1, low2, high;
+	u32 pa_lo, pa_hi;
+	u64 pa_ns, sys_ns1, sys_ns2;
+	int count;
 
-	/* Get the two values with minimum delay between */
-	ktime1 = ktime_get();
-	pa_ticks = tstamp_get_raw(pa_dev);
-	ktime2 = ktime_get();
+	/* Obtain the internal PA timestamp counter values */
+	count = 0;
+	do {
+		__iormb();
+		ktime1 = ktime_get();
+		low1  = __raw_readl(pa_dev->pa_sram + 0x6460);
+		__iormb();
+		high  = __raw_readl(pa_dev->pa_sram + 0x6464);
+		timer = __raw_readl(&timer_reg->timer_value);
+		__iormb();
+		low2  = __raw_readl(pa_dev->pa_sram + 0x6460);
+		ktime2 = ktime_get();
+	} while (unlikely(low1 != low2) && (++count < 32));
 
-	/* Convert both values to nanoseconds */
+	/* Convert the PA timestamp to nanoseconds */
+	pa_lo = (low1 << 16) | (0x0000ffff - (timer & 0x0000ffff));
+	pa_hi = (high << 16) | (low1 >> 16);
+	pa_ns   = tstamp_raw_to_ns(pa_dev, pa_lo, pa_hi);
+
+	/* Convert the system time values to nanoseconds */
 	sys_ns1 = ktime_to_ns(ktime1);
-	pa_ns   = tstamp_raw_to_ns(pa_dev, pa_ticks);
 	sys_ns2 = ktime_to_ns(ktime2);
 
-	/* compute offset */
+	/* Compute the PA-to-system offset */
 	pa_dev->timestamp_info.system_offset = sys_ns1 +
 		((sys_ns2 - sys_ns1) / 2) - pa_ns;
 }
@@ -935,11 +938,12 @@ static int tstamp_add_pending(struct tstamp_pending *pend)
 
 static void tstamp_complete(u32 context, struct pa_packet *p_info)
 {
+	struct pa_device	*pa_dev;
 	struct tstamp_pending	*pend;
 	struct sock_exterr_skb 	*serr;
 	struct sk_buff 		*skb;
 	struct skb_shared_hwtstamps *sh_hw_tstamps;
-	u64			 tx_timestamp;
+	u64			 pa_ns;
 	u64			 sys_time;
 	int			 err;
 
@@ -947,22 +951,19 @@ static void tstamp_complete(u32 context, struct pa_packet *p_info)
 	if (!pend)
 		return;
 
-
+	pa_dev = pend->pa_dev;
 	skb = pend->skb;
 	if (!p_info) {
-		dev_warn(pend->pa_dev->dev, "Timestamp completion timeout\n");
+		dev_warn(pa_dev->dev, "Timestamp completion timeout\n");
 		kfree_skb(skb);
 	} else {
-		tx_timestamp = p_info->epib[0];
-		tx_timestamp |= ((u64)(p_info->epib[2] & 0x0000ffff)) << 32;
-
-		sys_time = pa_to_sys_time(pend->pa_dev, tx_timestamp);
+		pa_ns = tstamp_raw_to_ns(pa_dev,
+				p_info->epib[0], p_info->epib[2]);
+		sys_time = pa_to_sys_time(pa_dev, pa_ns);
 
 		sh_hw_tstamps = skb_hwtstamps(skb);
 		memset(sh_hw_tstamps, 0, sizeof(*sh_hw_tstamps));
-		sh_hw_tstamps->hwtstamp =
-			ns_to_ktime(tstamp_raw_to_ns(pend->pa_dev,
-							tx_timestamp));
+		sh_hw_tstamps->hwtstamp = ns_to_ktime(pa_ns);
 		sh_hw_tstamps->syststamp = ns_to_ktime(sys_time);
 
 		serr = SKB_EXT_ERR(skb);
@@ -1972,7 +1973,7 @@ static inline int pa_rx_timestamp(struct pa_intf *pa_intf,
 	struct pa_device *pa_dev = pa_intf->pa_device;
 	struct sk_buff *skb = p_info->skb;
 	struct skb_shared_hwtstamps *sh_hw_tstamps;
-	u64 rx_timestamp;
+	u64 pa_ns;
 	u64 sys_time;
 
 	if (!pa_intf->rx_timestamp_enable)
@@ -1981,15 +1982,12 @@ static inline int pa_rx_timestamp(struct pa_intf *pa_intf,
 	if (p_info->rxtstamp_complete)
 		return 0;
 
-	rx_timestamp = p_info->epib[0];
-	rx_timestamp |= ((u64)(p_info->psdata[5] & 0x0000ffff)) << 32;
-
-	sys_time = pa_to_sys_time(pa_dev, rx_timestamp);
+	pa_ns = tstamp_raw_to_ns(pa_dev, p_info->epib[0], p_info->psdata[6]);
+	sys_time = pa_to_sys_time(pa_dev, pa_ns);
 
 	sh_hw_tstamps = skb_hwtstamps(skb);
 	memset(sh_hw_tstamps, 0, sizeof(*sh_hw_tstamps));
-	sh_hw_tstamps->hwtstamp = ns_to_ktime(tstamp_raw_to_ns(pa_dev,
-							rx_timestamp));
+	sh_hw_tstamps->hwtstamp = ns_to_ktime(pa_ns);
 	sh_hw_tstamps->syststamp = ns_to_ktime(sys_time);
 
 	p_info->rxtstamp_complete = true;
