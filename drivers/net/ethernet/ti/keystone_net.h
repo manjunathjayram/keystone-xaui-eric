@@ -136,9 +136,9 @@ struct netcp_priv {
  * NOTE: this value should be updated if the drivers need to use more psdata.
  * Current usage is:
  * SA driver looks upto 4 words
- * PA driver looks upto 6 words
+ * PA driver looks upto 7 words
  */
-#define	NETCP_MAX_RX_PSDATA_LEN	6
+#define	NETCP_MAX_RX_PSDATA_LEN	7
 
 struct netcp_packet {
 	struct sk_buff			*skb;
