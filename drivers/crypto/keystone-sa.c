@@ -2433,7 +2433,7 @@ static int sa_init_ctx_info
 		dev_err(&data->pdev->dev, "Out of SC IDs\n");
 		return -1;
 	}
-	bn = find_first_zero_bit(data->ctx_bm, sizeof(data->ctx_bm));
+	bn = find_first_zero_bit(data->ctx_bm, SA_MAX_NUM_CTX);
 	__set_bit(bn, data->ctx_bm);
 	data->sc_id++;
 	spin_unlock(&data->scid_lock);
