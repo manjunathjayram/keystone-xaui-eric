@@ -18,6 +18,7 @@
 #include <linux/uaccess.h>
 #include <linux/io.h>
 #include <linux/delay.h>
+#include <linux/sysfs.h>
 
 #include "keystone_rio_serdes.h"
 
@@ -73,17 +74,15 @@ struct k1_rio_serdes_regs {
 static int k1_rio_serdes_config_lanes(
 	u32 lanes,
 	u32 baud,
-	struct device *dev,
-	void __iomem *regs,
-	void __iomem *sts_reg,
-	struct keystone_serdes_config *serdes_config)
+	struct keystone_serdes_data *serdes)
 {
 	u32 lane;
 	int res = 0;
 	u32 val;
 	unsigned long timeout;
 	struct k1_rio_serdes_regs *serdes_regs =
-		(struct k1_rio_serdes_regs *) regs;
+		(struct k1_rio_serdes_regs *) serdes->regs;
+	struct device *dev = serdes->dev;
 
 	dev_dbg(dev, "SerDes: configuring SerDes for lane mask 0x%x\n", lanes);
 
@@ -100,13 +99,13 @@ static int k1_rio_serdes_config_lanes(
 
 	/* Check for RIO SerDes PLL lock */
 	while (1) {
-		val = __raw_readl(sts_reg);
+		val = __raw_readl(serdes->sts_reg);
 
 		if ((val & 0x1) != 0x1)
 			break;
 
 		if (time_after(jiffies, timeout)) {
-			res = -1;
+			res = -EAGAIN;
 			break;
 		}
 
@@ -118,28 +117,34 @@ static int k1_rio_serdes_config_lanes(
 
 static int k1_rio_serdes_start_tx_lanes(
 	u32 lanes,
-	struct device *dev,
-	void __iomem *regs,
-	struct keystone_serdes_config *serdes_config)
+	struct keystone_serdes_data *serdes)
 {
 	return 0;
 }
 
-static int k1_rio_serdes_wait_lanes_ok(u32 lanes, void __iomem *regs)
+static int k1_rio_serdes_wait_lanes_ok(u32 lanes,
+				       struct keystone_serdes_data *serdes)
 {
 	return 0;
 }
 
-static int k1_rio_serdes_shutdown_lanes(u32 lanes, void __iomem *regs)
+static int k1_rio_serdes_shutdown_lanes(u32 lanes,
+					 struct keystone_serdes_data *serdes)
 {
 	return 0;
 }
 
-static void k1_rio_serdes_fix_unstable_lanes(u32 lanes,
-					     struct device *dev,
-					     void __iomem *regs)
+static void k1_rio_serdes_fix_unstable_lanes(
+	u32 lanes,
+	struct keystone_serdes_data *serdes)
 {
 	return;
+}
+
+static int k1_rio_serdes_calibrate_lanes(u32 lanes,
+					 struct keystone_serdes_data *serdes)
+{
+	return -ENOSYS;
 }
 
 static const struct keystone_serdes_ops k1_serdes_ops = {
@@ -148,13 +153,44 @@ static const struct keystone_serdes_ops k1_serdes_ops = {
 	.wait_lanes_ok      = k1_rio_serdes_wait_lanes_ok,
 	.shutdown_lanes     = k1_rio_serdes_shutdown_lanes,
 	.fix_unstable_lanes = k1_rio_serdes_fix_unstable_lanes,
+	.calibrate_lanes    = k1_rio_serdes_calibrate_lanes,
 };
 
 /*-------------------------- KeyStone 2 SerDes functions --------------------*/
 
+#define KEYSTONE_SERDES_PRBS_7                0
+#define KEYSTONE_SERDES_PRBS_15               1
+#define KEYSTONE_SERDES_PRBS_23               2
+#define KEYSTONE_SERDES_PRBS_31               3
+
+#define KEYSTONE_SERDES_MAX_TAPS              5
+#define KEYSTONE_SERDES_MAX_COMPS             5
+
+#define KEYSTONE_SERDES_OFFSETS_RETRIES       100
+#define KEYSTONE_SERDES_ATT_BOOST_NUM_REPEAT  20
+#define KEYSTONE_SERDES_ATT_BOOST_REPEAT_MEAN 14
+
+/* SerDes PHY center DFE TAPs and data sample comparators structure */
+struct k2_rio_serdes_tap_offsets {
+	u32 tap1_offsets[KEYSTONE_SERDES_MAX_LANES][KEYSTONE_SERDES_MAX_TAPS];
+	u32 tap2_offsets[KEYSTONE_SERDES_MAX_LANES][KEYSTONE_SERDES_MAX_TAPS];
+	u32 tap3_offsets[KEYSTONE_SERDES_MAX_LANES][KEYSTONE_SERDES_MAX_TAPS];
+	u32 tap4_offsets[KEYSTONE_SERDES_MAX_LANES][KEYSTONE_SERDES_MAX_TAPS];
+	u32 tap5_offsets[KEYSTONE_SERDES_MAX_LANES][KEYSTONE_SERDES_MAX_TAPS];
+	u32 cmp_offsets[KEYSTONE_SERDES_MAX_LANES][KEYSTONE_SERDES_MAX_COMPS];
+};
+
+struct k2_rio_serdes_reg_field {
+	u32 reg;
+	u32 shift;
+};
+
+static int k2_rio_serdes_start_tx_lanes(
+	u32 lanes,
+	struct keystone_serdes_data *serdes);
+
 /*
- * Main code to Read TBUS on PHY-A and generate attenuation and boost values
- * for a lane given at serdes_base_address and lane_no
+ * Main code to Read TBUS on PHY-A
  */
 static void k2_rio_serdes_sb_write_tbus_addr(void __iomem *regs,
 					     int select,
@@ -195,10 +231,10 @@ static u32 k2_rio_serdes_sb_read_selected_tbus(void __iomem *regs,
 }
 
 /*
- * Wait SerDes RX valid
+ * Wait SerDes Rx valid
  * To be performed after SerDes is configured and bit lock achieved
  */
-static int k2_rio_serdes_wait_rx_valid(void __iomem *regs, int lane)
+static int k2_rio_serdes_wait_rx_valid(u32 lane, void __iomem *regs)
 {
 	unsigned long timeout = jiffies
 		+ msecs_to_jiffies(KEYSTONE_SERDES_TIMEOUT);
@@ -227,7 +263,7 @@ static int k2_rio_serdes_wait_rx_valid(void __iomem *regs, int lane)
 /*
  * Allow Serdes to re-acquire Signal Detect
  */
-static inline void k2_rio_serdes_reacquire_sd(void __iomem *regs, int lane)
+static inline void k2_rio_serdes_reacquire_sd(u32 lane, void __iomem *regs)
 {
 	reg_finsr(regs + (0x200 * lane) + 0x200 + 0x04, 2, 1, 0x0);
 }
@@ -241,10 +277,11 @@ static inline u32 k2_rio_serdes_get_termination(void __iomem *regs)
 }
 
 /*
- * Set the TX termination
+ * Set the Tx termination
  */
-static void k2_rio_serdes_termination_config(void __iomem *regs,
-					     u32 lane, u32 tx_term_np)
+static void k2_rio_serdes_termination_config(u32 lane,
+					     void __iomem *regs,
+					     u32 tx_term_np)
 {
 	/* Set tx termination */
 	reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x7c, 24, 8, tx_term_np);
@@ -253,19 +290,19 @@ static void k2_rio_serdes_termination_config(void __iomem *regs,
 	reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x7c, 20, 1, 1);
 }
 
-static void k2_rio_serdes_display_att_boost(void __iomem *regs, u32 lane,
-					    struct device *dev)
+static inline void k2_rio_serdes_get_att_boost(
+	u32 lane,
+	void __iomem *regs,
+	struct keystone_serdes_lane_rx_config *rx_coeff)
 {
 	u32 att;
 	u32 boost;
 
 	/* Read attenuation and boost */
-	att = boost = k2_rio_serdes_sb_read_selected_tbus(regs, lane + 1, 0x11);
-	att   = (att   >> 4) & 0x0f;
-	boost = (boost >> 8) & 0x0f;
-
-	dev_dbg(dev, "SerDes: lane %d att = %d, boost = %d\n",
-		lane, att, boost);
+	att = boost = k2_rio_serdes_sb_read_selected_tbus(regs,
+							  lane + 1, 0x11);
+	rx_coeff->att   = (att   >> 4) & 0x0f;
+	rx_coeff->boost = (boost >> 8) & 0x0f;
 
 	return;
 }
@@ -275,23 +312,27 @@ static void k2_rio_serdes_display_att_boost(void __iomem *regs, u32 lane,
  * adapting to the un-terminated Tx and un-programmed pre and post cursor
  * settings
  */
-static inline void k2_rio_serdes_force_tx_idle(void __iomem *regs, u32 lane)
+static inline void k2_rio_serdes_force_tx_idle(u32 lane, void __iomem *regs)
 {
+	reg_fill_field(regs + (0x200 * lane) + 0x200 + 0xb8, 16, 2, 3);
 	reg_fill_field(regs + (lane * 4) + 0x1fc0 + 0x20, 24, 2, 3);
+	reg_fill_field(regs + (0x200 * lane) + 0x200 + 0x28, 20, 2, 0);
 }
 
-static inline void k2_rio_serdes_force_tx_normal(void __iomem *regs, u32 lane)
+static inline void k2_rio_serdes_force_tx_normal(u32 lane, void __iomem *regs)
 {
+	reg_fill_field(regs + (0x200 * lane) + 0x200 + 0xb8, 16, 2, 0);
 	reg_fill_field(regs + (lane * 4) + 0x1fc0 + 0x20, 24, 2, 0);
+	reg_fill_field(regs + (0x200 * lane) + 0x200 + 0x28, 20, 2, 3);
 }
 
-static inline void k2_rio_serdes_force_rx_disable(void __iomem *regs, u32 lane)
+static inline void k2_rio_serdes_force_rx_disable(u32 lane, void __iomem *regs)
 {
 	reg_fill_field(regs + (lane * 4) + 0x1fc0 + 0x20, 15, 1, 1);
 	reg_fill_field(regs + (lane * 4) + 0x1fc0 + 0x20, 13, 2, 0);
 }
 
-static inline void k2_rio_serdes_force_rx_enable(void __iomem *regs, u32 lane)
+static inline void k2_rio_serdes_force_rx_enable(u32 lane, void __iomem *regs)
 {
 	reg_fill_field(regs + (lane * 4) + 0x1fc0 + 0x20, 15, 1, 1);
 	reg_fill_field(regs + (lane * 4) + 0x1fc0 + 0x20, 13, 2, 3);
@@ -300,8 +341,8 @@ static inline void k2_rio_serdes_force_rx_enable(void __iomem *regs, u32 lane)
 /*
  * Function to reset the Clock Data Recovery, attenuation and boost circuitry
  */
-static inline void k2_rio_serdes_reset_cdr_att_boost(void __iomem *regs,
-						     u32 lane)
+static inline void k2_rio_serdes_reset_cdr_att_boost(u32 lane,
+						     void __iomem *regs)
 {
 	reg_finsr(regs + 0x004 + (0x200 * (lane + 1)), 2, 1, 0x2);
 }
@@ -311,8 +352,8 @@ static inline void k2_rio_serdes_reset_cdr_att_boost(void __iomem *regs,
  */
 static int k2_rio_serdes_wait_lanes_ok(u32 lanes, void __iomem *regs)
 {
-	u32 val;
 	unsigned long timeout;
+	u32 val;
 	u32 val_mask;
 
 	/* LNn_OK_STATE bits */
@@ -328,7 +369,7 @@ static int k2_rio_serdes_wait_lanes_ok(u32 lanes, void __iomem *regs)
 			break;
 
 		if (time_after(jiffies, timeout))
-			return -1;
+			return -EAGAIN;
 
 		usleep_range(10, 50);
 	}
@@ -340,11 +381,14 @@ static int k2_rio_serdes_wait_lanes_ok(u32 lanes, void __iomem *regs)
  * Wait signal detect by checking LNn_SD_STATE bits in addition to LNn_OK_STATE
  * bits
  */
-static int k2_rio_serdes_wait_lanes_sd(u32 lanes, void __iomem *regs)
+static int k2_rio_serdes_wait_lanes_sd(u32 lanes,
+				       struct keystone_serdes_data *serdes)
 {
-	u32 val;
+	void __iomem *regs = serdes->regs;
 	unsigned long timeout;
+	u32 val;
 	u32 val_mask;
+	u32 lane;
 
 	/* LNn_SD_STATE and LNn_OK_STATE bits */
 	val_mask = lanes | (lanes << 8);
@@ -359,9 +403,24 @@ static int k2_rio_serdes_wait_lanes_sd(u32 lanes, void __iomem *regs)
 			break;
 
 		if (time_after(jiffies, timeout))
-			return -1;
+			return -EAGAIN;
 
 		usleep_range(10, 50);
+	}
+
+	/* Display Rx att/boost values */
+	for_each_lanes(lanes, lane) {
+		/* Get the current Rx att/boost values */
+		k2_rio_serdes_get_att_boost(
+			lane,
+			regs,
+			&(serdes->config->rx[lane]));
+
+		dev_dbg(serdes->dev,
+			"SerDes: Rx signal detected, att = %d, boost = %d for lane %d\n",
+			serdes->config->rx[lane].att,
+			serdes->config->rx[lane].boost,
+			lane);
 	}
 
 	return 0;
@@ -370,7 +429,7 @@ static int k2_rio_serdes_wait_lanes_sd(u32 lanes, void __iomem *regs)
 /*
  * Assert reset while preserving the lnX_ctrl_i bits
  */
-static void k2_rio_serdes_sb_assert_reset(void __iomem *regs, u32 lane)
+static void k2_rio_serdes_sb_assert_reset(u32 lane, void __iomem *regs)
 {
 	unsigned int ui_tmpo;
 	unsigned int ui_tmp0;
@@ -393,17 +452,17 @@ static void k2_rio_serdes_sb_assert_reset(void __iomem *regs, u32 lane)
 	reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x28, 15, 15, ui_tmpo);
 }
 
-static inline void k2_rio_serdes_sb_assert_full_reset(void __iomem *regs,
-						      u32 lane)
+static inline void k2_rio_serdes_sb_assert_full_reset(u32 lane,
+						      void __iomem *regs)
 {
 	/* Toggle bit 29 of LANE_028 */
 	reg_finsr(regs + (0 * 0x200) + (1 * 0x200) + 0x200 + 0x28, 29, 15,
 		  0x4260);
 }
 
-static inline int k2_rio_serdes_sb_deassert_reset(void __iomem *regs,
-						  u32 block,
-						  u32 lane)
+static inline int k2_rio_serdes_sb_deassert_reset(u32 lane,
+						  void __iomem *regs,
+						  u32 block)
 {
 	/* Clear the reset bit */
 	reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x28, 15, 1, 1);
@@ -415,10 +474,16 @@ static inline int k2_rio_serdes_sb_deassert_reset(void __iomem *regs,
 	return 0;
 }
 
-static void k2_rio_serdes_sb_clear_overlay_bit29(void __iomem *regs, u32 lane)
+static void k2_rio_serdes_sb_clear_overlay_bit29(u32 lane, void __iomem *regs)
 {
 	/* Clear overlay bit, bring the lane out of reset */
 	reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x28, 29, 1, 0);
+}
+
+static void k2_rio_serdes_sb_set_overlay_bit29(u32 lane, void __iomem *regs)
+{
+	/* Clear overlay bit, bring the lane out of reset */
+	reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x28, 29, 1, 1);
 }
 
 static void k2_rio_serdes_init_3g(void __iomem *reg)
@@ -703,12 +768,12 @@ static void k2_rio_serdes_init_5g(void __iomem *reg)
 	reg_finsr((reg + 0x0a00),  7,  0, 0x5f);
 }
 
-static void k2_rio_serdes_lane_init(u32 lane, u32 rate, void __iomem *regs)
+static void k2_rio_serdes_lane_init(u32 lane, void __iomem *regs, u32 rate)
 {
 	/* Bring this lane out of reset by clearing override bit 29 */
-	k2_rio_serdes_sb_clear_overlay_bit29(regs, lane);
+	k2_rio_serdes_sb_clear_overlay_bit29(lane, regs);
 
-	/* Set lane control rate, force lane enable, rates, width and tx idle */
+	/* Set lane control rate, force lane enable, rates, width and Tx idle */
 	switch (rate) {
 	case KEYSTONE_SERDES_FULL_RATE:
 		__raw_writel(0xf3c0f0f0, regs + 0x1fe0 + (4 * lane));
@@ -739,41 +804,88 @@ static inline void k2_rio_serdes_lane_disable(u32 lane, void __iomem *regs)
 }
 
 /*
- * Forces the calibration of the SerDes receiver settings of attenuation
- * and boost circuitry.
+ * Force the calibration of the SerDes receiver settings of att circuitry
+ * for all configured lanes
  *
- * This is only valid for SerDes PHY-A (i.e. all SerDes except XGE)
  */
-static void k2_rio_serdes_force_att_boost(void __iomem *regs, u32 lane)
+static int k2_rio_serdes_force_att_calibration(u32 lanes,
+					       void __iomem *regs,
+					       u32 rate)
 {
-	u32 boost_read = 0;
-	u32 att_read   = 0;
-	u32 att_start  = 0;
+	int res = 0;
+	u32 lane;
+	u32 att_read[KEYSTONE_SERDES_MAX_LANES];
+	u32 att_start[KEYSTONE_SERDES_MAX_LANES];
+	u32 reg;
+	u32 shift;
 
-	if (k2_rio_serdes_wait_rx_valid(regs, lane))
-		return;
+	/* Register offsert and field shift of att starrt for various rates */
+	static struct k2_rio_serdes_reg_field __k2_rio_serdes_att_start[3] = {
+		{ 0x84, 16  },
+		{ 0x84, 24 },
+		{ 0x8c, 8  },
+	};
+
+	/* Compute the rx att start field location corresponding to the rate */
+	reg   = __k2_rio_serdes_att_start[rate].reg;
+	shift = __k2_rio_serdes_att_start[rate].shift;
 
 	/* First read initial att start value */
-	att_start = (__raw_readl(regs + (lane * 0x200) + 0x200 + 0x8c)
-		     >> 8) & 0xf;
+	for_each_lanes(lanes, lane)
+		att_start[lane] =
+		(__raw_readl(regs + (lane * 0x200) + 0x200 + reg)
+		 >> shift) & 0xf;
 
 	/*
 	 * Check att value, fix this as start value turn off att adaptation
 	 * and do boost readaptation
 	 */
-	att_read = (k2_rio_serdes_sb_read_selected_tbus(regs, lane + 1, 0x11)
-		    >> 4) & 0xf;
+	for_each_lanes(lanes, lane)
+		att_read[lane] =
+		(k2_rio_serdes_sb_read_selected_tbus(regs, lane + 1, 0x11)
+		 >> 4) & 0xf;
 
-	/* att_start */
-	reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x8c, 8, 4, att_read);
-	reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x84, 0, 1, 0);
+	/* Set att_start */
+	for_each_lanes(lanes, lane)
+		reg_fill_field(regs + (lane * 0x200) + 0x200 + reg,
+			       shift, 4, att_read[lane]);
+
+	/* Clear att init cal and att recal */
+	reg_fill_field(regs + 0x0a00 + 0x84, 0,  1, 0);
 	reg_fill_field(regs + 0x0a00 + 0x8c, 24, 1, 0);
 
-	/* Force cal */
-	reg_fill_field(regs + (lane * 0x200) + 0x200 + 0xac, 11, 1, 1);
-	reg_fill_field(regs + (lane * 0x200) + 0x200 + 0xac, 11, 1, 0);
+	/* Force calibration for all lanes */
+	reg_fill_field(regs + 0x0a00 + 0x98, 7, 1, 1);
+	reg_fill_field(regs + 0x0a00 + 0x98, 7, 1, 0);
 
-	k2_rio_serdes_wait_rx_valid(regs, lane);
+	/* Check RX valid */
+	for_each_lanes(lanes, lane) {
+		if (k2_rio_serdes_wait_rx_valid(lane, regs))
+			res = 1;
+
+		/* Write back initial att start value */
+		reg_fill_field(regs + (lane * 0x200) + 0x200 + reg, shift, 4,
+			       att_start[lane]);
+	}
+
+	/* Turn back on att adaptation */
+	reg_fill_field(regs + 0x0a00 + 0x84,  0, 1, 1);
+	reg_fill_field(regs + 0x0a00 + 0x8c, 24, 1, 1);
+
+	return res;
+}
+
+/*
+ * Force the calibration of the SerDes receiver settings of boost circuitry
+ *
+ */
+static int k2_rio_serdes_force_boost_calibration(u32 lane,
+						 void __iomem *regs)
+{
+	u32 boost_read = 0;
+
+	if (k2_rio_serdes_wait_rx_valid(lane, regs))
+		return -1;
 
 	/* Check boost value */
 	boost_read = (k2_rio_serdes_sb_read_selected_tbus(regs, lane + 1, 0x11)
@@ -802,14 +914,149 @@ static void k2_rio_serdes_force_att_boost(void __iomem *regs, u32 lane)
 	reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x2c,  3, 7, 0x0);
 
 do_not_inc:
-	/* Write back initial att start value */
-	reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x8c,  8, 4, att_start);
+	if (k2_rio_serdes_wait_rx_valid(lane, regs))
+		return -1;
 
-	/* Turn back on att adaptation */
-	reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x84,  0, 1, 1);
-	reg_fill_field(regs + 0x0a00 + 0x8c, 24, 1, 1);
+	return 0;
+}
 
-	k2_rio_serdes_wait_rx_valid(regs, lane);
+/*
+ * Calibrates the SerDes receiver by finding the averaging values for
+ * attenuation and boost coefficients
+ */
+static void k2_rio_serdes_att_boost_calibration(
+	u32 lane,
+	u32 lanes,
+	void __iomem *regs,
+	struct keystone_serdes_lane_rx_config *rx_coeff,
+	u32 rate)
+{
+	u32 repeat_index;
+	int att = 0, num_att = 0, boost = 0, num_boost = 0;
+	int att_array[KEYSTONE_SERDES_ATT_BOOST_NUM_REPEAT];
+	int boost_array[KEYSTONE_SERDES_ATT_BOOST_NUM_REPEAT];
+	int res;
+
+	for (repeat_index = 0;
+	     repeat_index < KEYSTONE_SERDES_ATT_BOOST_NUM_REPEAT;
+	     repeat_index++) {
+
+		/* Wait SerDes Rx valid */
+		if (k2_rio_serdes_wait_rx_valid(lane, regs)) {
+			att = boost = -1;
+			goto skip;
+		}
+
+		/* Force att calibration for all lanes */
+		(void) k2_rio_serdes_force_att_calibration(lanes, regs, rate);
+
+		/* Force boost calibration */
+		res = k2_rio_serdes_force_boost_calibration(lane, regs);
+		if (res < 0) {
+			att = boost = -1;
+			goto skip;
+		}
+
+		/* Record adapted att and boost into an array */
+		att = boost = k2_rio_serdes_sb_read_selected_tbus(regs,
+								  lane + 1,
+								  0x11);
+		att   = (att   >> 4) & 0x0f;
+		boost = (boost >> 8) & 0x0f;
+
+skip:
+		att_array[repeat_index]   = att;
+		boost_array[repeat_index] = boost;
+
+		k2_rio_serdes_reset_cdr_att_boost(lane, regs);
+
+		/* Wait at least 10 usecs */
+		usleep_range(10, 50);
+
+		/* Allow Serdes to re-acquire Signal Detect */
+		k2_rio_serdes_reacquire_sd(lane, regs);
+	}
+
+	/* Perform statistical analysis on saved att, boost values */
+	att = boost = num_att = num_boost = 0;
+
+	for (repeat_index = 0;
+	     repeat_index < KEYSTONE_SERDES_ATT_BOOST_NUM_REPEAT;
+	     repeat_index++) {
+		if ((att_array[repeat_index] > 0)
+		    && (att_array[repeat_index]
+			< KEYSTONE_SERDES_ATT_BOOST_REPEAT_MEAN)) {
+			att += att_array[repeat_index];
+			num_att++;
+		}
+
+		if ((boost_array[repeat_index] > 0)
+		    && (boost_array[repeat_index]
+			< KEYSTONE_SERDES_ATT_BOOST_REPEAT_MEAN)) {
+			boost += boost_array[repeat_index];
+			num_boost++;
+		}
+	}
+
+	rx_coeff[lane].mean_att = (num_att > 0) ?
+		(((att << 4) / num_att) + 8) >> 4 : -1;
+
+	rx_coeff[lane].mean_boost = (num_boost > 0) ?
+		(((boost << 4) / num_boost) + 8) >> 4 : -1;
+}
+
+/*
+ * Disable Rx att and boost initial calibration and then set att and boost start
+ * values to the mean values.
+ */
+static void k2_rio_serdes_set_att_boost(
+	u32 lane,
+	void __iomem *regs,
+	struct keystone_serdes_lane_rx_config *rx_coeff)
+{
+	/* Disable lane in Rx */
+	k2_rio_serdes_force_rx_disable(lane, regs);
+
+	/* Disable Rx calibration for all rates (RATE1, RATE2, RATE3) */
+	reg_finsr(regs + 0xa00 + 0x84, 10, 8, 0x0);
+
+	if (rx_coeff->mean_att != -1) {
+
+		/* Disable att init cal */
+		reg_finsr(regs + 0xa00 + 0x84,  0,  0, 0x0);
+
+		/* Disable att recal */
+		reg_finsr(regs + 0xa00 + 0x8c, 24, 24, 0x0);
+
+		/* Set att for all rates */
+		reg_finsr(regs + 0x200 * (lane + 1) + 0x8c, 11,  8,
+			  rx_coeff->mean_att);
+		reg_finsr(regs + 0x200 * (lane + 1) + 0x84, 27, 24,
+			  rx_coeff->mean_att);
+		reg_finsr(regs + 0x200 * (lane + 1) + 0x84, 19, 16,
+			  rx_coeff->mean_att);
+	}
+
+	if (rx_coeff->mean_boost != -1) {
+
+		/* Disable boost init cal */
+		reg_finsr(regs + 0xa00 + 0x84,  1,  1, 0x0);
+
+		/* Disable boost recal */
+		reg_finsr(regs + 0xa00 + 0x8c, 25, 25, 0x0);
+
+		/* Set boost for all rates */
+		reg_finsr(regs + 0x200 * (lane + 1) + 0x8c, 15, 12,
+			  rx_coeff->mean_boost);
+		reg_finsr(regs + 0x200 * (lane + 1) + 0x84, 31, 28,
+			  rx_coeff->mean_boost);
+		reg_finsr(regs + 0x200 * (lane + 1) + 0x84, 23, 20,
+			  rx_coeff->mean_boost);
+	}
+
+	/* Enable lane in Rx */
+	k2_rio_serdes_force_rx_enable(lane, regs);
+
 }
 
 static inline void k2_rio_serdes_config_set_tx_coeffs(
@@ -819,7 +1066,15 @@ static inline void k2_rio_serdes_config_set_tx_coeffs(
 {
 	u32 val;
 
-	/* Set C1/C2/CM coefficients */
+	/* Ensure we do not override out of bound bits */
+	tx_config->c1_coeff &= 0x1f; /* 5 bits */
+	tx_config->c2_coeff &= 0xf;  /* 4 bits */
+	tx_config->cm_coeff &= 0xf;  /* 4 bits */
+	tx_config->pre_1lsb &= 0x1;  /* 1 bits */
+	tx_config->att      &= 0xf;  /* 4 bits */
+	tx_config->vreg     &= 0x7;  /* 4 bits */
+
+	/* Set C1, C2, CM coefficients */
 	val = (tx_config->c1_coeff)
 		| ((tx_config->c2_coeff) << 8)
 		| ((tx_config->cm_coeff) << 12);
@@ -834,18 +1089,631 @@ static inline void k2_rio_serdes_config_set_tx_coeffs(
 		0x000000e0);
 }
 
+static void k2_rio_serdes_config_set_rx_coeffs(
+	u32 lanes,
+	void __iomem *regs,
+	struct device *dev,
+	struct keystone_serdes_lane_rx_config *rx_config)
+{
+	u32 lane;
+
+	/* Set Rx att/boost */
+	for_each_lanes(lanes, lane) {
+		/*
+		 * We need to have at least one correct value before disabling
+		 * the dynamic Rx att/boost calibration
+		 */
+		if ((rx_config[lane].mean_att == -1) &&
+		    (rx_config[lane].mean_boost == -1))
+			continue;
+
+		/* Force signal detect low, reset CDR, attenuation and boost */
+		k2_rio_serdes_reset_cdr_att_boost(lane, regs);
+
+		usleep_range(10, 50);
+
+		dev_dbg(dev,
+			"SerDes: applying computed Rx att = %d, Rx boost = %d for lane %d\n",
+			rx_config[lane].mean_att,
+			rx_config[lane].mean_boost,
+			lane);
+
+		/* Apply Rx att/boost values */
+		k2_rio_serdes_set_att_boost(lane, regs,
+					    &(rx_config[lane]));
+
+		/* Allow SerDes to re-acquire signal detect */
+		k2_rio_serdes_reacquire_sd(lane, regs);
+
+		/* Wait at least 10 usecs */
+		usleep_range(10, 50);
+
+		/* Wait Rx valid */
+		k2_rio_serdes_wait_rx_valid(lane, regs);
+	}
+
+	return;
+}
+
+/*
+ * Set the SerDes Tx output swing voltage and boost/att start values
+ */
+static void k2_rio_serdes_tx_rx_set_equalizer(u32 lane,
+					      void __iomem *regs,
+					      int vreg_enable,
+					      u32 att_start,
+					      u32 boost_start)
+{
+	/* Set Tx output swing voltage */
+	if (vreg_enable) {
+		/* pma_ln_vreg */
+		reg_finsr(regs + 0x200 * (lane + 1) + 0x18, 25, 24, 0x2);
+
+		/* pma_ln_vregh */
+		reg_finsr(regs + 0x200 * (lane + 1) + 0x18, 27, 26, 0x2);
+	}
+
+	/* Set Rx att start for all rates (RATE1, RATE2, RATE3) */
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x8c, 11,  8, att_start);
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x84, 27, 24, att_start);
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x84, 19, 16, att_start);
+
+	/* Set Rx boost start for all rates (RATE1, RATE2, RATE3) */
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x8c, 15, 12, boost_start);
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x84, 31, 28, boost_start);
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x84, 23, 20, boost_start);
+}
+
+/*
+ * Calculate the SerDes average comparator/tap offset values
+ */
+static void k2_rio_serdes_get_average_offsets(
+	u32 lanes,
+	void __iomem *regs,
+	struct k2_rio_serdes_tap_offsets *tap_offsets)
+{
+	u32 i, lane, comp;
+	u32 cmp_offset_tmp;
+
+	/* Find average values */
+	for (i = 0; i < KEYSTONE_SERDES_OFFSETS_RETRIES; i++) {
+		for_each_lanes(lanes, lane) {
+			/* Serdes assert reset */
+			k2_rio_serdes_sb_assert_full_reset(lane, regs);
+
+			/* Serdes Deassert reset and wait lane ok */
+			k2_rio_serdes_sb_deassert_reset(lane, regs, 1);
+		}
+
+		for_each_lanes(lanes, lane) {
+			for (comp = 1;
+			     comp < KEYSTONE_SERDES_MAX_COMPS;
+			     comp++) {
+
+				/* Write comparator value */
+				reg_finsr(regs + 0x0a00 + 0x8c, 23, 21, comp);
+
+				/* Set tbus address */
+				reg_finsr(regs + 0x008, 31, 24,
+					  0x12 + ((lane + 1) << 5));
+
+				cmp_offset_tmp = (
+					k2_rio_serdes_sb_read_selected_tbus(
+						regs,
+						lane + 1,
+						0x12) & 0x0ff0) >> 4;
+
+				/*
+				 * Take a running count of comparator and tap
+				 * offsets for num_resets number of runs
+				 */
+				tap_offsets->cmp_offsets[lane][comp] +=
+					cmp_offset_tmp;
+			}
+		}
+	}
+
+	/* Get average value for each comparator and tap offset */
+	for_each_lanes(lanes, lane) {
+		for (comp = 1; comp < KEYSTONE_SERDES_MAX_COMPS; comp++) {
+			/* Set comparator average */
+			tap_offsets->cmp_offsets[lane][comp] /=
+				KEYSTONE_SERDES_OFFSETS_RETRIES;
+		}
+	}
+}
+
+/*
+ * Force Serdes comparator and tap offsets to override value
+ */
+static void k2_rio_serdes_override_cmp_tap_offsets(
+	u32 lane,
+	void __iomem *regs,
+	u32 comp,
+	struct k2_rio_serdes_tap_offsets *tap_offsets)
+
+{
+	/* Set DFE_SHADOW_LANE_SEL */
+	reg_finsr(regs + 0x0a00 + 0xf0, 27, 26, lane + 1);
+
+	/* Set CMP_OFFSET_OVR_EN to 0x1 */
+	reg_finsr(regs + 0x0a00 + 0x98, 24, 24, 0x1);
+
+	/* Set RXEQ_OVR_EN to 0x1 */
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x2c, 2, 2, 0x1);
+
+	/* Set RXEQ_DFE_CMP_SEL_OVR to comp */
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x30, 7, 5, comp);
+
+	/* Set DFE_TAP_OVR_EN to 0x1 */
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x5c, 31, 31, 0x1);
+
+	/* Set CMP_OFFSET_OVR */
+	reg_finsr(regs + 0x0a00 + 0x9c, 7, 0,
+		  tap_offsets->cmp_offsets[lane][comp]);
+
+	/* Set tap overrides */
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x58, 30, 24,
+		  tap_offsets->tap1_offsets[lane][comp]);
+
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x5c, 5, 0,
+		  tap_offsets->tap2_offsets[lane][comp]);
+
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x5c, 13, 8,
+		  tap_offsets->tap3_offsets[lane][comp]);
+
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x5c, 21, 16,
+		  tap_offsets->tap4_offsets[lane][comp]);
+
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x5c, 29, 24,
+		  tap_offsets->tap5_offsets[lane][comp]);
+
+	/* Set RXEQ_OVR_LATCH_O = 0x1 */
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x2c, 10, 10, 0x1);
+
+	/* Set RXEQ_OVR_LATCH_O = 0x0 */
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x2c, 10, 10, 0x0);
+
+	/* Set CMP_OFFSET_OVR_EN to 0x0 */
+	reg_finsr(regs + 0x0a00 + 0x98, 24, 24, 0x0);
+
+	/* Set RXEQ_OVR_EN to 0x0 */
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x2c, 2, 2, 0x0);
+
+	/* Set DFE_TAP_OVR_EN to 0x0 */
+	reg_finsr(regs + 0x200 * (lane + 1) + 0x5c, 31, 31, 0x0);
+}
+
+/*
+ * Write out the average rx comparator offsets during every SerDes
+ * initialization
+ */
+static void k2_rio_serdes_write_average_offsets(
+	u32 lanes,
+	void __iomem *regs,
+	struct k2_rio_serdes_tap_offsets *tap_offsets)
+{
+	u32 lane;
+	u32 comp;
+
+	/* Rewrite average comparator and tap offsets to comparators/taps */
+	for_each_lanes(lanes, lane) {
+		for (comp = 1; comp < KEYSTONE_SERDES_MAX_COMPS; comp++) {
+			k2_rio_serdes_override_cmp_tap_offsets(lane,
+							       regs,
+							       comp,
+							       tap_offsets);
+		}
+	}
+}
+
+/*
+ * Calibrates the SerDes DFE
+ */
+static void k2_rio_serdes_dfe_offset_calibration(
+	u32 lanes,
+	void __iomem *regs,
+	struct device *dev,
+	struct keystone_serdes_lane_tx_config *tx_config)
+{
+	struct k2_rio_serdes_tap_offsets tap_offsets;
+	u32 lane;
+
+	/* Reset CDR, attenuation and boost */
+	for_each_lanes(lanes, lane)
+		k2_rio_serdes_reset_cdr_att_boost(lane, regs);
+
+	/* Wait at least 10 usecs */
+	usleep_range(10, 50);
+
+	/* Compute average comparator/tap offsets */
+	k2_rio_serdes_get_average_offsets(lanes, regs, &tap_offsets);
+
+	/* Display comparators */
+	for_each_lanes(lanes, lane) {
+		u32 i;
+
+		for (i = 1; i < KEYSTONE_SERDES_MAX_COMPS; i++) {
+			dev_dbg(dev,
+				"SerDes: %s() lane %d cmp_offsets[%d] %d\n",
+				__func__, lane, i,
+				tap_offsets.cmp_offsets[lane][i]);
+		}
+	}
+
+	dev_dbg(dev, "SerDes: %s() write average offsets\n", __func__);
+
+	/* Offset compensation workaround */
+	k2_rio_serdes_write_average_offsets(lanes, regs, &tap_offsets);
+
+	/* Wait at least 10 usecs */
+	usleep_range(10, 50);
+}
+
+/*
+ * Check that PHY has successfully detected the PRBS data or not
+ */
+static inline int k2_rio_serdes_wait_bist_chk_synch(u32 lanes,
+						    void __iomem *regs,
+						    int valid)
+{
+	u32 lane;
+	u32 temp;
+	u32 bist_valid[KEYSTONE_SERDES_MAX_LANES];
+	unsigned long timeout = jiffies
+		+ msecs_to_jiffies(KEYSTONE_SERDES_TIMEOUT);
+
+	do {
+		for_each_lanes(lanes, lane) {
+			bist_valid[lane] =
+				(k2_rio_serdes_sb_read_selected_tbus(regs,
+								     lane + 1,
+								     0xc)
+				 & 0x0400) >> 10;
+
+			if ((__raw_readl(regs + 0x1fc0 + 0x34)
+			     & BIT(lane)) == 0)
+				bist_valid[lane] = 0;
+		}
+
+		temp = 1;
+		for_each_lanes(lanes, lane)
+			temp &= bist_valid[lane];
+
+		if (time_after(jiffies, timeout))
+			return 1;
+
+		usleep_range(10, 50);
+
+	} while (temp != valid);
+
+	return 0;
+}
+
+/*
+ * Check the transmitter PRBS generator
+ */
+static int k2_rio_serdes_prbs_check(u32 lane, void __iomem *regs)
+{
+	/* Clear BCHK_CLR */
+	reg_finsr(regs + (0x200 * lane) + 0x200 + 0x04, 4, 4, 0x0);
+
+	/* Set BCHK_EN */
+	reg_finsr(regs + (0x200 * lane) + 0x200 + 0x04, 3, 3, 0x1);
+
+	/* Check bist_valid for lane */
+	return k2_rio_serdes_wait_bist_chk_synch(BIT(lane), regs, 1);
+}
+
+/*
+ * Setting up the transmitter PRBS generator for BER testing
+ */
+static void k2_rio_serdes_ber_test_tx(u32 lanes, void __iomem *regs)
+{
+	u32 lane;
+
+	for_each_lanes(lanes, lane) {
+		/* Set bit 5 of LANE_034 to 0 (bist_gen_en) */
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x34, 5, 5, 0);
+
+		/*
+		 * Set bit 2 [bist_chk_data_mode], 6 [bist_tx_clk_en],
+		 * 7 [bist_rx_clk_en] of LANE_032 to 1
+		 */
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x30, 22, 22, 1);
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x30, 23, 23, 1);
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x30, 18, 18, 1);
+
+		/*
+		 * Set bus width to 20 bit interface for SRIO SerDes
+		 *
+		 * Clear bit 0 [bist_gen_mode8B] of LANE_032 (PHY-A) and set
+		 * bit 1 of LANE_034 [bist_gen_word]
+		 */
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x30, 16, 16, 0);
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x34,  6,  6,  1);
+
+		/*
+		 * Set bit 6 [bist_gen_word] & 7 [bist_gen_en] of LANE_034
+		 * to 1 and 0 respectively
+		 */
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x34, 7, 7, 0);
+
+		/* Set bit 3 [bist_gen_send_pream] of LANE_037 to 0 */
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x34, 27, 27, 0);
+
+		/* Set bit 5:3 to 0x1 on LANE_032 to PRBS-31 */
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x30, 21, 19,
+			  KEYSTONE_SERDES_PRBS_31);
+	}
+
+	/*
+	 * Set bit 1:0 of COMLANE_017 to 0 respectively
+	 * 1 bist_gen_inv_prbs, 0 bist_chk_inv_prbs
+	 */
+	reg_finsr(regs + (5 * 0x200) + 0x14, 25, 24, 0);
+
+	for_each_lanes(lanes, lane) {
+		/*
+		 * Set LANE_033 and 034 bits 1:0 and 7:0 to 0x283
+		 * (bist_chk_pream0)
+		 */
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x30, 31, 24, 0x83);
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x34,  1,  0, 0x2);
+
+		/*
+		 * Set LANE_036 and 035 bits 1:0 and 7:0 to 0x17C
+		 * (bist_chk_pream1)
+		 */
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x34, 17,  8, 0x17c);
+
+		/*
+		 * Clear LANE_038-03C; 042-043; 044-045; 03D-041:
+		 * 34[4:2]; 37 [6:4] & 47 [3:0], 46[7:0]
+		 * bist_chk_udp, bist_gen_en_low, bist_gen_en_high,
+		 * bist_chk_insert_word, bist_chk_insert_length,
+		 * bist_gen_insert_count, bist_gen_insert_delay
+		 */
+		__raw_writel(0, regs + (0x200 * lane) + 0x200 + 0x38);
+		__raw_writel(0, regs + (0x200 * lane) + 0x200 + 0x3c);
+		__raw_writel(0, regs + (0x200 * lane) + 0x200 + 0x40);
+
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x44, 27,  0, 0x0);
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x34,  4,  2, 0x0);
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x34, 30, 28, 0x0);
+	}
+
+	/* Wait a minimum of 20ns let us put 50ns just in case */
+	ndelay(50);
+
+	for_each_lanes(lanes, lane) {
+		/* De-assert BIST_GEN_CDN by setting 1 on bit 5 of LANE_034 */
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x34,  5,  5, 0x1);
+
+		/*
+		 * Set LANE_000 [7:6] (dmux_txa_sel) to 0x2 and LANE_002 [6:4]
+		 * (dmux_txb_sel) to 0x0
+		 */
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x00,  7,  6, 0x2);
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x00, 22, 20, 0x0);
+	}
+
+	/* Wait a minimum of 20ns let us put 50ns just in case */
+	ndelay(50);
+
+	/* Assert bist_gen_en by setting bit 7 of LANE_034 */
+	for_each_lanes(lanes, lane)
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x34,  7,  7, 0x1);
+
+	/* Wait at least 10 usecs */
+	usleep_range(10, 50);
+
+	/* Signal detect enable */
+	for_each_lanes(lanes, lane)
+		k2_rio_serdes_reacquire_sd(lane, regs);
+
+	/* Wait at least 10 usecs */
+	usleep_range(10, 50);
+
+	/*
+	 * Wait a minimum of 2us for the analog Tx/Rx paths to obtain the
+	 * bit lock on to the training pattern.
+	 * While this is ocurring set LANE_004 to [3] - 0, [4] - 1, [6:5] - 2
+	 * (for PHY-A only).
+	 */
+	for_each_lanes(lanes, lane)
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x04, 6, 3,
+			  (BIT(1) | (0x2 << 2)));
+
+	return;
+}
+
+static int k2_rio_serdes_prbs_test_start(u32 lane,
+					 void __iomem *regs,
+					 struct device *dev)
+{
+	int res;
+
+	dev_dbg(dev, "SerDes: enable the Tx PRBS pattern for lane %d\n", lane);
+
+	/* Enable the Tx PRBS pattern */
+	k2_rio_serdes_ber_test_tx(BIT(lane), regs);
+
+	dev_dbg(dev, "SerDes: check PRBS pattern for lane %d\n", lane);
+
+	res = k2_rio_serdes_prbs_check(lane, regs);
+	if (res) {
+		dev_dbg(dev,
+			"SerDes: timeout when checking PRBS pattern for lane %d\n",
+			lane);
+		return -EAGAIN;
+	}
+
+	return 0;
+}
+
+static void k2_rio_serdes_prbs_test_stop(u32 lanes,
+					 void __iomem *regs,
+					 struct device *dev)
+{
+	u32 lane;
+	u32 value;
+
+	dev_dbg(dev, "SerDes: disable Tx PRBS pattern for lanes 0x%x\n", lanes);
+
+	for_each_lanes(lanes, lane) {
+		/* Set BCHK_CLR */
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x04, 4, 4, 0x1);
+
+		/* Clear BCHK_EN */
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x04, 3, 3, 0x0);
+
+		/* Set bit 5 of LANE_034 to 0 (bist_gen_en) */
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x34, 5, 5, 0);
+	}
+
+	/* Check bist_valid de-asserted for all lanes */
+	if (k2_rio_serdes_wait_bist_chk_synch(lanes, regs, 0))
+		dev_warn(dev,
+			 "SerDes: Tx PRBS not successfuly disabled for lanes 0x%x\n",
+			 lanes);
+
+	for_each_lanes(lanes, lane) {
+		/* Verify BIST_CHK_ERRORS is 0 */
+		value = __raw_readl(regs + (0x200 * lane) + 0x200 + 0x48);
+		if (value & 0xffff)
+			dev_warn(dev,
+				 "SerDes: Tx PRBS BIST error detected (0x%x) for lanes 0x%x\n",
+				 value & 0xffff, lanes);
+
+		/*
+		 * Set LANE_000 [7:6] (dmux_txa_sel) and LANE_002 [6:4]
+		 * (dmux_txb_sel) to 0x0
+		 */
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x00,  7,  6, 0x0);
+		reg_finsr(regs + (0x200 * lane) + 0x200 + 0x00, 22, 20, 0x0);
+
+		/* Wait 100 ns before PHY will be back in normal mode */
+		ndelay(100);
+	}
+
+	return;
+}
+
+static int __k2_rio_serdes_calibrate_lane(
+	u32 lane,
+	u32 lanes,
+	struct keystone_serdes_data *serdes)
+{
+	struct device *dev = serdes->dev;
+	void __iomem *regs = serdes->regs;
+	int res = 0;
+
+	/* Wait lanes OK and SD */
+	res = k2_rio_serdes_wait_lanes_sd(BIT(lane), serdes);
+	if (res < 0) {
+		dev_dbg(dev, "SerDes: %s() lane %d not OK\n",
+			__func__, lane);
+		return res;
+	}
+
+	/* PRBS test to calibrate the attenuation and boost in the receiver */
+	res = k2_rio_serdes_prbs_test_start(lane, regs, dev);
+	if (res != 0)
+		return res;
+
+	/* Do the att/boost calibration */
+	dev_dbg(dev, "SerDes: do the att/boost calibration\n");
+	k2_rio_serdes_att_boost_calibration(lane,
+					    lanes,
+					    regs,
+					    serdes->config->rx,
+					    serdes->config->rate);
+
+	/* Display new computed att/boost values */
+	dev_dbg(dev,
+		"SerDes: computed Rx att = %d, Rx boost = %d for lane %d\n",
+		serdes->config->rx[lane].mean_att,
+		serdes->config->rx[lane].mean_boost,
+		lane);
+
+	return res;
+}
+
+/*
+ * Calibrate SerDes using PRBS training
+ */
+static int k2_rio_serdes_calibrate_lanes(u32 lanes,
+					 struct keystone_serdes_data *serdes)
+{
+	unsigned long timeout = jiffies + msecs_to_jiffies(
+		serdes->config->cal_timeout * MSEC_PER_SEC);
+	struct device *dev = serdes->dev;
+	void __iomem *regs = serdes->regs;
+	int res = 0;
+	u32 lane;
+	u32 __lanes = lanes;
+
+	/* Do not use Rx coefficients yet */
+	for_each_lanes(lanes, lane) {
+		serdes->config->rx[lane].mean_att   = -1;
+		serdes->config->rx[lane].mean_boost = -1;
+	}
+
+	/* Start lanes */
+	k2_rio_serdes_start_tx_lanes(lanes, serdes);
+
+	/* Try to calibrate all lanes */
+	while (__lanes) {
+		for (lane = 0;
+		     lane < KEYSTONE_SERDES_MAX_LANES;
+		     lane++) {
+			if (BIT(lane) & __lanes) {
+				/* Calibrate SerDes */
+				if (__k2_rio_serdes_calibrate_lane(
+					    lane, lanes, serdes) == 0)
+					__lanes &= ~(BIT(lane));
+			}
+		}
+
+		if (time_after(jiffies, timeout)) {
+			res = -EAGAIN;
+			break;
+		}
+	}
+
+	/* Wait at least 10ms for remote to finish */
+	usleep_range(10000, 20000);
+
+	/* Stop PRBS test and restore lanes to normal state */
+	k2_rio_serdes_prbs_test_stop(lanes, regs, dev);
+
+	/* Disable transmitter for all lanes */
+	for_each_lanes(lanes, lane)
+		k2_rio_serdes_force_tx_idle(lane, regs);
+
+	/* Apply computed Rx coefficients */
+	k2_rio_serdes_config_set_rx_coeffs(lanes, serdes->regs, serdes->dev,
+					   serdes->config->rx);
+
+	/* Disable SerDes for these lanes */
+	for_each_lanes(lanes, lane)
+		k2_rio_serdes_lane_disable(lane, regs);
+
+	return res;
+}
+
 /*
  * Configure SerDes with appropriate baudrate and do Tx termination workaround
+ * plus DFE offset calibration.
  * Note that all lanes are configured but Serdes are then disabled
  */
-static int k2_rio_serdes_config_lanes(
-	u32 lanes,
-	u32 baud,
-	struct device *dev,
-	void __iomem *regs,
-	void __iomem *sts_reg,
-	struct keystone_serdes_config *serdes_config)
+static int k2_rio_serdes_config_lanes(u32 lanes,
+				      u32 baud,
+				      struct keystone_serdes_data *serdes)
 {
+	struct device *dev = serdes->dev;
+	void __iomem *regs = serdes->regs;
 	u32 rate;
 	u32 val;
 	u32 lane;
@@ -878,18 +1746,19 @@ static int k2_rio_serdes_config_lanes(
 		return -EINVAL;
 	}
 
+	/* Store current rate */
+	serdes->config->rate = rate;
+
 	/* We need to always use lane 0 even if not part of the lane mask */
 	lanes |= KEYSTONE_SERDES_LANE(0);
 
 	/* Disable transmitter for all lanes */
-	for_each_lanes(lanes, lane) {
-		k2_rio_serdes_force_tx_idle(regs, lane);
-	}
+	for_each_lanes(lanes, lane)
+		k2_rio_serdes_force_tx_idle(lane, regs);
 
 	/* Initialize SerDes for requested lanes */
-	for_each_lanes(lanes, lane) {
-		k2_rio_serdes_lane_init(lane, rate, regs);
-	}
+	for_each_lanes(lanes, lane)
+		k2_rio_serdes_lane_init(lane, regs, rate);
 
 	/* Enable PLL via the PLL_ctrl */
 	__raw_writel(0xe0000000, regs + 0x1ff4);
@@ -904,82 +1773,166 @@ static int k2_rio_serdes_config_lanes(
 	if (res < 0) {
 		dev_dbg(dev, "SerDes: %s() lane mask 0x%x not OK\n",
 			__func__, lanes);
-		return -1;
+		return res;
 	}
 
 	/* Read the Tx termination */
 	tx_term_np = k2_rio_serdes_get_termination(regs);
 	dev_dbg(dev, "SerDes: termination tx is 0x%x\n", tx_term_np);
 
+	/* Set regulator output voltage and Rx boost/att start values */
 	for_each_lanes(lanes, lane) {
-		/* Set the saved Tx termination */
-		k2_rio_serdes_termination_config(regs, lane, tx_term_np);
+		dev_dbg(dev,
+			"SerDes: Tx vdreg = %d, Rx att start = %d, Rx boost start = %d for lane %d\n",
+			serdes->config->tx[lane].vdreg,
+			serdes->config->rx[lane].start_att,
+			serdes->config->rx[lane].start_boost,
+			lane);
 
-		/* Disable SerDes for this lane */
-		k2_rio_serdes_lane_disable(lane, regs);
+		k2_rio_serdes_tx_rx_set_equalizer(
+			lane,
+			regs,
+			serdes->config->tx[lane].vdreg,
+			serdes->config->rx[lane].start_att,
+			serdes->config->rx[lane].start_boost);
 	}
 
-	return 0;
+	for_each_lanes(lanes, lane) {
+		/* Serdes assert reset */
+		k2_rio_serdes_sb_assert_full_reset(lane, regs);
+
+		/* Set the Tx coefficients */
+		k2_rio_serdes_config_set_tx_coeffs(lane, regs,
+						   &(serdes->config->tx[lane]));
+
+		/* Force signal detect low, reset CDR, attenuation and boost */
+		k2_rio_serdes_reset_cdr_att_boost(lane, regs);
+
+		/* Serdes deassert reset */
+		k2_rio_serdes_sb_deassert_reset(lane, regs, 1);
+
+		/* Set the saved Tx termination */
+		k2_rio_serdes_termination_config(lane, regs, tx_term_np);
+	}
+
+	/* Wait lanes OK */
+	k2_rio_serdes_wait_lanes_ok(lanes, regs);
+
+	/* Eventually perform the DFE offset calibration */
+	if (serdes->config->do_dfe_cal) {
+		dev_dbg(dev, "SerDes: lanes OK, start offset calibration\n");
+
+		k2_rio_serdes_dfe_offset_calibration(lanes, regs, dev,
+						     serdes->config->tx);
+	}
+
+	/* Allow SerDes to re-acquire Signal Detect */
+	for_each_lanes(lanes, lane)
+		k2_rio_serdes_reacquire_sd(lane, regs);
+
+	/* Wait at least 10 usecs */
+	usleep_range(10, 50);
+
+	/* Apply Rx coefficients if any */
+	k2_rio_serdes_config_set_rx_coeffs(lanes, serdes->regs, serdes->dev,
+					   serdes->config->rx);
+
+	/* Check lane OK */
+	k2_rio_serdes_wait_lanes_ok(lanes, regs);
+
+	/* Disable lanes */
+	for_each_lanes(lanes, lane)
+		k2_rio_serdes_lane_disable(lane, regs);
+
+	return res;
 }
 
-static int k2_rio_serdes_shutdown_lanes(u32 lanes, void __iomem *regs)
+static int k2_rio_serdes_shutdown_lanes(u32 lanes,
+					struct keystone_serdes_data *serdes)
 {
+	void __iomem *regs = serdes->regs;
 	u32 lane;
+
+	dev_dbg(serdes->dev, "shutdown lanes 0x%x\n", lanes);
 
 	/* Disable lanes */
 	for_each_lanes(lanes, lane) {
 		k2_rio_serdes_lane_disable(lane, regs);
+		k2_rio_serdes_sb_set_overlay_bit29(lane, regs);
 	}
 
-	/* Disable PLL */
-	__raw_writel(0x80000000, regs + 0x1ff4);
+	/* Disable CMU TX PLL */
+	reg_finsr(regs + 0x1fc0 + 0x34, 30, 29, 0x0);
 
 	/* Reset CMU PLL for all lanes */
-	reg_rmw(regs + 0x10, BIT(28), BIT(28));
+	reg_finsr(regs + 0x10, 28, 28, 0x1);
 
 	return 0;
 }
 
-static void k2_rio_serdes_fix_unstable_single_lane(int lane,
-						   struct device *dev,
-						   void __iomem *regs)
+static void __k2_rio_serdes_fix_unstable_lane(
+	int lane,
+	void __iomem *regs,
+	struct device *dev,
+	struct keystone_serdes_config *serdes_config)
 {
+	int res;
+	struct keystone_serdes_lane_rx_config rx_coeff;
+
 	dev_dbg(dev, "SerDes: fix unstable lane %d\n", lane);
 
-	/* Display serdes boost/att */
-	k2_rio_serdes_display_att_boost(regs, lane, dev);
+	/* Get serdes current Rx boost/att */
+	k2_rio_serdes_get_att_boost(lane, regs, &rx_coeff);
 
-	/* Force SerDes signal detect LO (reset CDR, Att and Boost) */
-	reg_fill_field(regs + (lane * 0x200) + 0x200 + 0x04, 1, 2, 2);
+	/* Display Rx att/boost values */
+	dev_dbg(dev,
+		"SerDes: current Rx att = %d, boost = %d for lane %d\n",
+		rx_coeff.att, rx_coeff.boost, lane);
+
+	/* Force signal detect low, reset CDR, attenuation and boost */
+	k2_rio_serdes_reset_cdr_att_boost(lane, regs);
 
 	usleep_range(10, 50);
 
 	/* Allow SerDes to re-acquire signal detect */
-	k2_rio_serdes_reacquire_sd(regs, lane);
+	k2_rio_serdes_reacquire_sd(lane, regs);
 
 	dev_dbg(dev, "SerDes: lane %d Rx path reset done\n", lane);
 
-	/* Force att/boost calibration */
-	k2_rio_serdes_force_att_boost(regs, lane);
+	/* Force boost calibration */
+	res = k2_rio_serdes_force_boost_calibration(lane, regs);
+	if (res) {
+		dev_warn(dev,
+			 "SerDes: lane %d boost calibration workaround failed\n",
+			 lane);
+		return;
+	}
 
 	dev_dbg(dev, "SerDes: lane %d boost/att forcing done\n", lane);
 
-	/* Display serdes boost/att */
-	k2_rio_serdes_display_att_boost(regs, lane, dev);
+	/* Get serdes current Rx boost/att */
+	k2_rio_serdes_get_att_boost(lane, regs, &rx_coeff);
+
+	/* Display Rx att/boost values */
+	dev_dbg(dev,
+		"SerDes: current Rx att = %d, boost = %d for lane %d\n",
+		rx_coeff.att, rx_coeff.boost, lane);
 
 	dev_dbg(dev, "SerDes: lane %d fixed\n", lane);
 }
 
-static void k2_rio_serdes_fix_unstable_lanes(u32 lanes,
-					     struct device *dev,
-					     void __iomem *regs)
+static void k2_rio_serdes_fix_unstable_lanes(
+	u32 lanes,
+	struct keystone_serdes_data *serdes)
 {
+	struct device *dev = serdes->dev;
+	void __iomem *regs = serdes->regs;
 	unsigned int stat;
 	unsigned int i_dlpf;
 	u32 lane;
 
 	for_each_lanes(lanes, lane) {
-		/* Check rx valid */
+		/* Check Rx valid */
 		stat = (k2_rio_serdes_sb_read_selected_tbus(regs,
 							    lane + 1,
 							    0x2) & 0x0060) >> 5;
@@ -992,18 +1945,18 @@ static void k2_rio_serdes_fix_unstable_lanes(u32 lanes,
 				regs, lane + 1, 5) >> 10;
 
 			if ((i_dlpf == 0) || (i_dlpf == 3))
-				k2_rio_serdes_fix_unstable_single_lane(
-					lane, dev, regs);
+				__k2_rio_serdes_fix_unstable_lane(
+					lane, regs, dev, serdes->config);
 		}
 	}
 }
 
 static int k2_rio_serdes_start_tx_lanes(
 	u32 lanes,
-	struct device *dev,
-	void __iomem *regs,
-	struct keystone_serdes_config *serdes_config)
+	struct keystone_serdes_data *serdes)
 {
+	struct device *dev = serdes->dev;
+	void __iomem *regs = serdes->regs;
 	u32 lane;
 	int res;
 
@@ -1011,46 +1964,45 @@ static int k2_rio_serdes_start_tx_lanes(
 		dev_dbg(dev, "SerDes: start transmit for lane %d\n", lane);
 
 		/* Serdes assert reset */
-		k2_rio_serdes_sb_assert_reset(regs, lane);
+		k2_rio_serdes_sb_assert_reset(lane, regs);
 
-		/* Set tx coefficients */
-		k2_rio_serdes_config_set_tx_coeffs(
-			lane, regs, &(serdes_config->lane[lane]));
+		/* Set the Tx coefficients */
+		k2_rio_serdes_config_set_tx_coeffs(lane, regs,
+						   &(serdes->config->tx[lane]));
 
 		dev_dbg(dev,
 			"SerDes: lane %d: c1 = %d, c2 = %d, cm = %d, att = %d, 1lsb = %d, vreg = %d\n",
 			lane,
-			serdes_config->lane[lane].c1_coeff,
-			serdes_config->lane[lane].c2_coeff,
-			serdes_config->lane[lane].cm_coeff,
-			serdes_config->lane[lane].att,
-			serdes_config->lane[lane].pre_1lsb,
-			serdes_config->lane[lane].vreg);
+			serdes->config->tx[lane].c1_coeff,
+			serdes->config->tx[lane].c2_coeff,
+			serdes->config->tx[lane].cm_coeff,
+			serdes->config->tx[lane].att,
+			serdes->config->tx[lane].pre_1lsb,
+			serdes->config->tx[lane].vreg);
 
 		/* Force Tx normal to enable the transmitter */
-		k2_rio_serdes_force_tx_normal(regs, lane);
+		k2_rio_serdes_force_tx_normal(lane, regs);
 
 		/* Serdes de-assert reset */
-		k2_rio_serdes_sb_deassert_reset(regs, 0, lane);
+		k2_rio_serdes_sb_deassert_reset(lane, regs, 0);
 
 		/* Enable corresponding lane */
 		k2_rio_serdes_lane_enable(lane, regs);
 	}
 
-	/* Clear overlay bit to bring lane out of reset */
-	for_each_lanes(lanes, lane) {
-		k2_rio_serdes_sb_clear_overlay_bit29(regs, lane);
-	}
+	/* Clear overlay bit to bring lanes out of reset */
+	for_each_lanes(lanes, lane)
+		k2_rio_serdes_sb_clear_overlay_bit29(lane, regs);
 
 	/* Wait lanes OK */
 	res = k2_rio_serdes_wait_lanes_ok(lanes, regs);
 	if (res < 0) {
 		dev_dbg(dev, "SerDes: %s() lane mask 0x%x not OK\n",
 			__func__, lanes);
-		return -1;
+		return res;
 	}
 
-	return 0;
+	return res;
 }
 
 static const struct keystone_serdes_ops k2_serdes_ops = {
@@ -1059,28 +2011,390 @@ static const struct keystone_serdes_ops k2_serdes_ops = {
 	.wait_lanes_ok      = k2_rio_serdes_wait_lanes_sd,
 	.shutdown_lanes     = k2_rio_serdes_shutdown_lanes,
 	.fix_unstable_lanes = k2_rio_serdes_fix_unstable_lanes,
+	.calibrate_lanes    = k2_rio_serdes_calibrate_lanes,
 };
 
 /*---------------------------------------------------------------------------*/
 
+/* Sysfs management */
+struct serdes_attribute {
+	struct attribute attr;
+	ssize_t (*show)(struct kobject *kobj,
+			struct serdes_attribute *attr,
+			char *buf);
+	ssize_t	(*store)(struct kobject *kobj,
+			 struct serdes_attribute *attr,
+			 const char *,
+			 size_t);
+	struct keystone_serdes_data *serdes;
+	void *context;
+};
+
+#define __SERDES_ATTR(_name, _mode, _show, _store, _ctxt) \
+	{						\
+		.attr = {				\
+			.name = __stringify(_name),	\
+			.mode = _mode },		\
+		.show	= _show,			\
+		.store	= _store,		\
+		.context = (_ctxt),			\
+	 }
+
+#define to_serdes_attr(_attr) container_of(_attr, struct serdes_attribute, attr)
+
+static ssize_t serdes_tx_attr_show(struct kobject *kobj,
+				   struct serdes_attribute *attr,
+				   char *buf)
+{
+	struct keystone_serdes_data *serdes =
+		(struct keystone_serdes_data *) attr->context;
+	struct keystone_serdes_config *serdes_config = serdes->config;
+	u32 lane;
+	int len = 0;
+
+	for (lane = 0; lane < KEYSTONE_SERDES_MAX_LANES; lane++) {
+		u32 val = -1;
+
+		if (strcmp("c1", attr->attr.name) == 0)
+			val = serdes_config->tx[lane].c1_coeff;
+		if (strcmp("c2", attr->attr.name) == 0)
+			val = serdes_config->tx[lane].c2_coeff;
+		if (strcmp("cm", attr->attr.name) == 0)
+			val = serdes_config->tx[lane].cm_coeff;
+		if (strcmp("pre_1lsb", attr->attr.name) == 0)
+			val = serdes_config->tx[lane].pre_1lsb;
+		if (strcmp("att", attr->attr.name) == 0)
+			val = serdes_config->tx[lane].att;
+		if (strcmp("vreg", attr->attr.name) == 0)
+			val = serdes_config->tx[lane].vreg;
+
+		if (lane == 0)
+			len = snprintf(buf + len, PAGE_SIZE, "%d", val);
+		else
+			len += snprintf(buf + len, PAGE_SIZE, " %d", val);
+	}
+
+	len += snprintf(buf + len, PAGE_SIZE, "\n");
+
+	return len;
+}
+
+static ssize_t serdes_tx_attr_store(struct kobject *kobj,
+				    struct serdes_attribute *attr,
+				    const char *buf,
+				    size_t size)
+{
+	struct keystone_serdes_data *serdes =
+		(struct keystone_serdes_data *) attr->context;
+	struct keystone_serdes_config *serdes_config = serdes->config;
+	u32 lane;
+	u32 val[4];
+
+	if (sscanf(buf, "%d %d %d %d", &val[0], &val[1], &val[2], &val[3]) < 4)
+		return -EINVAL;
+
+	for (lane = 0; lane < KEYSTONE_SERDES_MAX_LANES; lane++) {
+
+		/* Update Tx coefficients */
+		if (strcmp("c1", attr->attr.name) == 0)
+			serdes_config->tx[lane].c1_coeff = val[lane];
+		if (strcmp("c2", attr->attr.name) == 0)
+			serdes_config->tx[lane].c2_coeff = val[lane];
+		if (strcmp("cm", attr->attr.name) == 0)
+			serdes_config->tx[lane].cm_coeff = val[lane];
+		if (strcmp("pre_1lsb", attr->attr.name) == 0)
+			serdes_config->tx[lane].pre_1lsb = val[lane];
+		if (strcmp("att", attr->attr.name) == 0)
+			serdes_config->tx[lane].att = val[lane];
+		if (strcmp("vreg", attr->attr.name) == 0)
+			serdes_config->tx[lane].vreg = val[lane];
+
+		/* Serdes assert reset */
+		k2_rio_serdes_sb_assert_full_reset(lane, serdes->regs);
+
+		/* Apply the Tx coefficients */
+		k2_rio_serdes_config_set_tx_coeffs(lane,
+						   serdes->regs,
+						   &(serdes_config->tx[lane]));
+
+		/* Serdes de-assert reset */
+		k2_rio_serdes_sb_deassert_reset(lane, serdes->regs, 1);
+	}
+
+	return size;
+}
+
+static ssize_t serdes_rx_attr_show(struct kobject *kobj,
+				   struct serdes_attribute *attr,
+				   char *buf)
+{
+	struct keystone_serdes_lane_rx_config rx_coeff;
+	struct keystone_serdes_data *serdes =
+		(struct keystone_serdes_data *) attr->context;
+	u32 lane;
+	int len = 0;
+
+	memset(&rx_coeff, -1, sizeof(rx_coeff));
+
+	for (lane = 0; lane < KEYSTONE_SERDES_MAX_LANES; lane++) {
+		u32 val;
+
+		/* Get current Rx att/boost values */
+		k2_rio_serdes_get_att_boost(lane, serdes->regs, &rx_coeff);
+
+		/* If lanes are not started yet use the calibrated values */
+		if (rx_coeff.att == 0)
+			rx_coeff.att = serdes->config->rx[lane].mean_att;
+
+		if (rx_coeff.boost == 0)
+			rx_coeff.boost = serdes->config->rx[lane].mean_boost;
+
+		/* If coefficient is not set, set it as zero (lane disabled) */
+		if (rx_coeff.att == -1)
+			rx_coeff.att = 0;
+
+		if (rx_coeff.boost == -1)
+			rx_coeff.boost = 0;
+
+		if (strcmp("att", attr->attr.name) == 0)
+			val = rx_coeff.att;
+		else
+			val = rx_coeff.boost;
+
+		if (lane == 0)
+			len = snprintf(buf + len, PAGE_SIZE, "%d", val);
+		else
+			len += snprintf(buf + len, PAGE_SIZE, " %d", val);
+	}
+
+	len += snprintf(buf + len, PAGE_SIZE, "\n");
+
+	return len;
+}
+
+static ssize_t serdes_rx_attr_store(struct kobject *kobj,
+				    struct serdes_attribute *attr,
+				    const char *buf,
+				    size_t size)
+{
+	struct keystone_serdes_data *serdes =
+		(struct keystone_serdes_data *) attr->context;
+	struct keystone_serdes_config *serdes_config = serdes->config;
+	u32 lane;
+	u32 lanes = 0;
+	u32 val[4];
+
+	if (sscanf(buf, "%d %d %d %d", &val[0], &val[1], &val[2], &val[3]) < 4)
+		return -EINVAL;
+
+	for (lane = 0; lane < KEYSTONE_SERDES_MAX_LANES; lane++) {
+		/* Set att or boost coefficients */
+		if (strcmp("att", attr->attr.name) == 0)
+			serdes_config->rx[lane].mean_att   = val[lane];
+		else
+			serdes_config->rx[lane].mean_boost = val[lane];
+
+		lanes |= BIT(lane);
+	}
+
+	return size;
+}
+
+static ssize_t serdes_n_attr_show(struct kobject *kobj,
+				  struct attribute *attr,
+				  char *buf)
+{
+	struct serdes_attribute *attribute = to_serdes_attr(attr);
+
+	if (!attribute->show)
+		return -EIO;
+
+	return attribute->show(kobj, attribute, buf);
+}
+
+static ssize_t serdes_n_attr_store(struct kobject *kobj,
+				   struct attribute *attr,
+				   const char *buf,
+				   size_t count)
+{
+	struct serdes_attribute *attribute = to_serdes_attr(attr);
+
+	if (!attribute->store)
+		return -EIO;
+
+	return attribute->store(kobj, attribute, buf, count);
+}
+
+static const struct sysfs_ops serdes_sysfs_ops = {
+	.show  = serdes_n_attr_show,
+	.store = serdes_n_attr_store,
+};
+
+static struct serdes_attribute serdes_rx_att_attribute =
+	__SERDES_ATTR(att, S_IRUGO | S_IWUSR,
+		      serdes_rx_attr_show,
+		      serdes_rx_attr_store,
+		      NULL);
+
+static struct serdes_attribute serdes_rx_boost_attribute =
+	__SERDES_ATTR(boost, S_IRUGO | S_IWUSR,
+		      serdes_rx_attr_show,
+		      serdes_rx_attr_store,
+		      NULL);
+
+static struct serdes_attribute serdes_tx_cm_attribute =
+	__SERDES_ATTR(cm, S_IRUGO | S_IWUSR,
+		      serdes_tx_attr_show,
+		      serdes_tx_attr_store,
+		      NULL);
+
+static struct serdes_attribute serdes_tx_c1_attribute =
+	__SERDES_ATTR(c1, S_IRUGO | S_IWUSR,
+		      serdes_tx_attr_show,
+		      serdes_tx_attr_store,
+		      NULL);
+
+static struct serdes_attribute serdes_tx_c2_attribute =
+	__SERDES_ATTR(c2, S_IRUGO | S_IWUSR,
+		      serdes_tx_attr_show,
+		      serdes_tx_attr_store,
+		      NULL);
+
+static struct serdes_attribute serdes_tx_att_attribute =
+	__SERDES_ATTR(att, S_IRUGO | S_IWUSR,
+		      serdes_tx_attr_show,
+		      serdes_tx_attr_store,
+		      NULL);
+
+static struct serdes_attribute serdes_tx_lsb_attribute =
+	__SERDES_ATTR(pre_1lsb, S_IRUGO | S_IWUSR,
+		      serdes_tx_attr_show,
+		      serdes_tx_attr_store,
+		      NULL);
+
+static struct serdes_attribute serdes_tx_vreg_attribute =
+	__SERDES_ATTR(vreg, S_IRUGO | S_IWUSR,
+		      serdes_tx_attr_show,
+		      serdes_tx_attr_store,
+		      NULL);
+
+static struct attribute *serdes_rx_attrs[] = {
+	&serdes_rx_att_attribute.attr,
+	&serdes_rx_boost_attribute.attr,
+	NULL
+};
+
+static struct attribute *serdes_tx_attrs[] = {
+	&serdes_tx_cm_attribute.attr,
+	&serdes_tx_c1_attribute.attr,
+	&serdes_tx_c2_attribute.attr,
+	&serdes_tx_att_attribute.attr,
+	&serdes_tx_lsb_attribute.attr,
+	&serdes_tx_vreg_attribute.attr,
+	NULL
+};
+
+static struct kobj_type serdes_rx_type = {
+	.sysfs_ops     = &serdes_sysfs_ops,
+	.default_attrs = serdes_rx_attrs,
+};
+
+static struct kobj_type serdes_tx_type = {
+	.sysfs_ops     = &serdes_sysfs_ops,
+	.default_attrs = serdes_tx_attrs,
+};
+
+static int keystone_rio_serdes_sysfs_create(
+	struct keystone_serdes_data *serdes,
+	struct keystone_serdes_config *serdes_config)
+{
+	struct device *dev = serdes->dev;
+	int res;
+
+	serdes->serdes_kobj = kobject_create_and_add(
+		"serdes",
+		kobject_get(&dev->kobj));
+
+	if (!serdes->serdes_kobj) {
+		dev_err(dev, "unable create sysfs serdes file\n");
+		kobject_put(&dev->kobj);
+		return -ENOMEM;
+	}
+
+	/* Rx entries */
+	serdes_rx_att_attribute.context   = (void *) serdes;
+	serdes_rx_boost_attribute.context = (void *) serdes;
+
+	res = kobject_init_and_add(&serdes->serdes_rx_kobj,
+				   &serdes_rx_type,
+				   kobject_get(serdes->serdes_kobj),
+				   "rx");
+	if (res) {
+		dev_err(dev, "unable create sysfs serdes/rx files\n");
+		kobject_put(&dev->kobj);
+		kobject_put(serdes->serdes_kobj);
+		return res;
+	}
+
+	/* Tx entries */
+	serdes_tx_cm_attribute.context   = (void *) serdes;
+	serdes_tx_c1_attribute.context   = (void *) serdes;
+	serdes_tx_c2_attribute.context   = (void *) serdes;
+	serdes_tx_att_attribute.context  = (void *) serdes;
+	serdes_tx_lsb_attribute.context  = (void *) serdes;
+	serdes_tx_vreg_attribute.context = (void *) serdes;
+
+	res = kobject_init_and_add(&serdes->serdes_tx_kobj,
+				   &serdes_tx_type,
+				   kobject_get(serdes->serdes_kobj),
+				   "tx");
+	if (res) {
+		dev_err(dev, "unable create sysfs serdes/tx files\n");
+		kobject_put(&dev->kobj);
+		kobject_put(serdes->serdes_kobj);
+		return res;
+	}
+
+	return 0;
+}
+
+/*---------------------------------------------------------------------------*/
+
 int keystone_rio_serdes_register(u16 serdes_type,
-				 const struct keystone_serdes_ops **p_ops)
+				 void __iomem *regs,
+				 void __iomem *sts_reg,
+				 struct device *dev,
+				 struct keystone_serdes_data *serdes,
+				 struct keystone_serdes_config *serdes_config)
 {
 	int res = 0;
 
-	if (p_ops == NULL)
+	memset(serdes, 0, sizeof(*serdes));
+
+	if (serdes == NULL)
 		return -EINVAL;
 
 	switch (serdes_type) {
 	case KEYSTONE_SERDES_TYPE_K1:
-		*p_ops = &k1_serdes_ops;
+		serdes->ops = &k1_serdes_ops;
 		break;
 	case KEYSTONE_SERDES_TYPE_K2:
-		*p_ops = &k2_serdes_ops;
+		serdes->ops = &k2_serdes_ops;
 		break;
 	default:
 		res = -EINVAL;
 	}
 
+	if (res)
+		goto error;
+
+	serdes->dev     = dev;
+	serdes->config  = serdes_config;
+	serdes->regs    = regs;
+	serdes->sts_reg = sts_reg;
+
+	res = keystone_rio_serdes_sysfs_create(serdes, serdes_config);
+
+error:
 	return res;
 }

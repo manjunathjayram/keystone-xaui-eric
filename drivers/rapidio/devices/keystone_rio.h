@@ -145,7 +145,6 @@
  * RapidIO global definitions
  */
 #define KEYSTONE_RIO_MAX_PORT		4
-#define KEYSTONE_RIO_BLK_NUM		9
 #define KEYSTONE_RIO_MAX_MBOX		4    /* 4 in multi-segment,
 						64 in single-seg */
 #define KEYSTONE_RIO_MAX_PKT_FW_ENTRIES 8    /* max of packet forwarding
@@ -155,6 +154,21 @@
 #define KEYSTONE_RIO_SGLIST_SIZE	3
 
 #define KEYSTONE_RIO_PKT_FW_BRR_NUM     1    /* BRR used for packet forwarding */
+
+/*
+ * Block definition
+ */
+#define KEYSTONE_RIO_BLK_NUM            9
+
+#define KEYSTONE_RIO_BLK_MMR            0
+#define KEYSTONE_RIO_BLK_LSU            1
+#define KEYSTONE_RIO_BLK_MAU            2
+#define KEYSTONE_RIO_BLK_TXU            3
+#define KEYSTONE_RIO_BLK_RXU            4
+#define KEYSTONE_RIO_BLK_PORT0          5
+#define KEYSTONE_RIO_BLK_PORT1          6
+#define KEYSTONE_RIO_BLK_PORT2          7
+#define KEYSTONE_RIO_BLK_PORT3          8
 
 /*
  * Dev Id and dev revision
@@ -234,6 +248,7 @@ struct keystone_rio_board_controller_info {
 				 * 1 - Large size, 65536 devices. */
 	u16             serdes_type;
 	u32             serdes_baudrate;
+	u32             serdes_calibration;
 	u32             path_mode;
 	u32             port_register_timeout;
 	u32             pkt_forwarding;
