@@ -30,9 +30,9 @@
 #define KEYSTONE_SERDES_BAUD_5_000   3
 #define KEYSTONE_SERDES_BAUD_6_250   4
 
-#define KEYSTONE_SERDES_FULL_RATE    0
+#define KEYSTONE_SERDES_QUARTER_RATE 0
 #define KEYSTONE_SERDES_HALF_RATE    1
-#define KEYSTONE_SERDES_QUARTER_RATE 2
+#define KEYSTONE_SERDES_FULL_RATE    2
 
 /*
  * SerDes PHY transmistter configuration
@@ -44,16 +44,31 @@ struct keystone_serdes_lane_tx_config {
 	u32 cm_coeff;		/* CM coefficient */
 	u32 att;		/* attenuator */
 	u32 vreg;		/* regulator voltage */
+	u32 vdreg;              /* output swing voltage regulator */
+};
+
+struct keystone_serdes_lane_rx_config {
+	u32 att;                /* current attenuator */
+	u32 boost;              /* current boost */
+	u32 mean_att;           /* mean request attenuator start coeff */
+	u32 mean_boost;         /* mean request boost start coeff */
+	u32 start_att;          /* attenuator start value */
+	u32 start_boost;        /* boost start value */
 };
 
 struct keystone_serdes_config {
-	u32 cfg_cntl;           /* setting control reg cfg */
-	u16 serdes_cfg_pll;     /* SerDes PLL cfg */
 	u16 prescalar_srv_clk;  /* prescalar fo ip_clk */
 
-	/* Per-lane PHY Tx coefficients */
-	struct keystone_serdes_lane_tx_config lane[KEYSTONE_SERDES_MAX_LANES];
+	/* Per-lane PHY Tx and Rx coefficients */
+	struct keystone_serdes_lane_tx_config tx[KEYSTONE_SERDES_MAX_LANES];
+	struct keystone_serdes_lane_rx_config rx[KEYSTONE_SERDES_MAX_LANES];
+
+	u32 cal_timeout;        /* calibration timeout */
+	int do_dfe_cal;         /* if 1, perform DFE offset calibration */
+	u32 rate;               /* Configurated rate */
 };
+
+struct keystone_serdes_data;
 
 /*
  * SerDes ops
@@ -61,23 +76,48 @@ struct keystone_serdes_config {
 struct keystone_serdes_ops {
 	int (*config_lanes)(u32 lanes,
 			    u32 baud,
-			    struct device *dev,
-			    void __iomem *regs,
-			    void __iomem *sts_reg,
-			    struct keystone_serdes_config *serdes_config);
+			    struct keystone_serdes_data *serdes);
 	int (*start_tx_lanes)(u32 lanes,
-			      struct device *dev,
-			      void __iomem *regs,
-			      struct keystone_serdes_config *serdes_config);
-	int (*wait_lanes_ok)(u32 lanes, void __iomem *regs);
-	int (*shutdown_lanes)(u32 lanes, void __iomem *regs);
+			      struct keystone_serdes_data *serdes);
+	int (*wait_lanes_ok)(u32 lanes,
+			     struct keystone_serdes_data *serdes);
+	int (*shutdown_lanes)(u32 lanes,
+			      struct keystone_serdes_data *serdes);
 	void (*fix_unstable_lanes)(u32 lanes,
-				   struct device *dev,
-				   void __iomem *regs);
+				   struct keystone_serdes_data *serdes);
+	int (*calibrate_lanes)(u32 lanes,
+			       struct keystone_serdes_data *serdes);
+};
+
+/*
+ * SerDes structure
+ */
+struct keystone_serdes_data {
+	/* SerDes Ops */
+	const struct keystone_serdes_ops *ops;
+
+	/* Associated device */
+	struct device *dev;
+
+	/* SerDes register base and STS register for K1 */
+	void __iomem *regs;
+	void __iomem *sts_reg;
+
+	/* Pointer to the SerDes configuration */
+	struct keystone_serdes_config *config;
+
+	/* Sysfs management */
+	struct kobject *serdes_kobj;
+	struct kobject  serdes_rx_kobj;
+	struct kobject  serdes_tx_kobj;
 };
 
 extern int keystone_rio_serdes_register(
 	u16 serdes_type,
-	const struct keystone_serdes_ops **p_ops);
+	void __iomem *regs,
+	void __iomem *sts_reg,
+	struct device *dev,
+	struct keystone_serdes_data *serdes,
+	struct keystone_serdes_config *serdes_config);
 
 #endif /* KEYSTONE_RIO_SERDES_H */

@@ -25,23 +25,8 @@ dma-coherent:     Indicate if DirectIO operations support hw cache-coherency.
 		  On KeyStone platforms it is recommended to set this property
 		  when running on ARM cores.
 keystone2-serdes: Indicate that the driver needs to use KeyStone 2 SerDes
-		  initialization. If not specified, it will KeyStone 1
+		  initialization. If not specified, it will be KeyStone 1
 		  initialization instead.
-serdes_1sb:       Allow to set the TX driver 1 lsb pre emphasis setting for KeyStone
-		  2 SerDes. There is one value per lane. Default value is 0.
-serdes_c1:        Allow to override value of TX driver C1 coefficient for KeyStone
-		  2 SerDes. There is one value per lane. Default value if not
-		  specified is 6 for 3.125Gbps and 4 for other baudrates.
-serdes_c2:        Allow to override value of TX driver C2 coefficient for KeyStone
-		  2 SerDes. There is one value per lane. Default value is 0 if not
-		  specified.
-serdes_cm:	  Allow to override value of TX driver CM coefficient for KeyStone
-		  2 SerDes. There is one value per lane. Default value is 0.
-serdes_att:       Allow to set attenuator setting of TX driver for KeyStone 2 SerDes.
-		  There is one value per lane. Default value is 12 if not specified.
-serdes_vreg:      Allow to set regulator voltage setting for TX driver for KeyStone 2
-		  SerDes. There is one value per lane. Default value is 4 if not
-		  specified.
 baudrate:         This the lane baudrate configuration number (from 0 to 3).
 		  If not specified the baudrate configuration 0 will be used
                   (1.25Gbps).
@@ -74,8 +59,46 @@ pkt-forward:      This allow to define the routing table for hardware packet
 		  0x3 to port 1.
 		  All the 8 entries must be referenced with the 3 values.
 
+SerDes optional properties
+--------------------------
+
+These properties are used to tune the KeyStone 2 SerDes hardware parameters and
+coefficients. For more information please refer to KeyStone II Architecture
+Serializer/Deserializer (SerDes) User Guide (SPRUHO3) available on www.ti.com.
+
+serdes_1sb:       Allow to set the TX driver 1 lsb pre emphasis setting for KeyStone
+		  2 SerDes. There is one value per lane. Default value is 0.
+serdes_c1:        Allow to override value of TX driver C1 coefficient for KeyStone
+		  2 SerDes. There is one value per lane. Default value if not
+		  specified is 6 for 3.125Gbps and 4 for other baudrates.
+serdes_c2:        Allow to override value of TX driver C2 coefficient for KeyStone
+		  2 SerDes. There is one value per lane. Default value is 0 if not
+		  specified.
+serdes_cm:	  Allow to override value of TX driver CM coefficient for KeyStone
+		  2 SerDes. There is one value per lane. Default value is 0.
+serdes_att:       Allow to set attenuator setting of TX driver for KeyStone 2 SerDes.
+		  There is one value per lane. Default value is 12 if not specified.
+serdes_vreg:      Allow to set regulator voltage setting for TX driver for KeyStone 2
+		  SerDes. There is one value per lane. Default value is 4 if not
+		  specified.
+serdes_vdreg:     Allow to set lane regulator output voltage setting for TX driver
+                  for KeyStone 2. Default value is 1 (VNOM) if not specified.
+serdes_rx_att_start:
+                  Allow to set attenuator start value of RX driver for Keystone 2
+                  SerDes. There is one value per lane. Default value is 3.
+serdes_rx_boost_start:
+                  Allow to set attenuator start value of RX driver for Keystone 2
+		  SerDes. There is one value per lane. Default value is 3.
+serdes_rx_att:    Allow to set attenuator static value of RX driver for Keystone 2
+                  SerDes. If set to -1, dynamic calibration is used instead.
+                  There is one value per lane. Default value is -1 (dynamic cal).
+serdes_rx_boost:  Allow to set attenuator start value of RX driver for Keystone 2
+                  SerDes. If set to -1, dynamic calibration is used instead.
+                  There is one value per lane. Default value is -1 (dynamic cal).
+
 Sub-nodes
 ---------
+
 Each mailbox (according to num-mboxes) must be added as subnodes "mbox-%d" with %d the
 mailbox number (from 0 to n).
 This sub-node has the following properties:
