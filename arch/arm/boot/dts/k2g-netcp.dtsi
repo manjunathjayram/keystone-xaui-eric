@@ -1,0 +1,125 @@
+qmss: qmss@2a40000 {
+	compatible = "ti,keystone-navigator-qmss";
+	dma-coherent;
+	#address-cells = <1>;
+	#size-cells = <1>;
+	clocks = <&chipclk13>;
+	ranges;
+	queue-range	= <0 0x80>;
+	linkram0	= <0x4020000 0x7ff>;
+
+	qmgrs {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+		qmgr0 {
+			managed-queues = <0 0x80>;
+			reg = <0x4100000 0x800>,
+			      <0x4040000 0x100>,
+			      <0x4080000 0x800>,
+			      <0x40c0000 0x800>;
+			reg-names = "peek", "config",
+				    "region", "push";
+		};
+
+	};
+	queue-pools {
+		qpend {
+			qpend-0 {
+				qrange = <77 8>;
+				interrupts =<0 308 0xf04 0 309 0xf04 0 310 0xf04
+					     0 311 0xf04 0 312 0xf04 0 313 0xf04
+					     0 314 0xf04 0 315 0xf04>;
+			};
+		};
+		general-purpose {
+			gp-0 {
+				qrange = <112 8>;
+			};
+			netcp-tx {
+				qrange = <5 8>;
+				qalloc-by-id;
+			};
+		};
+	};
+
+	descriptor-regions {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+		region-5 {
+			id = <5>;
+			region-spec = <511 128>; /* num_desc desc_size */
+			link-index = <0x600>;
+		};
+	};
+}; /* qmss */
+
+knav_dmas: knav_dmas@0 {
+	compatible = "ti,keystone-navigator-dma";
+	clocks = <&papllclk>;
+	#address-cells = <1>;
+	#size-cells = <1>;
+	ranges;
+	ti,navigator-cloud-address = <0x40c0000>;
+
+	dma_gbe: dma_gbe@0 {
+		reg = <0x4010000 0x100>,
+			  <0x4011000 0x1000>,
+			  <0x4012000 0x1000>,
+			  <0x4010100 0x80>,
+			  <0x4013000 0x1000>;
+		reg-names = "global", "txchan", "rxchan",
+				"txsched", "rxflow";
+	};
+
+};
+
+netcp: netcp@4200000 {
+	reg = <0x2620110 0x8>; // in bootcfg
+	reg-names = "efuse";
+	compatible = "ti,netcp-1.0";
+	#address-cells = <1>;
+	#size-cells = <1>;
+	ranges;
+
+	clocks = <&papllclk>, <&clkcpgmac>, <&chipclk12>;
+	dma-coherent;
+	/* big-endian; */
+
+	ti,navigator-dmas = <&dma_gbe 0>, <&dma_gbe 0>;
+	ti,navigator-dma-names = "netrx0", "nettx";
+
+	netcp-devices {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+		gbe@0x4200000 {
+			label = "netcp-gbe";
+			reg = <0x4200000 0x40000>;
+			/* enable-ale; */
+			tx-queue = <5>;
+			tx-channel = "nettx";
+
+			interfaces {
+				gbe0: interface-0 {
+					slave-port = <0>;
+					link-interface	= <4>;
+				};
+			};
+		};
+	};
+
+	netcp-interfaces {
+		interface-0 {
+			rx-channel = "netrx0";
+			rx-pool = <256 5>;
+			tx-pool = <128 5>;
+			rx-queue-depth = <128 64 0 0>;
+			rx-buffer-size = <1518 4096 0 0>;
+			rx-queue = <77>;
+			tx-completion-queue = <78>;
+			efuse-mac = <1>;
+			netcp-gbe = <&gbe0>;
+	};
+};
