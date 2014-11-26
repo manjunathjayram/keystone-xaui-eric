@@ -27,7 +27,6 @@
 #include <linux/highmem.h>
 #include <linux/interrupt.h>
 #include <linux/dmaengine.h>
-#include <linux/net_tstamp.h>
 #include <linux/dma-mapping.h>
 #include <linux/scatterlist.h>
 #include <linux/byteorder/generic.h>
@@ -1007,12 +1006,6 @@ struct pa2_lut_entry {
 	struct netcp_addr	*naddr;
 };
 
-struct pa2_timestamp_info {
-	u32	mult;
-	u32	shift;
-	u64	system_offset;
-};
-
 struct pa2_intf {
 	struct pa2_device		*pa_device;
 	struct net_device		*net_device;
@@ -1021,9 +1014,6 @@ struct pa2_intf {
 	unsigned			 data_queue_num;
 	u32				 saved_ss_state;
 	char				 tx_chan_name[24];
-
-	bool				 tx_timestamp_enable;
-	bool				 rx_timestamp_enable;
 };
 
 struct pa2_device {
@@ -1035,8 +1025,6 @@ struct pa2_device {
 	const char			*rx_chan_name;
 	unsigned			 cmd_flow_num;
 	unsigned			 cmd_queue_num;
-
-	struct pa2_timestamp_info	timestamp_info;
 
 	struct pa2_mailbox_regs __iomem		*reg_mailbox;
 	struct pa2_ra_bridge_regs __iomem	*reg_ra_bridge;
@@ -1069,8 +1057,6 @@ struct pa2_device {
 	struct pa2_lut_entry		 *lut;
 	u32				 lut_size;
 
-	u32				 ts_not_req;
-	int				 force_no_hwtstamp;
 	const char			*pdsp_fw[PA2_NUM_PDSPS];
 };
 
@@ -1430,122 +1416,6 @@ static int pa2_conv_routing_info(struct pa2_frm_forward *fwd_info,
 	return PA2_OK;
 }
 
-
-/*
- *  Convert a raw PA timer count to nanoseconds
- */
-static inline u64 tstamp_raw_to_ns(struct pa2_device *pa_dev, u64 raw)
-{
-	return (raw * pa_dev->timestamp_info.mult)
-		>> pa_dev->timestamp_info.shift;
-}
-
-static u64 pa2_to_sys_time(struct pa2_device *pa_dev, u64 pa_ticks)
-{
-	s64 temp;
-	u64 result;
-
-	/* we need to compute difference from wallclock
-	*  to time from boot dynamically since
-	*  it will change whenever absolute time is adjusted by
-	*  protocols above (ntp, ptpv2)
-	*/
-
-	temp = ktime_to_ns(ktime_get_monotonic_offset());
-	result = (u64)((s64)pa_dev->timestamp_info.system_offset - temp +
-			(s64)tstamp_raw_to_ns(pa_dev, pa_ticks));
-
-	return result;
-}
-
-static inline u64 tstamp_get_raw(struct pa2_device *pa_dev)
-{
-	struct pa2_ppu_cp_timer_regs __iomem *timer_reg =
-			pa_dev->ppu[PA2_INGRESS0_PDSP0].cp_timer;
-	u32 low, high, high2;
-	u64 raw;
-	int count;
-
-	count = 0;
-	do {
-		high  = __raw_readl(pa_dev->pa_sram +
-				    PA2_SYS_TIMESTAMP_ADDR_OFFSET);
-		low   = __raw_readl(&timer_reg->timer_value);
-		high2 = __raw_readl(pa_dev->pa_sram +
-				    PA2_SYS_TIMESTAMP_ADDR_OFFSET);
-	} while ((high != high2) && (++count < 32));
-
-	raw = (((u64)high) << 16) | (u64)(0x0000ffff - (low & 0x0000ffff));
-
-	return raw;
-}
-
-/*
- * calibrate the PA timer to the system time
- * ktime_get gives montonic time
- * ktime_to_ns converts ktime to ns
- * this needs to be called before doing conversions
- */
-static void pa2_calibrate_with_system_timer(struct pa2_device *pa_dev)
-{
-	ktime_t ktime1, ktime2;
-	u64 pa_ticks;
-	u64 pa_ns;
-	u64 sys_ns1, sys_ns2;
-
-	/* Get the two values with minimum delay between */
-	ktime1 = ktime_get();
-	pa_ticks = tstamp_get_raw(pa_dev);
-	ktime2 = ktime_get();
-
-	/* Convert both values to nanoseconds */
-	sys_ns1 = ktime_to_ns(ktime1);
-	pa_ns   = tstamp_raw_to_ns(pa_dev, pa_ticks);
-	sys_ns2 = ktime_to_ns(ktime2);
-
-	/* compute offset */
-	pa_dev->timestamp_info.system_offset = sys_ns1 +
-		((sys_ns2 - sys_ns1) / 2) - pa_ns;
-}
-
-static int pa2_config_timer(struct pa2_device *pa_dev,
-			enum pa2_timerstamp_scaler_factor factor)
-{
-	unsigned long pa_rate;
-	u64 max_sec;
-	struct pa2_ppu_cp_timer_regs __iomem *timer_reg =
-			pa_dev->ppu[PA2_INGRESS0_PDSP0].cp_timer;
-
-	/* Start PDSP timer at a prescaler of divide by 2 */
-	__raw_writel(0xffff, &timer_reg->timer_load);
-	__raw_writel((PA2_SS_TIMER_CNTRL_REG_GO |
-		      PA2_SS_TIMER_CNTRL_REG_MODE |
-		      PA2_SS_TIMER_CNTRL_REG_PSE |
-		      (factor << PA2_SS_TIMER_CNTRL_REG_PRESCALE_SHIFT)),
-		      &timer_reg->timer_control);
-
-	/* calculate the multiplier/shift to
-	 * convert PA counter ticks to ns. */
-	pa_rate = clk_get_rate(pa_dev->clk) / 2;
-
-	max_sec = ((1ULL << 48) - 1) + (pa_rate - 1);
-	do_div(max_sec, pa_rate);
-
-	clocks_calc_mult_shift(&pa_dev->timestamp_info.mult,
-			&pa_dev->timestamp_info.shift, pa_rate,
-			NSEC_PER_SEC, max_sec);
-
-	dev_info(pa_dev->dev, "pa_clk_rate(%lu HZ),mult(%u),shift(%u)\n",
-			pa_rate, pa_dev->timestamp_info.mult,
-			pa_dev->timestamp_info.shift);
-
-	pa_dev->timestamp_info.system_offset = 0;
-
-	pa2_calibrate_with_system_timer(pa_dev);
-
-	return 0;
-}
-
 static void pa2_get_version(struct pa2_device *pa_dev)
 {
 	u32 version, i;
@@ -1742,130 +1612,6 @@ static int pa2_submit_tx_packet(struct pa2_packet *p_info)
 
 #define	PA2_CONTEXT_MASK	0xffff0000
 #define	PA2_CONTEXT_CONFIG	0xdead0000
-#define	PA2_CONTEXT_TSTAMP	0xbeef0000
-
-#define	TSTAMP_TIMEOUT	(HZ * 5)	/* 5 seconds (arbitrary) */
-
-struct tstamp_pending {
-	struct list_head	 list;
-	u32			 context;
-	struct sock		*sock;
-	struct sk_buff		*skb;
-	struct pa2_device	*pa_dev;
-	struct timer_list	 timeout;
-};
-
-static spinlock_t	tstamp_lock;
-static atomic_t		tstamp_sequence = ATOMIC_INIT(0);
-static struct list_head	tstamp_pending = LIST_HEAD_INIT(tstamp_pending);
-
-static struct tstamp_pending *tstamp_remove_pending(u32 context)
-{
-	struct tstamp_pending	*pend;
-
-	spin_lock(&tstamp_lock);
-	list_for_each_entry(pend, &tstamp_pending, list) {
-		if (pend->context == context) {
-			del_timer(&pend->timeout);
-			list_del(&pend->list);
-			spin_unlock(&tstamp_lock);
-			return pend;
-		}
-	}
-	spin_unlock(&tstamp_lock);
-
-	return NULL;
-}
-
-static void tstamp_complete(u32, struct pa2_packet *);
-
-static void tstamp_purge_pending(struct pa2_device *pa_dev)
-{
-	struct tstamp_pending	*pend;
-	int			 found;
-
-	/* This is ugly and inefficient, but very rarely executed */
-	do {
-		found = 0;
-
-		spin_lock(&tstamp_lock);
-		list_for_each_entry(pend, &tstamp_pending, list) {
-			if (pend->pa_dev == pa_dev) {
-				found = 1;
-				break;
-			}
-		}
-		spin_unlock(&tstamp_lock);
-
-		if (found)
-			tstamp_complete(pend->context, NULL);
-	} while (found);
-}
-
-static void tstamp_timeout(unsigned long context)
-{
-	tstamp_complete((u32)context, NULL);
-}
-
-static int tstamp_add_pending(struct tstamp_pending *pend)
-{
-	init_timer(&pend->timeout);
-	pend->timeout.expires = jiffies + TSTAMP_TIMEOUT;
-	pend->timeout.function = tstamp_timeout;
-	pend->timeout.data = (unsigned long)pend->context;
-
-	spin_lock(&tstamp_lock);
-	add_timer(&pend->timeout);
-	list_add_tail(&pend->list, &tstamp_pending);
-	spin_unlock(&tstamp_lock);
-
-	return 0;
-}
-
-static void tstamp_complete(u32 context, struct pa2_packet *p_info)
-{
-	struct tstamp_pending	*pend;
-	struct sock_exterr_skb	*serr;
-	struct sk_buff		*skb;
-	struct skb_shared_hwtstamps *sh_hw_tstamps;
-	u64			 tx_timestamp;
-	u64			 sys_time;
-	int			 err;
-
-	pend = tstamp_remove_pending(context);
-	if (!pend)
-		return;
-
-
-	skb = pend->skb;
-	if (!p_info) {
-		dev_warn(pend->pa_dev->dev, "Timestamp completion timeout\n");
-		kfree_skb(skb);
-	} else {
-		tx_timestamp = p_info->epib[0];
-		tx_timestamp |= ((u64)(p_info->epib[2] & 0x0000ffff)) << 32;
-
-		sys_time = pa2_to_sys_time(pend->pa_dev, tx_timestamp);
-
-		sh_hw_tstamps = skb_hwtstamps(skb);
-		memset(sh_hw_tstamps, 0, sizeof(*sh_hw_tstamps));
-		sh_hw_tstamps->hwtstamp =
-			ns_to_ktime(tstamp_raw_to_ns(pend->pa_dev,
-							tx_timestamp));
-		sh_hw_tstamps->syststamp = ns_to_ktime(sys_time);
-
-		serr = SKB_EXT_ERR(skb);
-		memset(serr, 0, sizeof(*serr));
-		serr->ee.ee_errno = ENOMSG;
-		serr->ee.ee_origin = SO_EE_ORIGIN_TIMESTAMPING;
-
-		err = sock_queue_err_skb(pend->sock, skb);
-		if (err)
-			kfree_skb(skb);
-	}
-
-	kfree(pend);
-}
 
 static void pa2_rx_complete(void *param)
 {
@@ -1895,10 +1641,6 @@ static void pa2_rx_complete(void *param)
 				fcmd->reply_dest);
 		}
 		dev_dbg(pa_dev->dev, "command response complete\n");
-		break;
-
-	case PA2_CONTEXT_TSTAMP:
-		tstamp_complete(p_info->epib[1], p_info);
 		break;
 
 	default:
@@ -2333,28 +2075,6 @@ static inline int pa2_fmtcmd_next_route(struct netcp_packet *p_info,
 	return sizeof(*nr);
 }
 
-static inline int pa2_fmtcmd_tx_timestamp(struct netcp_packet *p_info,
-				  const struct pa2_cmd_tx_timestamp *tx_ts)
-{
-	struct pasaho2_report_timestamp	*rt_info;
-	int				 size;
-
-	size = sizeof(*rt_info);
-	rt_info =
-	      (struct pasaho2_report_timestamp *)netcp_push_psdata(p_info,
-								size);
-	if (!rt_info)
-		return -ENOMEM;
-
-	rt_info->word0 = 0;
-	PASAHO2_SET_CMDID(rt_info, PASAHO2_PAMOD_REPORT_TIMESTAMP);
-	PASAHO2_SET_REPORT_FLOW(rt_info, (u8)tx_ts->flow_id);
-	PASAHO2_SET_REPORT_QUEUE(rt_info, tx_ts->dest_queue);
-	rt_info->sw_info0 = tx_ts->sw_info0;
-
-	return size;
-}
-
 static inline int pa2_fmtcmd_align(struct netcp_packet *p_info,
 		const unsigned bytes)
 {
@@ -2412,11 +2132,8 @@ static int pa2_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	struct pa2_device *pa_dev = pa_intf->pa_device;
 	struct netcp_priv *netcp_priv = netdev_priv(pa_intf->net_device);
 	struct sk_buff *skb = p_info->skb;
-	struct sock *sk = skb->sk;
-	struct pa2_cmd_tx_timestamp tx_ts;
 	int size, total = 0;
 	u8 ps_flags = 0;
-	struct tstamp_pending *pend;
 
 	if (pa_dev->multi_if) {
 		if (likely(skb->mark == 0) ||
@@ -2438,50 +2155,6 @@ static int pa2_tx_hook(int order, void *data, struct netcp_packet *p_info)
 	if (unlikely(size < 0))
 		return size;
 	total += size;
-
-	/* If TX Timestamp required, request it */
-	if (unlikely(pa_intf->tx_timestamp_enable &&
-		     !pa_dev->force_no_hwtstamp &&
-		     sk &&
-		     (skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP) &&
-		     !(skb_shinfo(skb)->tx_flags & SKBTX_IN_PROGRESS))) {
-		pend = kzalloc(sizeof(*pend), GFP_ATOMIC);
-		if (pend) {
-			void *saved_sp;
-			if (!atomic_inc_not_zero(&sk->sk_refcnt))
-				return -ENODEV;
-
-			/* The SA module may have reused skb->sp */
-			saved_sp = skb->sp;
-			skb->sp = NULL;
-			pend->skb = skb_clone(skb, GFP_ATOMIC);
-			skb->sp = saved_sp;
-
-			if (!pend->skb) {
-				sock_put(sk);
-				kfree(pend);
-				return -ENOMEM;
-			} else {
-				pend->sock = sk;
-				pend->pa_dev = pa_dev;
-				pend->context =  PA2_CONTEXT_TSTAMP |
-					(~PA2_CONTEXT_MASK &
-					 atomic_inc_return(&tstamp_sequence));
-				tstamp_add_pending(pend);
-
-				memset(&tx_ts, 0, sizeof(tx_ts));
-				tx_ts.dest_queue = pa_dev->cmd_queue_num;
-				tx_ts.flow_id    = pa_dev->cmd_flow_num;
-				tx_ts.sw_info0   = pend->context;
-
-				size = pa2_fmtcmd_tx_timestamp(p_info,
-							      &tx_ts);
-				if (unlikely(size < 0))
-					return size;
-				total += size;
-			}
-		}
-	}
 
 	/* If checksum offload required, request it */
 	if ((skb->ip_summed == CHECKSUM_PARTIAL) &&
@@ -2687,40 +2360,6 @@ static int pa2_txhook_softcsum(int order, void *data,
 }
 
 
-static int pa2_rx_timestamp(int order, void *data, struct netcp_packet *p_info)
-{
-	struct pa2_intf *pa_intf = data;
-	struct pa2_device *pa_dev = pa_intf->pa_device;
-	struct sk_buff *skb = p_info->skb;
-	struct skb_shared_hwtstamps *sh_hw_tstamps;
-	u64 rx_timestamp;
-	u64 sys_time;
-
-	if (pa_dev->force_no_hwtstamp)
-		return 0;
-
-	if (!pa_intf->rx_timestamp_enable)
-		return 0;
-
-	if (p_info->rxtstamp_complete)
-		return 0;
-
-	rx_timestamp = p_info->epib[0];
-	rx_timestamp |= ((u64)(p_info->psdata[5] & 0x0000ffff)) << 32;
-
-	sys_time = pa2_to_sys_time(pa_dev, rx_timestamp);
-
-	sh_hw_tstamps = skb_hwtstamps(skb);
-	memset(sh_hw_tstamps, 0, sizeof(*sh_hw_tstamps));
-	sh_hw_tstamps->hwtstamp = ns_to_ktime(tstamp_raw_to_ns(pa_dev,
-							rx_timestamp));
-	sh_hw_tstamps->syststamp = ns_to_ktime(sys_time);
-
-	p_info->rxtstamp_complete = true;
-
-	return 0;
-}
-
 static int pa2_close(void *intf_priv, struct net_device *ndev)
 {
 	struct pa2_intf *pa_intf = intf_priv;
@@ -2732,10 +2371,6 @@ static int pa2_close(void *intf_priv, struct net_device *ndev)
 	if (pa_dev->csum_offload == CSUM_OFFLOAD_SOFT)
 		netcp_unregister_txhook(netcp_priv, pa_dev->txhook_softcsum,
 					pa2_txhook_softcsum, intf_priv);
-
-	if (!pa_dev->force_no_hwtstamp)
-		netcp_unregister_rxhook(netcp_priv, pa_dev->rxhook_order,
-					pa2_rx_timestamp, intf_priv);
 
 	netcp_txpipe_close(&pa_intf->tx_pipe);
 
@@ -2764,8 +2399,6 @@ static int pa2_close(void *intf_priv, struct net_device *ndev)
 			dma_release_channel(pa_dev->rx_channel);
 			pa_dev->rx_channel = NULL;
 		}
-
-		tstamp_purge_pending(pa_dev);
 
 		if (pa_dev->clk) {
 			clk_disable_unprepare(pa_dev->clk);
@@ -2869,8 +2502,6 @@ static int pa2_open(void *intf_priv, struct net_device *ndev)
 
 		pa2_get_version(pa_dev);
 
-		pa2_config_timer(pa_dev, PA2_TIMESTAMP_SCALER_FACTOR_2);
-
 		dma_cap_zero(mask);
 		dma_cap_set(DMA_SLAVE, mask);
 
@@ -2973,10 +2604,6 @@ static int pa2_open(void *intf_priv, struct net_device *ndev)
 	if (pa_dev->csum_offload == CSUM_OFFLOAD_SOFT)
 		netcp_register_txhook(netcp_priv, pa_dev->txhook_softcsum,
 				      pa2_txhook_softcsum, intf_priv);
-
-	if (!pa_dev->force_no_hwtstamp)
-		netcp_register_rxhook(netcp_priv, pa_dev->rxhook_order,
-				      pa2_rx_timestamp, intf_priv);
 
 	return 0;
 
@@ -3095,50 +2722,8 @@ static int pa2_del_addr(void *intf_priv, struct netcp_addr *naddr)
 	return 0;
 }
 
-static int pa2_hwtstamp_ioctl(struct pa2_intf *pa_intf,
-			     struct ifreq *ifr, int cmd)
-{
-	struct hwtstamp_config cfg;
-
-	if (pa_intf->pa_device->force_no_hwtstamp)
-		return -EOPNOTSUPP;
-
-	if (copy_from_user(&cfg, ifr->ifr_data, sizeof(cfg)))
-		return -EFAULT;
-
-	if (cfg.flags)
-		return -EINVAL;
-
-	switch (cfg.tx_type) {
-	case HWTSTAMP_TX_OFF:
-		pa_intf->tx_timestamp_enable = false;
-		break;
-	case HWTSTAMP_TX_ON:
-		pa_intf->tx_timestamp_enable = true;
-		break;
-	default:
-		return -ERANGE;
-	}
-
-	switch (cfg.rx_filter) {
-	case HWTSTAMP_FILTER_NONE:
-		pa_intf->rx_timestamp_enable = false;
-		break;
-	default:
-		pa_intf->rx_timestamp_enable = true;
-		break;
-	}
-
-	return copy_to_user(ifr->ifr_data, &cfg, sizeof(cfg)) ? -EFAULT : 0;
-}
-
 static int pa2_ioctl(void *intf_priv, struct ifreq *req, int cmd)
 {
-	struct pa2_intf *pa_intf = intf_priv;
-
-	if (cmd == SIOCSHWTSTAMP)
-		return pa2_hwtstamp_ioctl(pa_intf, req, cmd);
-
 	return -EOPNOTSUPP;
 }
 
@@ -3495,11 +3080,6 @@ static int pa2_probe(struct netcp_device *netcp_device,
 		return -ENODEV;
 	}
 
-	if (of_find_property(node, "force_no_hwtstamp", NULL)) {
-		pa_dev->force_no_hwtstamp = 1;
-		dev_warn(dev, "***** No PA timestamping *****\n");
-	}
-
 	prange = devm_kzalloc(dev, len, GFP_KERNEL);
 	if (!prange) {
 		dev_err(dev, "memory alloc failed at PA lut entry range\n");
@@ -3542,7 +3122,6 @@ static int pa2_probe(struct netcp_device *netcp_device,
 	devm_kfree(pa_dev->dev, prange);
 
 	spin_lock_init(&pa_dev->lock);
-	spin_lock_init(&tstamp_lock);
 
 	return 0;
 
