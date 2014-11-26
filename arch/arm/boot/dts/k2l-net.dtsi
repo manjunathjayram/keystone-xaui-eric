@@ -178,7 +178,6 @@ netcp {
 		rx_buffer_size          = <128>;
 		lut-ranges              = <0 43 248 255>;
 		/* mark_mcast_match	= <0x12345a00 0xffffff00>; */
-		/* force_no_hwtstamp; */
 		firmware		=
 				"keystone/pa_in0_pdsp0.fw",	/*  0 */
 				"keystone/pa_in0_pdsp1.fw",	/*  1 */
