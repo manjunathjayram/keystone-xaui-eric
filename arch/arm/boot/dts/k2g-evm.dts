@@ -1,0 +1,47 @@
+/*
+ * Copyright 2014 Texas Instruments, Inc.
+ *
+ * Keystone 2 Galileo EVM device tree
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+/dts-v1/;
+
+#include "k2g.dtsi"
+
+/ {
+	compatible =  "ti,k2g-evm","ti,keystone";
+	model = "Texas Instruments Keystone 2 Galileo EVM";
+
+	aliases {
+		serial0	= &uart0;
+/*		gpio0   = &gpio0; */
+	};
+
+	soc {
+		clocks {
+			refclksys: refclksys {
+				#clock-cells = <0>;
+				compatible = "fixed-clock";
+				clock-frequency = <123456789>;
+				clock-output-names = "refclk-sys";
+			};
+
+			refclkddr3a: refclkddr3a {
+				#clock-cells = <0>;
+				compatible = "fixed-clock";
+				clock-frequency = <123456789>;
+				clock-output-names = "refclk-ddr3a";
+			};
+
+			oscaudio: oscaudio {
+				#clock-cells = <0>;
+				compatible = "fixed-clock";
+				clock-frequency = <123456789>;
+					clock-output-names = "osc-audio";
+			};
+		};
+	};
+};
