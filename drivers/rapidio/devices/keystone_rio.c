@@ -1139,15 +1139,20 @@ static int keystone_rio_hw_init(u32 baud, struct keystone_rio_data *krio_priv)
 
 	/* Clear all errors */
 	__raw_writel(0x00000000, &krio_priv->err_mgmt_regs->err_det);
+	__raw_writel(0x00000000, &krio_priv->link_regs->local_err_det);
 
-	/* Disable all error detection */
-	__raw_writel(0x00000000, &krio_priv->err_mgmt_regs->err_en);
-	if (krio_priv->board_rio_cfg.pkt_forwarding)
-		__raw_writel(0x00000000,
-			     &krio_priv->link_regs->local_err_en);
-	else
+	/* Set error detection */
+	if (krio_priv->board_rio_cfg.pkt_forwarding) {
+		/* Disable all error detection if using packet forwarding */
+		__raw_writel(0x00000000, &krio_priv->link_regs->local_err_en);
+		__raw_writel(0x00000000, &krio_priv->err_mgmt_regs->err_en);
+	} else {
+		/* Enable logical layer error detection */
 		__raw_writel(BIT(24) | BIT(25) | BIT(31),
 			     &krio_priv->err_mgmt_regs->err_en);
+		__raw_writel(BIT(22) | BIT(26),
+			     &krio_priv->link_regs->local_err_en);
+	}
 
 	/* Set err det block header */
 	val = (((KEYSTONE_RIO_ERR_HDR_NEXT_BLK_PTR & 0xffff) << 16) |
@@ -1197,6 +1202,40 @@ static int keystone_rio_hw_init(u32 baud, struct keystone_rio_data *krio_priv)
 	/* Enable LSU */
 	__raw_writel(1,
 		     &(krio_priv->regs->blk[KEYSTONE_RIO_BLK_LSU_ID].enable));
+
+	/* Global port-write generation */
+	if (krio_priv->board_rio_cfg.pkt_forwarding) {
+		/*
+		 * Disable generation of port-write requests if using
+		 * packet forwarding
+		 */
+		val = __raw_readl(
+			&(krio_priv->evt_mgmt_regs->evt_mgmt_port_wr_enable));
+		__raw_writel(
+			val & ~(BIT(8) | BIT(28)), /* LOG | LOCALOG */
+			&(krio_priv->evt_mgmt_regs->evt_mgmt_port_wr_enable));
+
+		val = __raw_readl(
+			&(krio_priv->evt_mgmt_regs->evt_mgmt_dev_port_wr_en));
+		__raw_writel(
+			val & ~(BIT(0)), /* PW_EN */
+			&(krio_priv->evt_mgmt_regs->evt_mgmt_dev_port_wr_en));
+	} else {
+		/*
+		 * Enable generation of port-write requests
+		 */
+		val = __raw_readl(
+			&(krio_priv->evt_mgmt_regs->evt_mgmt_port_wr_enable));
+		__raw_writel(
+			val | (BIT(8) | BIT(28)), /* LOG | LOCALOG */
+			&(krio_priv->evt_mgmt_regs->evt_mgmt_port_wr_enable));
+
+		val = __raw_readl(
+			&(krio_priv->evt_mgmt_regs->evt_mgmt_dev_port_wr_en));
+		__raw_writel(
+			val  | BIT(0), /* PW_EN */
+			&(krio_priv->evt_mgmt_regs->evt_mgmt_dev_port_wr_en));
+	}
 
 	/* Set packet forwarding */
 	for (i = 0; i < KEYSTONE_RIO_MAX_PKT_FW_ENTRIES; i++) {
@@ -1301,20 +1340,27 @@ static void keystone_rio_handle_logical_error(
 {
 	u32 err_det = __raw_readl(&krio_priv->err_mgmt_regs->err_det);
 
-	if (!err_det)
-		return;
-
 	while (err_det) {
 		u32 err = __ffs(err_det);
+		u32 val;
+
 		err_det &= ~BIT(err);
 
-		/* TODO: perform better error management here */
+		/* Acknowledge logical layer error */
+		val = __raw_readl(&krio_priv->err_mgmt_regs->err_det);
+		__raw_writel(val & ~BIT(err),
+			     &krio_priv->err_mgmt_regs->err_det);
+
 		dev_warn(krio_priv->dev,
 			 "logical layer error %d detected\n", err);
-	}
 
-	/* Acknowledge logical layer error */
-	__raw_writel(0x00000000, &krio_priv->err_mgmt_regs->err_det);
+		/* Acknowledge local logical layer error as well if needed */
+		if ((err == 22) || (err == 26)) {
+			val = __raw_readl(&krio_priv->link_regs->local_err_det);
+			__raw_writel(val & ~BIT(err),
+				     &krio_priv->link_regs->local_err_det);
+		}
+	}
 }
 
 static int keystone_rio_get_remote_port(
@@ -1732,14 +1778,12 @@ static int keystone_rio_port_init(
 	__raw_writel(0x00109000,
 		     &(krio_priv->transport_regs->transport_sp[port].control));
 
-	/* Disable generation of port-write request if packet forwarding used */
+	/* Per-port port-write generation */
 	if (krio_priv->board_rio_cfg.pkt_forwarding) {
-		val = __raw_readl(
-			&(krio_priv->evt_mgmt_regs->evt_mgmt_dev_port_wr_en));
-		__raw_writel(
-			val & 0xfffffffe,
-			&(krio_priv->evt_mgmt_regs->evt_mgmt_dev_port_wr_en));
-
+		/*
+		 * Disable generation of port-write requests if using
+		 * packet forwarding
+		 */
 		__raw_writel(
 			0,
 			&(krio_priv->phy_regs->phy_sp[port].port_wr_enable));
@@ -1747,7 +1791,20 @@ static int keystone_rio_port_init(
 		val = __raw_readl(
 			&(krio_priv->phy_regs->phy_sp[port].all_port_wr_en));
 		__raw_writel(
-			val & 0xfffffffe,
+			val & ~(BIT(0)), /* PW_EN */
+			&(krio_priv->phy_regs->phy_sp[port].all_port_wr_en));
+	} else {
+		/*
+		 * Enable generation of port-write requests
+		 */
+		__raw_writel(
+			BIT(25) | BIT(26) | BIT(28),
+			&(krio_priv->phy_regs->phy_sp[port].port_wr_enable));
+
+		val = __raw_readl(
+			&(krio_priv->phy_regs->phy_sp[port].all_port_wr_en));
+		__raw_writel(
+			val | BIT(0), /* PW_EN */
 			&(krio_priv->phy_regs->phy_sp[port].all_port_wr_en));
 	}
 
