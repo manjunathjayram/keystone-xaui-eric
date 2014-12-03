@@ -40,6 +40,8 @@
 #include <linux/crc32.h>
 #include <linux/virtio_ids.h>
 #include <linux/virtio_ring.h>
+#include <linux/io.h>
+
 #include <asm/byteorder.h>
 
 #include "remoteproc_internal.h"
@@ -206,7 +208,10 @@ int rproc_alloc_vring(struct rproc_vdev *rvdev, int i)
 	 * Allocate non-cacheable memory for the vring. In the future
 	 * this call will also configure the IOMMU for us
 	 */
-	va = dma_alloc_coherent(dev->parent, size, &dma, GFP_KERNEL);
+	if (rproc->ops->alloc)
+		va = rproc->ops->alloc(dev->parent, size, &dma, GFP_KERNEL);
+	else
+		va = dma_alloc_coherent(dev->parent, size, &dma, GFP_KERNEL);
 	if (!va) {
 		dev_err(dev->parent, "dma_alloc_coherent failed\n");
 		return -EINVAL;
@@ -281,8 +286,12 @@ void rproc_free_vring(struct rproc_vring *rvring)
 	struct rproc *rproc = rvring->rvdev->rproc;
 	int idx = rvring->rvdev->vring - rvring;
 	struct fw_rsc_vdev *rsc;
+	struct device *dev = rproc->dev.parent;
 
-	dma_free_coherent(rproc->dev.parent, size, rvring->va, rvring->dma);
+	if (rproc->ops->free)
+		rproc->ops->free(dev, size, rvring->va, rvring->dma);
+	else
+		dma_free_coherent(dev, size, rvring->va, rvring->dma);
 	idr_remove(&rproc->notifyids, rvring->notifyid);
 
 	/* reset resource entry info */
@@ -580,12 +589,25 @@ static int rproc_handle_carveout(struct rproc *rproc,
 		dev_err(dev, "kzalloc carveout failed\n");
 		return -ENOMEM;
 	}
-
-	va = dma_alloc_coherent(dev->parent, rsc->len, &dma, GFP_KERNEL);
-	if (!va) {
-		dev_err(dev->parent, "dma_alloc_coherent err: %d\n", rsc->len);
-		ret = -ENOMEM;
-		goto free_carv;
+	if (rproc->domain) {
+		va = dma_alloc_coherent(dev->parent, rsc->len, &dma,
+						GFP_KERNEL);
+		if (!va) {
+			dev_err(dev->parent,
+				"dma_alloc_coherent err: %d\n", rsc->len);
+			ret = -ENOMEM;
+			goto free_carv;
+		}
+	} else {
+		dma = rsc->pa;
+		/* Convert to virtual address */
+		va  = devm_ioremap_nocache(&rproc->dev, dma, rsc->len);
+		if (!va) {
+			dev_err(dev->parent, "devm_ioremap_nocache err: %d\n",
+				rsc->len);
+			ret = -ENOMEM;
+			goto free_carv;
+		}
 	}
 
 	dev_dbg(dev, "carveout va %p, dma %llx, len 0x%x\n", va,
@@ -764,7 +786,11 @@ static void rproc_resource_cleanup(struct rproc *rproc)
 
 	/* clean up carveout allocations */
 	list_for_each_entry_safe(entry, tmp, &rproc->carveouts, node) {
-		dma_free_coherent(dev->parent, entry->len, entry->va, entry->dma);
+		if (rproc->domain)
+			dma_free_coherent(dev->parent, entry->len, entry->va,
+					 entry->dma);
+		else
+			devm_iounmap(&rproc->dev, entry->va);
 		list_del(&entry->node);
 		kfree(entry);
 	}
@@ -802,7 +828,10 @@ static int rproc_fw_boot(struct rproc *rproc, const struct firmware *fw)
 	if (ret)
 		return ret;
 
-	dev_info(dev, "Booting fw image %s, size %zd\n", name, fw->size);
+	if (fw)
+		dev_info(dev, "Booting fw image %s, size %zd\n", name, fw->size);
+	else
+		dev_info(dev, "Booting unspecified firmware\n");
 
 	/*
 	 * if enabling an IOMMU isn't relevant for this rproc, this is
@@ -863,6 +892,8 @@ static int rproc_fw_boot(struct rproc *rproc, const struct firmware *fw)
 		dev_err(dev, "can't start rproc %s: %d\n", rproc->name, ret);
 		goto clean_up;
 	}
+	/* Set state to indicate RPROC is loaded */
+	rproc->state = RPROC_LOADED;
 
 	/*
 	 * Update table_ptr so that all subsequent vring allocations and
@@ -919,7 +950,13 @@ static void rproc_fw_config_virtio(const struct firmware *fw, void *context)
 
 	memcpy(rproc->cached_table, table, tablesz);
 	rproc->table_ptr = rproc->cached_table;
-
+	if (!fw) {
+		/* handle fw resources which are required to boot rproc */
+		ret = rproc_handle_resources(rproc, tablesz,
+			rproc_loading_handlers);
+		if (ret)
+			goto out;
+	}
 	/* count the number of notify-ids */
 	rproc->max_notifyid = -1;
 	ret = rproc_handle_resources(rproc, tablesz, rproc_count_vrings_handler);
@@ -935,12 +972,80 @@ out:
 	complete_all(&rproc->firmware_loading_complete);
 }
 
+/**
+ * rproc_boot_ext_download() - boot a remote processor with download done externally
+ * @rproc: handle of a remote processor
+ *
+ * Boot a remote processor ( with firmware download and power on done externally ...).
+ *
+ *
+ * Returns 0 on success, and an appropriate error value otherwise.
+ */
+
+int rproc_boot_ext_download(struct rproc *rproc)
+{
+	int ret;
+	struct device *dev;
+
+	if (!rproc) {
+		pr_err("invalid rproc handle\n");
+		return -EINVAL;
+	}
+
+	dev = &rproc->dev;
+
+	ret = mutex_lock_interruptible(&rproc->lock);
+	if (ret) {
+		dev_err(dev, "can't lock rproc %s: %d\n", rproc->name, ret);
+		return ret;
+	}
+
+	/* prevent underlying implementation from being removed */
+	if (!try_module_get(dev->parent->driver->owner)) {
+		dev_err(dev, "%s: can't get owner\n", __func__);
+		ret = -EINVAL;
+		goto unlock_mutex;
+	}
+
+	/* skip the boot process if rproc is already powered up */
+	if (atomic_inc_return(&rproc->power) > 1) {
+		ret = 0;
+		goto unlock_mutex;
+	}
+
+	dev_info(dev, "powering up %s\n", rproc->name);
+
+	/* power up the remote processor */
+	ret = rproc->ops->start(rproc);
+	if (ret) {
+		dev_err(dev, "can't start rproc %s: %d\n", rproc->name, ret);
+		goto unlock_mutex;
+	}
+
+	/* Set state to indicate RPROC is loaded so that the call from virtio to rproc boot returns*/
+	rproc->state = RPROC_LOADED;
+	rproc_fw_config_virtio(NULL, (void *)rproc);
+	rproc->state = RPROC_RUNNING;
+unlock_mutex:
+	mutex_unlock(&rproc->lock);
+	return ret;
+
+}
+
+EXPORT_SYMBOL(rproc_boot_ext_download);
+
 static int rproc_add_virtio_devices(struct rproc *rproc)
 {
 	int ret;
 
 	/* rproc_del() calls must wait until async loader completes */
 	init_completion(&rproc->firmware_loading_complete);
+
+	if (!rproc->firmware) {
+		dev_warn(&rproc->dev, "no firmware found\n");
+		complete_all(&rproc->firmware_loading_complete);
+		return 0;
+	}
 
 	/*
 	 * We must retrieve early virtio configuration info from
@@ -1036,7 +1141,7 @@ static void rproc_crash_handler_work(struct work_struct *work)
  */
 int rproc_boot(struct rproc *rproc)
 {
-	const struct firmware *firmware_p;
+	const struct firmware *firmware_p = NULL;
 	struct device *dev;
 	int ret;
 
@@ -1044,20 +1149,17 @@ int rproc_boot(struct rproc *rproc)
 		pr_err("invalid rproc handle\n");
 		return -EINVAL;
 	}
-
+	/* Return out if loaded or running */
+	if((rproc->state == RPROC_LOADED) || (rproc->state == RPROC_RUNNING)) {
+		/* rproc is already loaded return */
+		return 0;
+	}
 	dev = &rproc->dev;
 
 	ret = mutex_lock_interruptible(&rproc->lock);
 	if (ret) {
 		dev_err(dev, "can't lock rproc %s: %d\n", rproc->name, ret);
 		return ret;
-	}
-
-	/* loading a firmware is required */
-	if (!rproc->firmware) {
-		dev_err(dev, "%s: no firmware to load\n", __func__);
-		ret = -EINVAL;
-		goto unlock_mutex;
 	}
 
 	/* prevent underlying implementation from being removed */
@@ -1075,16 +1177,19 @@ int rproc_boot(struct rproc *rproc)
 
 	dev_info(dev, "powering up %s\n", rproc->name);
 
-	/* load firmware */
-	ret = request_firmware(&firmware_p, rproc->firmware, dev);
-	if (ret < 0) {
-		dev_err(dev, "request_firmware failed: %d\n", ret);
-		goto downref_rproc;
+	if (rproc->firmware) {
+		/* load firmware */
+		ret = request_firmware(&firmware_p, rproc->firmware, dev);
+		if (ret < 0) {
+			dev_err(dev, "request_firmware failed: %d\n", ret);
+			goto downref_rproc;
+		}
 	}
 
 	ret = rproc_fw_boot(rproc, firmware_p);
 
-	release_firmware(firmware_p);
+	if (firmware_p)
+		release_firmware(firmware_p);
 
 downref_rproc:
 	if (ret) {
@@ -1096,6 +1201,19 @@ unlock_mutex:
 	return ret;
 }
 EXPORT_SYMBOL(rproc_boot);
+/**
+ * rrproc_cleanup_vdev_entries() - cleanu vdev entries
+ */
+static void rproc_cleanup_vdev_entries(struct rproc *rproc)
+{
+	struct rproc_vdev *rvdev, *tmp;
+
+	/* clean up remote vdev entries */
+	list_for_each_entry_safe(rvdev, tmp, &rproc->rvdevs, node)
+		rproc_remove_virtio_dev(rvdev);
+
+	return;
+}
 
 /**
  * rproc_shutdown() - power off the remote processor
@@ -1120,6 +1238,10 @@ void rproc_shutdown(struct rproc *rproc)
 {
 	struct device *dev = &rproc->dev;
 	int ret;
+
+	/* If already in offline state skip */
+	if (rproc->state == RPROC_OFFLINE)
+		return;
 
 	ret = mutex_lock_interruptible(&rproc->lock);
 	if (ret) {
@@ -1152,6 +1274,8 @@ void rproc_shutdown(struct rproc *rproc)
 		complete_all(&rproc->crash_comp);
 
 	rproc->state = RPROC_OFFLINE;
+	/* Cleanup vdev entries */
+	rproc_cleanup_vdev_entries(rproc);
 
 	dev_info(dev, "stopped remote processor %s\n", rproc->name);
 

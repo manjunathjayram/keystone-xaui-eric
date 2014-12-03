@@ -335,6 +335,10 @@ struct rproc_ops {
 	int (*start)(struct rproc *rproc);
 	int (*stop)(struct rproc *rproc);
 	void (*kick)(struct rproc *rproc, int vqid);
+	void *(*alloc)(struct device *dev, size_t size, dma_addr_t *handle,
+		       gfp_t gfp);
+	void (*free)(struct device *dev, size_t size, void *cpu,
+		     dma_addr_t handle);
 };
 
 /**
@@ -355,9 +359,10 @@ struct rproc_ops {
 enum rproc_state {
 	RPROC_OFFLINE	= 0,
 	RPROC_SUSPENDED	= 1,
-	RPROC_RUNNING	= 2,
-	RPROC_CRASHED	= 3,
-	RPROC_LAST	= 4,
+	RPROC_LOADED    = 2,
+	RPROC_RUNNING	= 3,
+	RPROC_CRASHED	= 4,
+	RPROC_LAST	= 5,
 };
 
 /**
@@ -489,6 +494,7 @@ int rproc_del(struct rproc *rproc);
 int rproc_boot(struct rproc *rproc);
 void rproc_shutdown(struct rproc *rproc);
 void rproc_report_crash(struct rproc *rproc, enum rproc_crash_type type);
+int rproc_boot_ext_download(struct rproc *rproc);
 
 static inline struct rproc_vdev *vdev_to_rvdev(struct virtio_device *vdev)
 {
