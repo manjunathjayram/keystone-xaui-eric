@@ -254,7 +254,7 @@ static inline unsigned long __phys_to_virt(phys_addr_t x)
  * direct-mapped view.  We assume this is the first page
  * of RAM in the mem_map as well.
  */
-#define PHYS_PFN_OFFSET	(PHYS_OFFSET >> PAGE_SHIFT)
+#define PHYS_PFN_OFFSET	((unsigned long)(PHYS_OFFSET >> PAGE_SHIFT))
 
 /*
  * These are *only* valid on the kernel direct mapped RAM memory.
@@ -277,7 +277,16 @@ static inline void *phys_to_virt(phys_addr_t x)
  */
 #define __pa(x)			__virt_to_phys((unsigned long)(x))
 #define __va(x)			((void *)__phys_to_virt((phys_addr_t)(x)))
-#define pfn_to_kaddr(pfn)	__va((pfn) << PAGE_SHIFT)
+#define pfn_to_kaddr(pfn)	__va((phys_addr_t)(pfn) << PAGE_SHIFT)
+
+/*
+ * These are for systems that have a hardware interconnect supported alias of
+ * physical memory for idmap purposes.  Most cases should leave these
+ * untouched.
+ */
+#ifndef virt_to_idmap
+#define virt_to_idmap(x) virt_to_phys(x)
+#endif
 
 /*
  * Virtual <-> DMA view memory address translations
@@ -323,6 +332,8 @@ static inline __deprecated void *bus_to_virt(unsigned long x)
 
 #define virt_to_page(kaddr)	pfn_to_page(__pa(kaddr) >> PAGE_SHIFT)
 #define virt_addr_valid(kaddr)	((unsigned long)(kaddr) >= PAGE_OFFSET && (unsigned long)(kaddr) < (unsigned long)high_memory)
+
+#define ARCH_LOW_ADDRESS_LIMIT		PHYS_MASK
 
 #define ARCH_LOW_ADDRESS_LIMIT		PHYS_MASK
 
