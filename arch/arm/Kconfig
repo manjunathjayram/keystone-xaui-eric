@@ -379,6 +379,33 @@ config ARCH_AT91
 	  This enables support for systems based on Atmel
 	  AT91RM9200 and AT91SAM9* processors.
 
+config ARCH_KEYSTONE
+	bool "Texas Instruments Keystone Devices"
+	select ARCH_REQUIRE_GPIOLIB
+	select ARM_GIC
+	select MULTI_IRQ_HANDLER
+	select CLKDEV_LOOKUP
+	select COMMON_CLK
+	select CLK_KEYSTONE_PLL
+	select DAVINCI_CLKS
+	select CLKSRC_MMIO
+	select CPU_V7
+	select GENERIC_CLOCKEVENTS
+	select USE_OF
+	select SPARSE_IRQ
+	select NEED_MACH_MEMORY_H
+	select HAVE_SCHED_CLOCK
+	select HAVE_SMP
+	select ZONE_DMA if ARM_LPAE
+	select USB_ARCH_HAS_XHCI
+	select TI_KEYSTONE
+	select MIGHT_HAVE_PCI
+	select ARCH_SUPPORTS_MSI
+	select PCI_DOMAINS if PCI
+	help
+	  Support for boards based on the Texas Instruments Keystone family of
+	  SoCs.
+
 config ARCH_CLPS711X
 	bool "Cirrus Logic CLPS711x/EP721x/EP731x-based"
 	select ARCH_REQUIRE_GPIOLIB
@@ -969,6 +996,8 @@ source "arch/arm/mach-iop13xx/Kconfig"
 
 source "arch/arm/mach-ixp4xx/Kconfig"
 
+source "arch/arm/mach-keystone/Kconfig"
+
 source "arch/arm/mach-kirkwood/Kconfig"
 
 source "arch/arm/mach-ks8695/Kconfig"
@@ -1438,6 +1467,7 @@ config PCI_HOST_ITE8152
 	select DMABOUNCE
 
 source "drivers/pci/Kconfig"
+source "drivers/pci/pcie/Kconfig"
 
 source "drivers/pcmcia/Kconfig"
 
@@ -1604,6 +1634,7 @@ config LOCAL_TIMERS
 config ARCH_NR_GPIO
 	int
 	default 1024 if ARCH_SHMOBILE || ARCH_TEGRA
+	default 512 if ARCH_KEYSTONE
 	default 512 if SOC_OMAP5
 	default 392 if ARCH_U8500
 	default 352 if ARCH_VT8500
