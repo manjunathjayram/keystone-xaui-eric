@@ -1,0 +1,12 @@
+menu "PCI host controller drivers"
+	depends on PCI
+
+# PCI Host drivers
+#
+config TI_KEYSTONE_PCIE
+	bool "TI Keystone PCIe support"
+	depends on ARCH_KEYSTONE
+	select PCIEPORTBUS
+	help
+	  This driver supports TI's Keystone PCIe (root complex).
+endmenu
