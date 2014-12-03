@@ -27,13 +27,27 @@ struct cpsw_ale {
 	struct cpsw_ale_params	params;
 	struct timer_list	timer;
 	unsigned long		ageout;
+	struct device_attribute ale_control_attr;
+#define control_attr_to_ale(attr)	\
+	container_of(attr, struct cpsw_ale, ale_control_attr)
+	struct device_attribute ale_table_attr;
+#define table_attr_to_ale(attr)		\
+	container_of(attr, struct cpsw_ale, ale_table_attr)
+	struct device_attribute ale_table_raw_attr;
+#define table_raw_attr_to_ale(attr)		\
+	container_of(attr, struct cpsw_ale, ale_table_raw_attr)
+	int show_next;
+	int raw_show_next;
+	u32 revision;
 };
 
 enum cpsw_ale_control {
 	/* global */
+	ALE_VERSION,
 	ALE_ENABLE,
 	ALE_CLEAR,
 	ALE_AGEOUT,
+	ALE_UNI_FLOOD,
 	ALE_VLAN_NOLEARN,
 	ALE_NO_PORT_VLAN,
 	ALE_OUI_DENY,
@@ -53,6 +67,11 @@ enum cpsw_ale_control {
 	ALE_PORT_UNTAGGED_EGRESS,
 	ALE_PORT_BCAST_LIMIT,
 	ALE_PORT_MCAST_LIMIT,
+	/* ALE Rev 1.4 specific port controls */
+	ALE_PORT_UNKNOWN_VLAN_MEMBER_1R4,
+	ALE_PORT_UNKNOWN_MCAST_FLOOD_1R4,
+	ALE_PORT_UNKNOWN_REG_MCAST_FLOOD_1R4,
+	ALE_PORT_UNTAGGED_EGRESS_1R4,
 	ALE_NUM_CONTROLS,
 };
 
@@ -102,5 +121,36 @@ int cpsw_ale_del_vlan(struct cpsw_ale *ale, u16 vid, int port);
 int cpsw_ale_control_get(struct cpsw_ale *ale, int port, int control);
 int cpsw_ale_control_set(struct cpsw_ale *ale, int port,
 			 int control, int value);
+
+/* ALE Table store VLAN command param indices */
+enum {
+	ALE_VP_VID,
+	ALE_VP_FORCE_UT_EGR,
+	ALE_VP_REG_FLD,
+	ALE_VP_UNREG_FLD,
+	ALE_VP_M_LIST,
+	ALE_VP_NUM,
+};
+
+/* ALE Table store UCAST command param indices */
+enum {
+	ALE_UP_PORT,
+	ALE_UP_BLOCK,
+	ALE_UP_SECURE,
+	ALE_UP_AGEABLE,
+	ALE_UP_ADDR,
+	ALE_UP_VID,
+	ALE_UP_NUM,
+};
+
+/* ALE Table store MCAST command param indices */
+enum {
+	ALE_MP_PORT_MASK,
+	ALE_MP_SUPER,
+	ALE_MP_FW_ST,
+	ALE_MP_ADDR,
+	ALE_MP_VID,
+	ALE_MP_NUM
+};
 
 #endif

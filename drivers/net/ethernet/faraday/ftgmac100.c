@@ -807,7 +807,7 @@ err:
 /******************************************************************************
  * internal functions (mdio)
  *****************************************************************************/
-static void ftgmac100_adjust_link(struct net_device *netdev)
+static void ftgmac100_adjust_link(struct net_device *netdev, void *context)
 {
 	struct ftgmac100 *priv = netdev_priv(netdev);
 	struct phy_device *phydev = priv->phydev;
@@ -857,7 +857,8 @@ static int ftgmac100_mii_probe(struct ftgmac100 *priv)
 	}
 
 	phydev = phy_connect(netdev, dev_name(&phydev->dev),
-			     &ftgmac100_adjust_link, PHY_INTERFACE_MODE_GMII);
+			     &ftgmac100_adjust_link,
+			     PHY_INTERFACE_MODE_GMII, NULL);
 
 	if (IS_ERR(phydev)) {
 		netdev_err(netdev, "%s: Could not attach to PHY\n", netdev->name);
