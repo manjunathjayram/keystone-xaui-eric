@@ -81,6 +81,7 @@ struct netcp_device {
 	struct list_head	interface_head;
 	struct list_head	modpriv_head;
 	struct device		*device;
+	u32			version;
 };
 
 struct netcp_inst_modpriv {
@@ -312,6 +313,11 @@ static int netcp_module_probe(struct netcp_device *netcp_device,
 		}
 	}
 	return 0;
+}
+
+void netcp_set_version(struct netcp_device *netcp_device, u32 version)
+{
+	netcp_device->version = version;
 }
 
 int netcp_register_module(struct netcp_module *module)
@@ -1095,10 +1101,12 @@ static int netcp_tx_submit_skb(struct netcp_intf *netcp,
 			       struct sk_buff *skb,
 			       struct knav_dma_desc *desc)
 {
+	struct netcp_device *netcp_device = netcp->netcp_device;
 	struct netcp_tx_pipe *tx_pipe = NULL;
 	struct netcp_hook_list *tx_hook;
 	struct netcp_packet p_info;
 	u32 packet_info = 0;
+	u32 tag_info = 0;
 	unsigned int dma_sz;
 	dma_addr_t dma;
 	int ret = 0;
@@ -1147,12 +1155,21 @@ static int netcp_tx_submit_skb(struct netcp_intf *netcp,
 
 	packet_info |= KNAV_DMA_DESC_HAS_EPIB |
 		((netcp->tx_compl_qid & KNAV_DMA_DESC_RETQ_MASK) <<
-		KNAV_DMA_DESC_RETQ_SHIFT) |
-		((tx_pipe->dma_psflags & KNAV_DMA_DESC_PSFLAG_MASK) <<
-		KNAV_DMA_DESC_PSFLAG_SHIFT);
+		KNAV_DMA_DESC_RETQ_SHIFT);
+
+	if (netcp_device->version == NETCP_VERSION_1P0) {
+		packet_info |=
+			((tx_pipe->dma_psflags & KNAV_DMA_DESC_PSFLAG_MASK) <<
+			KNAV_DMA_DESC_PSFLAG_SHIFT);
+	}
 
 	set_words(&packet_info, 1, &desc->packet_info);
 	set_words((u32 *)&skb, 1, &desc->pad[0]);
+
+	if (netcp_device->version == NETCP_VERSION_1P5) {
+		tag_info = tx_pipe->dma_psflags;
+		set_words((u32 *)&tag_info, 1, &desc->tag_info);
+	}
 
 	/* submit packet descriptor */
 	ret = knav_pool_desc_map(netcp->tx_pool, desc, sizeof(*desc), &dma,
@@ -2044,6 +2061,8 @@ static int netcp_probe(struct platform_device *pdev)
 	netcp_device = devm_kzalloc(dev, sizeof(*netcp_device), GFP_KERNEL);
 	if (!netcp_device)
 		return -ENOMEM;
+
+	netcp_device->version = NETCP_VERSION_1P0;
 
 	pm_runtime_enable(&pdev->dev);
 	ret = pm_runtime_get_sync(&pdev->dev);

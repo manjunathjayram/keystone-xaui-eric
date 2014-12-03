@@ -2309,7 +2309,7 @@ static int gbe_probe(struct netcp_device *netcp_device, struct device *dev,
 	struct device_node *secondary_ports;
 	struct cpsw_ale_params ale_params;
 	struct gbe_priv *gbe_dev;
-	u32 slave_num;
+	u32 slave_num, netcp_version = NETCP_VERSION_1P0;
 	int ret = 0;
 
 	if (!node) {
@@ -2360,9 +2360,10 @@ static int gbe_probe(struct netcp_device *netcp_device, struct device *dev,
 
 		if (gbe_dev->ss_version == GBE_SS_VERSION_14)
 			ret = set_gbe_ethss14_priv(gbe_dev);
-		else if (IS_SS_ID_MU(gbe_dev))
+		else if (IS_SS_ID_MU(gbe_dev)) {
+			netcp_version = NETCP_VERSION_1P5;
 			ret = set_gbenu_ethss_priv(gbe_dev);
-		else
+		} else
 			ret = -ENODEV;
 
 		if (ret)
@@ -2380,6 +2381,7 @@ static int gbe_probe(struct netcp_device *netcp_device, struct device *dev,
 		ret = -ENODEV;
 		goto quit;
 	}
+	netcp_set_version(netcp_device, netcp_version);
 
 	interfaces = of_get_child_by_name(node, "interfaces");
 	if (!interfaces)
