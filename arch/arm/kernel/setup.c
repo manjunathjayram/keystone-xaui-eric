@@ -55,6 +55,7 @@
 #include <asm/unwind.h>
 #include <asm/memblock.h>
 #include <asm/virt.h>
+#include <asm/runtime-patch.h>
 
 #include "atags.h"
 
@@ -142,6 +143,18 @@ static union { char c[4]; unsigned long l; } endian_test __initdata = { { 'l', '
 #define ENDIANNESS ((char)endian_test.l)
 
 DEFINE_PER_CPU(struct cpuinfo_arm, cpu_data);
+
+#ifdef CONFIG_ARM_PATCH_PHYS_VIRT
+
+/*
+ * These are initialized in head.S code prior to BSS getting cleared out.
+ * The initializers here prevent these from landing in the BSS section.
+ */
+unsigned long __pv_offset = 0xdeadbeef;
+phys_addr_t   __pv_phys_offset = 0xdeadbeef;
+EXPORT_SYMBOL(__pv_phys_offset);
+EXPORT_SYMBOL(__pv_offset);
+#endif
 
 /*
  * Standard memory resources
@@ -844,6 +857,8 @@ void __init setup_arch(char **cmdline_p)
 
 	if (mdesc->init_early)
 		mdesc->init_early();
+
+	runtime_patch_kernel();
 }
 
 
