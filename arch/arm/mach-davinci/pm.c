@@ -23,8 +23,7 @@
 #include <mach/da8xx.h>
 #include <mach/sram.h>
 #include <mach/pm.h>
-
-#include "clock.h"
+#include <mach/pll.h>
 
 #define DEEPSLEEP_SLEEPCOUNT_MASK	0xFFFF
 
