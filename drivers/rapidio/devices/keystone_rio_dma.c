@@ -24,18 +24,19 @@
 #include <linux/delay.h>
 #include <linux/keystone-dma.h>
 
+#include "keystone_rio_serdes.h"
 #include "keystone_rio.h"
 
 static void keystone_rio_dma_start(struct keystone_rio_dma_chan *chan);
 
-static inline
-struct keystone_rio_dma_desc *desc_from_adesc(struct dma_async_tx_descriptor *adesc)
+static inline struct keystone_rio_dma_desc *desc_from_adesc(
+	struct dma_async_tx_descriptor *adesc)
 {
 	return container_of(adesc, struct keystone_rio_dma_desc, adesc);
 }
 
-static inline
-struct dma_async_tx_descriptor *desc_to_adesc(struct keystone_rio_dma_desc *desc)
+static inline struct dma_async_tx_descriptor *desc_to_adesc(
+	struct keystone_rio_dma_desc *desc)
 {
 	return &desc->adesc;
 }
@@ -56,7 +57,7 @@ static int keystone_rio_dma_chan_set_state(struct keystone_rio_dma_chan *chan,
 static inline enum keystone_rio_chan_state
 keystone_rio_dma_chan_get_state(struct keystone_rio_dma_chan *chan)
 {
-	return (atomic_read(&chan->state));
+	return atomic_read(&chan->state);
 }
 
 static inline void
@@ -69,8 +70,8 @@ keystone_rio_dma_chan_force_state(struct keystone_rio_dma_chan *chan,
 /*
  * Return the first descriptor of the active list (called with spinlock held)
  */
-static inline
-struct keystone_rio_dma_desc *keystone_rio_dma_first_active(struct keystone_rio_dma_chan *chan)
+static inline struct keystone_rio_dma_desc *keystone_rio_dma_first_active(
+	struct keystone_rio_dma_chan *chan)
 {
 	if (list_empty(&chan->active_list))
 		return NULL;
@@ -83,22 +84,23 @@ struct keystone_rio_dma_desc *keystone_rio_dma_first_active(struct keystone_rio_
 /*
  * Return the next descriptor of a transfer list (called with spinlock held)
  */
-static inline
-struct keystone_rio_dma_desc *keystone_rio_dma_next(struct keystone_rio_dma_chan *chan)
+static inline struct keystone_rio_dma_desc *keystone_rio_dma_next(
+	struct keystone_rio_dma_chan *chan)
 {
 	struct keystone_rio_dma_desc *desc = chan->current_transfer;
 	struct keystone_rio_dma_desc *next;
 
-	next = list_entry(desc->tx_list.next, struct keystone_rio_dma_desc, tx_list);
+	next = list_entry(desc->tx_list.next, struct keystone_rio_dma_desc,
+			  tx_list);
 	if (next == desc)
 		return NULL;
 
 	return next;
 }
 
-static inline
-void keystone_rio_dma_complete_notify(struct keystone_rio_data *krio_priv,
-				      u32 lsu)
+static inline void keystone_rio_dma_complete_notify(
+	struct keystone_rio_data *krio_priv,
+	u32 lsu)
 {
 	struct keystone_rio_dma_chan *chan, *_c;
 
@@ -111,7 +113,10 @@ void keystone_rio_dma_interrupt_handler(struct keystone_rio_data *krio_priv,
 					u32 error)
 {
 	if (unlikely(error)) {
-		/* In case of error we do not know the LSU, so complete all running channels */
+		/*
+		 * In case of error we do not know the LSU, so complete all
+		 * running channels
+		 */
 		u32 __lsu;
 		for (__lsu = 0; __lsu < KEYSTONE_RIO_LSU_NUM; __lsu++)
 			keystone_rio_dma_complete_notify(krio_priv, __lsu);
@@ -121,8 +126,9 @@ void keystone_rio_dma_interrupt_handler(struct keystone_rio_data *krio_priv,
 	}
 }
 
-static inline void keystone_rio_dma_chain_complete(struct keystone_rio_dma_chan *chan,
-						   struct keystone_rio_dma_desc *desc)
+static inline void keystone_rio_dma_chain_complete(
+	struct keystone_rio_dma_chan *chan,
+	struct keystone_rio_dma_desc *desc)
 {
 	struct dma_async_tx_descriptor *adesc = desc_to_adesc(desc);
 	dma_async_tx_callback callback = adesc->callback;
@@ -147,7 +153,8 @@ static inline void keystone_rio_dma_complete(struct keystone_rio_dma_chan *chan,
 			keystone_rio_dma_chain_complete(chan, desc);
 
 		/* Free all fragment descriptors if any */
-		list_for_each_entry_safe(frag_desc, _fd, &desc->tx_list, tx_list)
+		list_for_each_entry_safe(frag_desc, _fd, &desc->tx_list,
+					 tx_list)
 			kfree(frag_desc);
 
 		kfree(desc);
@@ -202,12 +209,14 @@ static void keystone_rio_dma_start(struct keystone_rio_dma_chan *chan)
 
 	desc = chan->current_transfer;
 
-	if (unlikely((!desc) || (keystone_rio_dma_chan_get_state(chan) != RIO_CHAN_STATE_ACTIVE))) {
+	if (unlikely((!desc) || (keystone_rio_dma_chan_get_state(chan)
+				 != RIO_CHAN_STATE_ACTIVE))) {
 		spin_unlock_bh(&chan->lock);
 		return;
 	}
 
-	keystone_rio_dma_chan_set_state(chan, RIO_CHAN_STATE_ACTIVE, RIO_CHAN_STATE_RUNNING);
+	keystone_rio_dma_chan_set_state(chan, RIO_CHAN_STATE_ACTIVE,
+					RIO_CHAN_STATE_RUNNING);
 
 	/* Perform the DIO transfer */
 	dev_dbg(chan_dev(chan), "%s: perform current DIO transfer (dess = 0x%x)\n",
@@ -231,14 +240,16 @@ static void keystone_rio_dma_start(struct keystone_rio_dma_chan *chan)
 		return;
 	}
 
-	keystone_rio_dma_chan_set_state(chan, RIO_CHAN_STATE_RUNNING, RIO_CHAN_STATE_WAITING);
+	keystone_rio_dma_chan_set_state(chan, RIO_CHAN_STATE_RUNNING,
+					RIO_CHAN_STATE_WAITING);
 
 	spin_unlock_bh(&chan->lock);
 }
 
 static void keystone_rio_dma_tasklet(unsigned long data)
 {
-	struct keystone_rio_dma_chan *chan = (struct keystone_rio_dma_chan *) data;
+	struct keystone_rio_dma_chan *chan =
+		(struct keystone_rio_dma_chan *) data;
 	struct keystone_rio_dma_desc *desc;
 	int res = 0;
 
@@ -246,7 +257,8 @@ static void keystone_rio_dma_tasklet(unsigned long data)
 
 	desc = chan->current_transfer;
 
-	if (unlikely((!desc) || (keystone_rio_dma_chan_get_state(chan) != RIO_CHAN_STATE_WAITING))) {
+	if (unlikely((!desc) || (keystone_rio_dma_chan_get_state(chan)
+				 != RIO_CHAN_STATE_WAITING))) {
 		spin_unlock(&chan->lock);
 		return;
 	}
@@ -259,9 +271,10 @@ static void keystone_rio_dma_tasklet(unsigned long data)
 	if ((res == -EAGAIN) && (desc->retry_count-- > 0)) {
 		spin_unlock(&chan->lock);
 
-		dev_dbg(chan_dev(chan), "LSU%d transfer not completed (busy) context 0x%x (0x%x), "
-		       "restart the channel completion\n",
-		       chan->lsu, desc->lsu_context, (u32) &desc->lsu_context);
+		dev_dbg(chan_dev(chan),
+			"LSU%d transfer not completed (busy) context 0x%x (0x%x), restart the channel completion\n",
+			chan->lsu, desc->lsu_context,
+			(u32) &desc->lsu_context);
 
 		tasklet_schedule(&chan->tasklet);
 		return;
@@ -271,7 +284,8 @@ static void keystone_rio_dma_tasklet(unsigned long data)
 		desc->status = DMA_ERROR;
 		spin_unlock(&chan->lock);
 
-		dev_dbg(chan_dev(chan), "%s: LSU%d DMA transfer failed with %d\n",
+		dev_dbg(chan_dev(chan),
+			"%s: LSU%d DMA transfer failed with %d\n",
 			__func__, chan->lsu, res);
 
 		keystone_rio_dma_complete_all(chan);
@@ -293,7 +307,8 @@ static void keystone_rio_dma_tasklet(unsigned long data)
 	/* Move to next transfer */
 	desc = keystone_rio_dma_next_work(chan);
 
-	keystone_rio_dma_chan_set_state(chan, RIO_CHAN_STATE_WAITING, RIO_CHAN_STATE_ACTIVE);
+	keystone_rio_dma_chan_set_state(chan, RIO_CHAN_STATE_WAITING,
+					RIO_CHAN_STATE_ACTIVE);
 
 	spin_unlock(&chan->lock);
 
@@ -316,7 +331,8 @@ static int keystone_rio_dma_alloc_chan_resources(struct dma_chan *dchan)
 
 	spin_unlock_bh(&chan->lock);
 
-	keystone_rio_dma_chan_set_state(chan, RIO_CHAN_STATE_UNUSED, RIO_CHAN_STATE_ACTIVE);
+	keystone_rio_dma_chan_set_state(chan, RIO_CHAN_STATE_UNUSED,
+					RIO_CHAN_STATE_ACTIVE);
 
 	tasklet_enable(&chan->tasklet);
 
@@ -328,10 +344,14 @@ static void keystone_rio_dma_free_chan_resources(struct dma_chan *dchan)
 	struct keystone_rio_dma_chan *chan = from_dma_chan(dchan);
 	LIST_HEAD(list);
 
-	dev_dbg(chan_dev(chan), "freeing DMA Engine channel%d\n", chan_id(chan));
+	dev_dbg(chan_dev(chan), "freeing DMA Engine channel%d\n",
+		chan_id(chan));
 
-	if (keystone_rio_dma_chan_set_state(chan, RIO_CHAN_STATE_ACTIVE, RIO_CHAN_STATE_UNUSED)) {
-		dev_warn(chan_dev(chan), "freeing still active DMA channel %d!!!\n", chan_id(chan));
+	if (keystone_rio_dma_chan_set_state(chan, RIO_CHAN_STATE_ACTIVE,
+					    RIO_CHAN_STATE_UNUSED)) {
+		dev_warn(chan_dev(chan),
+			 "freeing still active DMA channel %d!!!\n",
+			 chan_id(chan));
 		keystone_rio_dma_chan_force_state(chan, RIO_CHAN_STATE_UNUSED);
 	}
 
@@ -339,14 +359,18 @@ static void keystone_rio_dma_free_chan_resources(struct dma_chan *dchan)
 
 	/* Purge the current active and queued transfers */
 	if (!list_empty(&chan->active_list)) {
-		dev_warn(chan_dev(chan), "transfer still active on DMA channel %d!!!\n", chan_id(chan));
+		dev_warn(chan_dev(chan),
+			 "transfer still active on DMA channel %d!!!\n",
+			 chan_id(chan));
 		spin_lock_bh(&chan->lock);
 		list_splice_init(&chan->active_list, &list);
 		spin_unlock_bh(&chan->lock);
 	}
 
 	if (!list_empty(&chan->queue)) {
-		dev_warn(chan_dev(chan), "queued transfers on DMA channel %d!!!\n", chan_id(chan));
+		dev_warn(chan_dev(chan),
+			 "queued transfers on DMA channel %d!!!\n",
+			 chan_id(chan));
 		spin_lock_bh(&chan->lock);
 		list_splice_init(&chan->queue, &list);
 		spin_unlock_bh(&chan->lock);
@@ -373,7 +397,7 @@ static enum dma_status keystone_rio_dma_tx_status(struct dma_chan *dchan,
 	last_used      = dchan->cookie;
 	spin_unlock_bh(&chan->lock);
 
-        if ((desc) && (desc->status == DMA_ERROR))
+	if ((desc) && (desc->status == DMA_ERROR))
 		return DMA_ERROR;
 
 	status = dma_async_is_complete(cookie, last_completed, last_used);
@@ -405,7 +429,8 @@ static void keystone_rio_dma_issue_pending(struct dma_chan *dchan)
 		dev_dbg(chan_dev(chan),	"%s: DMA channel busy\n", __func__);
 }
 
-static dma_cookie_t keystone_rio_dma_tx_submit(struct dma_async_tx_descriptor *adesc)
+static dma_cookie_t keystone_rio_dma_tx_submit(
+	struct dma_async_tx_descriptor *adesc)
 {
 	struct keystone_rio_dma_desc *desc = desc_from_adesc(adesc);
 	struct keystone_rio_dma_chan *chan = from_dma_chan(adesc->chan);
@@ -425,7 +450,8 @@ static dma_cookie_t keystone_rio_dma_tx_submit(struct dma_async_tx_descriptor *a
 		list_add_tail(&desc->node, &chan->active_list);
 		if (!chan->current_transfer) {
 			/* if no current_transfer */
-			chan->current_transfer = keystone_rio_dma_first_active(chan);
+			chan->current_transfer =
+				keystone_rio_dma_first_active(chan);
 		}
 		spin_unlock_bh(&chan->lock);
 
@@ -450,7 +476,7 @@ keystone_rio_dma_prep_slave_sg(struct dma_chan *dchan,
 	struct keystone_rio_dma_chan *chan = from_dma_chan(dchan);
 	struct keystone_rio_dma_desc *desc = NULL;
 	struct keystone_rio_dma_desc *first = NULL;
-	struct rio_dma_ext *rext = (struct rio_dma_ext*) tinfo;
+	struct rio_dma_ext *rext = (struct rio_dma_ext *) tinfo;
 	u64 rio_addr = rext->rio_addr; /* limited to 64-bit for now */
 	struct scatterlist *sg;
 	u32 packet_type, last_packet_type;
@@ -462,7 +488,8 @@ keystone_rio_dma_prep_slave_sg(struct dma_chan *dchan,
 	}
 
 	if (sg_len > KEYSTONE_RIO_DMA_MAX_DESC) {
-		dev_err(chan_dev(chan), "%s: SG list is too long (%d)\n", __func__, sg_len);
+		dev_err(chan_dev(chan), "%s: SG list is too long (%d)\n",
+			__func__, sg_len);
 		return NULL;
 	}
 
@@ -496,7 +523,8 @@ keystone_rio_dma_prep_slave_sg(struct dma_chan *dchan,
 		/* Allocate a (virtual) DMA descriptor for this transfer */
 		desc = kmalloc(sizeof(*desc), GFP_KERNEL);
 		if (!desc) {
-			dev_err(chan_dev(chan),	"cannot allocate DMA transfer descriptor\n");
+			dev_err(chan_dev(chan),
+				"cannot allocate DMA transfer descriptor\n");
 			return NULL;
 		}
 
@@ -509,7 +537,8 @@ keystone_rio_dma_prep_slave_sg(struct dma_chan *dchan,
 		desc->status      = DMA_SUCCESS;
 		desc->port_id     = dma_to_mport(dchan->device)->index;
 		desc->dest_id     = rext->destid;
-		desc->rio_addr    = (rio_addr & ~0x7); /* RapidIO address must be 64bit aligned */
+		/* RapidIO address must be 64bit aligned */
+		desc->rio_addr    = (rio_addr & ~0x7);
 		desc->rio_addr_u  = 0;
 		desc->buff_addr   = sg_dma_address(sg);
 		desc->size        = sg_dma_len(sg);
@@ -547,8 +576,9 @@ keystone_rio_dma_prep_slave_sg(struct dma_chan *dchan,
 	return &first->adesc;
 }
 
-static int keystone_rio_dma_prep_raw_packet(struct keystone_rio_dma_chan *chan,
-					    struct keystone_rio_dma_packet_raw *pkt)
+static int keystone_rio_dma_prep_raw_packet(
+	struct keystone_rio_dma_chan *chan,
+	struct keystone_rio_dma_packet_raw *pkt)
 {
 	struct keystone_rio_dma_desc *desc;
 	struct dma_chan *dchan = to_dma_chan(chan);
@@ -556,7 +586,8 @@ static int keystone_rio_dma_prep_raw_packet(struct keystone_rio_dma_chan *chan,
 	/* Allocate a (virtual) DMA descriptor for this transfer */
 	desc = kmalloc(sizeof(*desc), GFP_KERNEL);
 	if (!desc) {
-		dev_err(chan_dev(chan),	"cannot allocate DMA transfer descriptor\n");
+		dev_err(chan_dev(chan),
+			"cannot allocate DMA transfer descriptor\n");
 		return -ENOMEM;
 	}
 
@@ -627,8 +658,9 @@ static int keystone_rio_dma_device_control(struct dma_chan *dchan,
 		break;
 
 	case DMA_KEYSTONE_RIO_PREP_RAW_PACKET:
-		ret = keystone_rio_dma_prep_raw_packet(chan,
-						       (struct keystone_rio_dma_packet_raw*) arg);
+		ret = keystone_rio_dma_prep_raw_packet(
+			chan,
+			(struct keystone_rio_dma_packet_raw *) arg);
 		break;
 
 	default:
@@ -640,7 +672,7 @@ static int keystone_rio_dma_device_control(struct dma_chan *dchan,
 int keystone_rio_dma_register(struct rio_mport *mport, int channel_num)
 {
 	struct keystone_rio_data *krio_priv = mport->priv;
-       	u32 c;
+	u32 c;
 	int ret;
 
 	if (channel_num > KEYSTONE_RIO_DMA_MAX_CHANNEL)
@@ -658,10 +690,12 @@ int keystone_rio_dma_register(struct rio_mport *mport, int channel_num)
 	for (c = 0; c < mport->dma.chancnt; c++) {
 
 		struct keystone_rio_dma_chan *chan =
-			kzalloc(sizeof(struct keystone_rio_dma_chan), GFP_KERNEL);
+			kzalloc(sizeof(struct keystone_rio_dma_chan),
+				GFP_KERNEL);
 
 		if (!chan) {
-			dev_err(krio_priv->dev, "failed to allocate channel\n");
+			dev_err(krio_priv->dev,
+				"failed to allocate channel\n");
 			return -ENOMEM;
 		}
 
@@ -687,9 +721,11 @@ int keystone_rio_dma_register(struct rio_mport *mport, int channel_num)
 
 		keystone_rio_dma_chan_force_state(chan, RIO_CHAN_STATE_UNUSED);
 
-		list_add_tail(&chan->node, &krio_priv->dma_channels[chan->lsu]);
+		list_add_tail(&chan->node,
+			      &krio_priv->dma_channels[chan->lsu]);
 
-		dev_info(krio_priv->dev, "registering DMA channel %d (0x%x) using lsu %d for port %d\n",
+		dev_info(krio_priv->dev,
+			 "registering DMA channel %d (0x%x) using lsu %d for port %d\n",
 			 c, (u32) chan, chan->lsu, mport->index);
 	}
 
@@ -697,18 +733,24 @@ int keystone_rio_dma_register(struct rio_mport *mport, int channel_num)
 	dma_cap_set(DMA_PRIVATE, mport->dma.cap_mask);
 	dma_cap_set(DMA_SLAVE, mport->dma.cap_mask);
 
-	mport->dma.device_alloc_chan_resources = keystone_rio_dma_alloc_chan_resources;
-	mport->dma.device_free_chan_resources  = keystone_rio_dma_free_chan_resources;
-	mport->dma.device_tx_status            = keystone_rio_dma_tx_status;
-	mport->dma.device_issue_pending        = keystone_rio_dma_issue_pending;
-	mport->dma.device_prep_slave_sg        = keystone_rio_dma_prep_slave_sg;
-	mport->dma.device_control              = keystone_rio_dma_device_control;
+	mport->dma.device_alloc_chan_resources =
+		keystone_rio_dma_alloc_chan_resources;
+	mport->dma.device_free_chan_resources =
+		keystone_rio_dma_free_chan_resources;
+	mport->dma.device_tx_status =
+		keystone_rio_dma_tx_status;
+	mport->dma.device_issue_pending =
+		keystone_rio_dma_issue_pending;
+	mport->dma.device_prep_slave_sg =
+		keystone_rio_dma_prep_slave_sg;
+	mport->dma.device_control =
+		keystone_rio_dma_device_control;
 
 	ret = dma_async_device_register(&mport->dma);
 	if (ret)
 		dev_err(krio_priv->dev, "failed to register DMA device\n");
 
-	dev_dbg(mport->dma.dev, "%s: dma device registered\n",__func__);
+	dev_dbg(mport->dma.dev, "%s: dma device registered\n", __func__);
 
 	return ret;
 }
@@ -717,5 +759,5 @@ void keystone_rio_dma_unregister(struct rio_mport *mport)
 {
 	dma_async_device_unregister(&mport->dma);
 
-	dev_dbg(mport->dma.dev, "%s: dma device unregistered\n",__func__);
+	dev_dbg(mport->dma.dev, "%s: dma device unregistered\n", __func__);
 }
