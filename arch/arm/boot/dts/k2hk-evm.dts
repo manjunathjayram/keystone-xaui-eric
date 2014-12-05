@@ -2963,11 +2963,10 @@
 		rapidio: rapidio@2900000 {
 			#address-cells = <1>;
 			#size-cells = <1>;
-			reg = <0x2900000 0x40000
-			       0x2620018 0x4
-			       0x2620154 0x4
-			       0x232c000 0x2000>;
-			reg-names = "rio", "jtagid", "serdes_sts", "serdes";
+			reg = <0x2900000 0x40000        /* rio regs */
+			       0x2620000 0x1000         /* boot config regs */
+		               0x232c000 0x2000>;       /* serdes config regs */
+			reg-names = "rio", "boot_config", "serdes";
 			clocks = <&clksrio>;
 			clock-names = "clk_srio";
 			compatible = "ti,keystone-rapidio";
