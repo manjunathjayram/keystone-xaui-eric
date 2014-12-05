@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 Texas Instruments
+ * Copyright (C) 2012 - 2014 Texas Instruments
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -36,9 +36,10 @@
 #define XGMII_LINK_MAC_PHY		10
 #define XGMII_LINK_MAC_MAC_FORCED	11
 
-int serdes_init(void);
-void serdes_init_6638_156p25Mhz(void);
+#define SGMII_REGS_SIZE			0x100
+
 int keystone_sgmii_reset(void __iomem *sgmii_ofs, int port);
+bool keystone_sgmii_rtreset(void __iomem *sgmii_ofs, int port, bool set);
 int keystone_sgmii_link_status(void __iomem *sgmii_ofs, int ports);
 int keystone_sgmii_get_port_link(void __iomem *sgmii_ofs, int port);
 int keystone_sgmii_config(void __iomem *sgmii_ofs,
@@ -47,11 +48,11 @@ int keystone_sgmii_config(void __iomem *sgmii_ofs,
 struct netcp_device;
 
 enum netcp_rx_state {
+	RX_STATE_INVALID,
 	RX_STATE_INTERRUPT,
 	RX_STATE_SCHEDULED,
 	RX_STATE_POLL,
 	RX_STATE_TEARDOWN,
-	RX_STATE_INVALID,
 };
 
 enum netcp_tx_state {
@@ -95,10 +96,15 @@ struct netcp_addr {
 	struct list_head	 node;
 };
 
+/* Flags for hw_capabilities */
+#define	CPSW_HAS_P0_TX_CRC_REMOVE	BIT(0)
+
 struct netcp_priv {
 	/* Common stuff first */
 	struct netcp_device		*netcp_device;
 	struct net_device		*ndev;
+	struct platform_device		*pdev;
+	struct device			*dev;
 	int				 cpsw_port;
 	/* Tx data path stuff */
 	struct netcp_hook_list		*txhook_list_array;
@@ -106,13 +112,11 @@ struct netcp_priv {
 	struct dma_chan			*rx_channel;
 	enum netcp_rx_state		 rx_state;
 	struct netcp_hook_list		*rxhook_list_array;
+	u32				hw_capabilities;
 	struct napi_struct		 napi;
 	/* Non data path stuff */
-	struct platform_device		*pdev;
-	struct device			*dev;
 	u32				 msg_enable;
 	spinlock_t			 lock;
-	struct net_device_stats		 stats;
 	int				 rx_packet_max;
 	const char			*rx_chan_name;
 	u32				 link_state;
@@ -127,6 +131,15 @@ struct netcp_priv {
 
 #define NETCP_SGLIST_SIZE	(MAX_SKB_FRAGS + 2)
 #define	NETCP_PSDATA_LEN	16
+
+/* Maximum number of psdata words that are used in the Rx direction.
+ * NOTE: this value should be updated if the drivers need to use more psdata.
+ * Current usage is:
+ * SA driver looks upto 4 words
+ * PA driver looks upto 7 words
+ */
+#define	NETCP_MAX_RX_PSDATA_LEN	7
+
 struct netcp_packet {
 	struct sk_buff			*skb;
 	struct netcp_priv		*netcp;
@@ -138,11 +151,15 @@ struct netcp_packet {
 						struct sk_buff *skb);
 	void				*primary_bufptr;
 	unsigned int			 primary_bufsiz;
-	int				 sg_ents;
-	struct scatterlist		 sg[NETCP_SGLIST_SIZE];
-	u32				 psdata[NETCP_PSDATA_LEN];
-	unsigned int			 psdata_len;
+	unsigned int			 primary_datsiz;
+	u32				 eflags;
 	u32				 epib[4];
+	unsigned int			 psdata_len;
+	int				 sg_ents;
+	struct scatterlist		 sg[NETCP_SGLIST_SIZE]
+							____cacheline_aligned;
+	u32				 psdata[NETCP_PSDATA_LEN]
+							____cacheline_aligned;
 };
 
 static inline u32 *netcp_push_psdata(struct netcp_packet *p_info, unsigned bytes)
@@ -236,9 +253,11 @@ int netcp_register_module(struct netcp_module *module);
 void netcp_unregister_module(struct netcp_module *module);
 
 u32 netcp_get_streaming_switch(struct netcp_device *netcp_device, int port);
+u32 netcp_get_streaming_switch2(struct netcp_device *netcp_device, int port);
 u32 netcp_set_streaming_switch(struct netcp_device *netcp_device,
 				int port, u32 new_value);
-
+u32 netcp_set_streaming_switch2(struct netcp_device *netcp_device,
+				 int port, u32 new_value);
 int netcp_create_interface(struct netcp_device *netcp_device,
 			   struct net_device **ndev_p,
 			   const char *ifname_proto,
@@ -270,6 +289,6 @@ int netcp_unregister_rxhook(struct netcp_priv *netcp_priv, int order,
 
 void *netcp_device_find_module(struct netcp_device *netcp_device,
 		const char *name);
-int xge_serdes_init_156p25Mhz(void);
+int xge_serdes_init(struct device_node *node);
 int keystone_pcsr_config(void __iomem *pcsr_ofs, int port, u32 interface);
 #endif

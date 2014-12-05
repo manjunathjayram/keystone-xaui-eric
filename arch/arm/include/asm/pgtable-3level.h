@@ -72,7 +72,11 @@
 #define L_PTE_FILE		(_AT(pteval_t, 1) << 2)		/* only when !PRESENT */
 #define L_PTE_USER		(_AT(pteval_t, 1) << 6)		/* AP[1] */
 #define L_PTE_RDONLY		(_AT(pteval_t, 1) << 7)		/* AP[2] */
+#ifdef CONFIG_KEYSTONE2_DMA_COHERENT
+#define L_PTE_SHARED		(_AT(pteval_t, 2) << 8)		/* SH[1:0], outer shareable */
+#else
 #define L_PTE_SHARED		(_AT(pteval_t, 3) << 8)		/* SH[1:0], inner shareable */
+#endif
 #define L_PTE_YOUNG		(_AT(pteval_t, 1) << 10)	/* AF */
 #define L_PTE_XN		(_AT(pteval_t, 1) << 54)	/* XN */
 #define L_PTE_DIRTY		(_AT(pteval_t, 1) << 55)	/* unused */

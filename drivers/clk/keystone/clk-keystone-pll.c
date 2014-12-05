@@ -19,6 +19,9 @@
 #include <linux/module.h>
 #include <linux/platform_data/clk-keystone-pll.h>
 
+#define CLKOD_MASK		0x780000
+#define CLKOD_SHIFT		19
+
 /**
  * struct clk_pll - DaVinci Main pll clock
  * @hw: clk_hw for the pll
@@ -52,19 +55,28 @@ static unsigned long clk_pllclk_recalc(struct clk_hw *hw,
 	mult |= ((val & pll_data->pllm_upper_mask)
 			>> pll_data->pllm_upper_shift);
 	prediv = (val & pll_data->plld_mask);
-	postdiv = pll_data->fixed_postdiv;
+
+	if (!pll_data->has_pllctrl)
+		/* read post divider from od bits*/
+		postdiv = ((val & pll_data->clkod_mask) >>
+				 pll_data->clkod_shift) + 1;
+	else
+		postdiv = pll_data->postdiv;
 
 	rate /= (prediv + 1);
 	rate = (rate * (mult + 1));
 	rate /= postdiv;
 
-	if (pll_data->has_pllctrl) {
-		pr_notice("main_pll_clk rate is %ld, postdiv = %d, mult = %d," \
-				"prediv = %d\n", rate, postdiv, mult, prediv);
-	} else {
-		pr_notice("pll_clk parent_rate(%ld Hz), rate(%ld Hz)," \
-				"postdiv = %d, mult = %d, prediv = %d\n",
-				parent_rate, rate, postdiv, mult, prediv);
+	if (parent_rate) {
+		if (pll_data->has_pllctrl && parent_rate)
+			pr_notice("Main PLL clk (%ld Hz), parent (%ld Hz)," \
+				  "postdiv = %d, mult = %d, prediv = %d\n",
+				  rate, parent_rate, postdiv, mult, prediv);
+
+		else
+			pr_notice("Generic PLL clk (%ld Hz), parent (%ld Hz)," \
+				  "postdiv = %d, mult = %d, prediv = %d\n",
+				  rate, parent_rate, postdiv, mult, prediv);
 	}
 	return rate;
 }
@@ -152,8 +164,10 @@ void __init of_keystone_pll_clk_init(struct device_node *node)
 		goto out;
 
 	if (of_property_read_u32(node, "fixed_postdiv",
-					&pll_data->fixed_postdiv))
-		goto out;
+					&pll_data->postdiv)) {
+		pll_data->clkod_mask = CLKOD_MASK;
+		pll_data->clkod_shift = CLKOD_SHIFT;
+	}
 
 	clk = clk_register_keystone_pll(NULL, node->name, parent_name,
 					 pll_data);

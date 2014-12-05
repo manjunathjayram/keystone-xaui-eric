@@ -70,6 +70,7 @@ struct cpsw_cpts {
 #define HW3_TS_PUSH_EN       (1<<10) /* Hardware push 3 enable */
 #define HW2_TS_PUSH_EN       (1<<9)  /* Hardware push 2 enable */
 #define HW1_TS_PUSH_EN       (1<<8)  /* Hardware push 1 enable */
+#define TS_COMP_POLARITY     (1<<2)  /* TS_COMP Polarity */
 #define INT_TEST             (1<<1)  /* Interrupt Test */
 #define CPTS_EN              (1<<0)  /* Time Sync Enable */
 
@@ -136,7 +137,7 @@ struct cpts {
 	u32 cc_mult; /* for the nominal frequency */
 	struct cyclecounter cc;
 	struct timecounter tc;
-	struct delayed_work overflow_work;
+	struct timer_list timer;
 	int phc_index;
 	struct clk *refclk;
 	struct list_head events;
@@ -149,6 +150,7 @@ struct cpts {
 	int pps_enable;
 	u32 pps_one_sec; /* counter val equivalent of 1 sec */
 	u32 ts_comp_length;
+	u32 ts_comp_polarity;
 	u64 ts_comp_last;
 	u32 cc_div;
 	u64 cc_total;
@@ -157,6 +159,7 @@ struct cpts {
 	u64 max_nsec;
 	s32 ppb;
 	bool ignore_adjfreq;
+	u32 hw_ts_enable;
 #endif
 };
 

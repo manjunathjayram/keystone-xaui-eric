@@ -98,14 +98,28 @@ fw-shipped-$(CONFIG_TIGON3) += tigon/tg3.bin tigon/tg3_tso.bin \
 			       tigon/tg3_tso5.bin
 fw-shipped-$(CONFIG_TI_KEYSTONE) += keystone/sa_pdsp0_1_0_2_1.fw \
 				    keystone/sa_pdsp1_1_0_2_1.fw \
-				    keystone/qmss_pdsp_acc48_le_1_0_3_12.fw \
-				    keystone/qmss_pdsp_acc48_be_1_0_3_12.fw \
-				    keystone/qmss_qos.fw \
-				    keystone/pa_pdsp02_classify1.fw \
+				    keystone/pa_pdsp0_classify1.fw \
+				    keystone/pa_pdsp1_classify1.fw \
+				    keystone/pa_pdsp2_classify1.fw \
 				    keystone/pa_pdsp3_classify2.fw \
 				    keystone/pa_pdsp45_pam.fw \
-				    keystone/qmss_pdsp_acc48_k2_le_1_0_0_8.fw \
-				    keystone/qmss_pdsp_qos_k2_le_2_0_1_6.fw
+				    keystone/qmss_pdsp_acc48_k2_le_1_0_0_9.fw \
+				    keystone/qmss_pdsp_qos_k2_le_2_0_1_8.fw \
+				    keystone/pa_in0_pdsp0.fw \
+				    keystone/pa_in0_pdsp1.fw \
+				    keystone/pa_in1_pdsp0.fw \
+				    keystone/pa_in1_pdsp1.fw \
+				    keystone/pa_in2_pdsp0.fw \
+				    keystone/pa_in3_pdsp0.fw \
+				    keystone/pa_in4_pdsp0.fw \
+				    keystone/pa_in4_pdsp1.fw \
+				    keystone/pa_post_pdsp0.fw \
+				    keystone/pa_post_pdsp1.fw \
+				    keystone/pa_eg0_pdsp0.fw \
+				    keystone/pa_eg0_pdsp1.fw \
+				    keystone/pa_eg0_pdsp2.fw \
+				    keystone/pa_eg1_pdsp0.fw \
+				    keystone/pa_eg2_pdsp0.fw
 fw-shipped-$(CONFIG_TYPHOON) += 3com/typhoon.bin
 fw-shipped-$(CONFIG_USB_EMI26) += emi26/loader.fw emi26/firmware.fw \
 				  emi26/bitstream.fw
