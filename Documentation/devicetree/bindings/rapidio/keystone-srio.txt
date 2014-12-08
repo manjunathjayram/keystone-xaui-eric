@@ -57,6 +57,10 @@ tx_channel:       This is the packet DMA channel name associated with MP transmi
                   If not specified the "riotx" name will be used.
 tx_queue_depth:   Number of descriptors for the transmit queue. Default is 128
                   descriptors.
+rxu_map_range:    Define the range (start and end values) of RXU mapping entries that
+		  will be used for MP receive. Range must start from 0 and end up
+		  to 63. If not specified the full range will be used by Linux
+		  (0 to 63).
 num-mboxes:       Number of receive mailboxes used for MP. If not specified, only one
 		  mailbox will be used.
 pkt-forward:      This allow to define the routing table for hardware packet
