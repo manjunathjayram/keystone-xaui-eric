@@ -158,6 +158,9 @@
 
 #define KEYSTONE_RIO_PKT_FW_BRR_NUM     1    /* BRR used for packet forwarding */
 
+#define KEYSTONE_RIO_RXU_MAP_MIN	0
+#define KEYSTONE_RIO_RXU_MAP_MAX	63   /* RXU mapping range */
+
 /*
  * RapidIO logical block definitions
  */
@@ -461,6 +464,8 @@ struct keystone_rio_data {
 
 	struct tasklet_struct	task;
 
+	unsigned long		rxu_map_start;
+	unsigned long		rxu_map_end;
 	unsigned long		rxu_map_bitmap[2];
 
 	struct dma_chan	       *tx_channel;

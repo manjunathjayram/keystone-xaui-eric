@@ -2285,13 +2285,19 @@ fail:
 static int keystone_rio_get_rxu_map(struct keystone_rio_data *krio_priv)
 {
 	int id;
-	unsigned long bit_sz = 2 * 8 * sizeof(u32);
+	unsigned long bit_sz = sizeof(krio_priv->rxu_map_bitmap) * 8;
 
 	id = find_first_zero_bit(&(krio_priv->rxu_map_bitmap[0]), bit_sz);
-	if (id >= bit_sz)
+
+	while (id < krio_priv->rxu_map_start)
+		id = find_next_zero_bit(&(krio_priv->rxu_map_bitmap[0]),
+					bit_sz, ++id);
+
+	if (id > krio_priv->rxu_map_end)
 		return -1;
 
 	__set_bit(id, &(krio_priv->rxu_map_bitmap[0]));
+
 	return id;
 }
 
@@ -3435,6 +3441,23 @@ static int keystone_rio_get_controller_defaults(
 			 "missing \"tx_queue_depth\" parameter\n");
 		krio_priv->tx_queue_depth = 128;
 	}
+
+	/* RXU mapping resources */
+	if (of_property_read_u32_array(node, "rxu_map_range", &temp[0], 2)) {
+		krio_priv->rxu_map_start = KEYSTONE_RIO_RXU_MAP_MIN;
+		krio_priv->rxu_map_end   = KEYSTONE_RIO_RXU_MAP_MAX;
+	} else if ((temp[1] > KEYSTONE_RIO_RXU_MAP_MAX) ||
+		   (temp[0] > temp[1])) {
+		dev_err(krio_priv->dev,
+			"invalid \"rxu_map_range\" parameter\n");
+		return -EINVAL;
+	} else {
+		krio_priv->rxu_map_start = temp[0];
+		krio_priv->rxu_map_end   = temp[1];
+	}
+
+	dev_dbg(krio_priv->dev, "using RXU map %lu - %lu range\n",
+		krio_priv->rxu_map_start, krio_priv->rxu_map_end);
 
 	/* Mailboxes configuration */
 	if (of_property_read_u32(node, "num-mboxes",
