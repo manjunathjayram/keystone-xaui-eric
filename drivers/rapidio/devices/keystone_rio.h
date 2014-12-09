@@ -912,4 +912,29 @@ struct keystone_rio_fabric_regs {
 
 extern int rio_basic_attach(void);
 
+/* Message Passing management functions */
+extern void keystone_rio_close_tx_mbox(int mbox,
+				       struct keystone_rio_data *krio_priv);
+extern void keystone_rio_close_rx_mbox(int mbox,
+				       struct keystone_rio_data *krio_priv);
+extern int keystone_rio_open_outb_mbox(struct rio_mport *mport,
+				       void *dev_id,
+				       int mbox,
+				       int entries);
+extern void keystone_rio_close_outb_mbox(struct rio_mport *mport, int mbox);
+extern int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
+					    struct rio_dev *rdev,
+					    int mbox,
+					    void *buffer,
+					    const size_t len);
+extern int keystone_rio_open_inb_mbox(struct rio_mport *mport,
+				      void *dev_id,
+				      int mbox,
+				      int entries);
+extern void keystone_rio_close_inb_mbox(struct rio_mport *mport, int mbox);
+extern int keystone_rio_hw_add_inb_buffer(struct rio_mport *mport,
+					  int mbox,
+					  void *buffer);
+extern void *keystone_rio_hw_get_inb_message(struct rio_mport *mport,
+					     int mbox);
 #endif /* KEYSTONE_RIO_H */
