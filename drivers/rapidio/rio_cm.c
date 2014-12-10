@@ -135,6 +135,7 @@ struct cm_dev {
 	int			npeers;
 	struct tasklet_struct	rx_tasklet;
 	struct tasklet_struct	tx_tasklet;
+	struct rio_dev		rdev; /* fake rio_dev object for msg loopback */
 };
 
 struct chan_rx_ring {
@@ -382,9 +383,9 @@ static int riocm_req_handler(struct cm_dev *cm, void *req_data)
 	conn_id->rdev = peer->rdev;
 	conn_id->state = RIO_CM_CONNECTED;
 
-	spin_lock(&listen_id->lock);
+	spin_lock_bh(&listen_id->lock);
 	list_add_tail(&conn_id->ch_node, &listen_id->accept_queue);
-	spin_unlock(&listen_id->lock);
+	spin_unlock_bh(&listen_id->lock);
 
 	/*
 	 * Acknowledge the connection request.
@@ -1245,19 +1246,15 @@ int riocm_ch_listen(u16 ch_id)
 	riocm_debug(DBG_CHOP, "%s(ch_%d)", __func__, ch_id);
 
 	ch = riocm_get_channel(ch_id);
-	if (!ch)
+	if (!ch || !riocm_comp(ch, RIO_CM_CHAN_BOUND))
 		return -EINVAL;
-
-	spin_lock_bh(&ch->lock);
-	if (ch->state != RIO_CM_CHAN_BOUND) {
-		spin_unlock_bh(&ch->lock);
-		return -EINVAL;
-	}
 
 	/* Add the channel into the global list of listeners */
 	spin_lock(&rio_list_lock);
 	list_add_tail(&ch->ch_node, &listen_any_list);
 	spin_unlock(&rio_list_lock);
+
+	spin_lock_bh(&ch->lock);
 	ch->state = RIO_CM_LISTEN;
 	spin_unlock_bh(&ch->lock);
 
@@ -2003,10 +2000,11 @@ static int riocm_add_mport(struct device *dev,
 	int i;
 	struct cm_dev *cm;
 	struct rio_mport *mport = to_rio_mport(dev);
+	struct cm_peer *peer;
 
 	riocm_debug(DBG_MPORT, "add mport %s", mport->name);
 
-	cm = kmalloc(sizeof *cm, GFP_KERNEL);
+	cm = kzalloc(sizeof(*cm), GFP_KERNEL);
 	if (!cm)
 		return -ENOMEM;
 
@@ -2053,6 +2051,21 @@ static int riocm_add_mport(struct device *dev,
 	INIT_LIST_HEAD(&cm->peers);
 	cm->npeers = 0;
 
+	/* Add self as a peer for loopback operations */
+	peer = kmalloc(sizeof(struct cm_peer), GFP_KERNEL);
+	if (peer) {
+		riocm_debug(DBG_MPORT, "add loopback for mport%d", mport->id);
+		cm->rdev.destid = (u16)mport->host_deviceid;
+		dev_set_name(&cm->rdev.dev, "loc_mport%d", mport->id);
+		device_initialize(&cm->rdev.dev);
+		peer->rdev = &cm->rdev;
+		list_add_tail(&peer->node, &cm->peers);
+		cm->npeers = 1;
+	} else {
+		riocm_error("%s failed to setup loopback peer on %s",
+			    __func__, mport->name);
+	}
+
 	spin_lock(&rio_list_lock);
 	list_add_tail(&cm->list, &cm_dev_list);
 	spin_unlock(&rio_list_lock);
@@ -2075,6 +2088,7 @@ static void riocm_remove_mport(struct device *dev,
 	struct rio_mport *mport = to_rio_mport(dev);
 	int i;
 	struct cm_dev *cm;
+	struct cm_peer *peer, *temp;
 
 	riocm_debug(DBG_MPORT, "remove mport %s", mport->name);
 
@@ -2092,6 +2106,14 @@ found:
 
 	rio_release_inb_mbox(mport, cmbox);
 	rio_release_outb_mbox(mport, cmbox);
+
+	/* Remove and free peer entries (loopback only ?) */
+	list_for_each_entry_safe(peer, temp, &cm->peers, node) {
+		riocm_debug(DBG_RDEV, "%s removing peer %s",
+			    __func__, rio_name(peer->rdev));
+		list_del(&peer->node);
+		kfree(peer);
+	}
 
 	for (i = 0; i < RIOCM_RX_RING_SIZE; i++)
 		kfree(cm->rx_buf[i]);
