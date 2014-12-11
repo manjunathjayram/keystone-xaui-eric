@@ -26,17 +26,17 @@
 #include <asm/irq.h>
 #include <linux/io.h>
 
-#define KEYSTONE_RIO_MAP_FLAG_SEGMENT		BIT(0)
-#define KEYSTONE_RIO_MAP_FLAG_SRC_PROMISC	BIT(1)
-#define KEYSTONE_RIO_MAP_FLAG_TT_16		BIT(13)
-#define KEYSTONE_RIO_MAP_FLAG_DST_PROMISC	BIT(15)
-#define KEYSTONE_RIO_DESC_FLAG_TT_16		BIT(9)
+#define KEYSTONE_RIO_MAP_FLAG_SEGMENT	  BIT(0)
+#define KEYSTONE_RIO_MAP_FLAG_SRC_PROMISC BIT(1)
+#define KEYSTONE_RIO_MAP_FLAG_TT_16	  BIT(13)
+#define KEYSTONE_RIO_MAP_FLAG_DST_PROMISC BIT(15)
+#define KEYSTONE_RIO_DESC_FLAG_TT_16	  BIT(9)
 
-#define KEYSTONE_RIO_BOOT_COMPLETE		BIT(24)
-#define KEYSTONE_RIO_PER_RESTORE                BIT(4)
-#define KEYSTONE_RIO_PER_EN			BIT(2)
-#define KEYSTONE_RIO_PER_FREE			BIT(0)
-#define KEYSTONE_RIO_PEF_FLOW_CONTROL		BIT(7)
+#define KEYSTONE_RIO_BOOT_COMPLETE	  BIT(24)
+#define KEYSTONE_RIO_PER_RESTORE          BIT(4)
+#define KEYSTONE_RIO_PER_EN		  BIT(2)
+#define KEYSTONE_RIO_PER_FREE		  BIT(0)
+#define KEYSTONE_RIO_PEF_FLOW_CONTROL	  BIT(7)
 
 /*
  * Packet types
@@ -75,12 +75,29 @@
 #define KEYSTONE_RIO_LSU_CC_RETRY         0x06
 #define KEYSTONE_RIO_LSU_CC_CANCELED      0x07
 
-/* Max ports configuration per path modes */
-#define KEYSTONE_MAX_PORTS_PATH_MODE_0  0xf /* 4 ports */
-#define KEYSTONE_MAX_PORTS_PATH_MODE_1  0xd /* 3 ports */
-#define KEYSTONE_MAX_PORTS_PATH_MODE_2  0x7 /* 3 ports */
-#define KEYSTONE_MAX_PORTS_PATH_MODE_3  0x5 /* 2 ports */
-#define KEYSTONE_MAX_PORTS_PATH_MODE_4  0x1 /* 1 ports */
+
+/*
+ * Max ports configuration per path modes
+ */
+#define KEYSTONE_RIO_MAX_PORTS_PATH_MODE_0              0xf /* 4 ports */
+#define KEYSTONE_RIO_MAX_PORTS_PATH_MODE_1              0xd /* 3 ports */
+#define KEYSTONE_RIO_MAX_PORTS_PATH_MODE_2              0x7 /* 3 ports */
+#define KEYSTONE_RIO_MAX_PORTS_PATH_MODE_3              0x5 /* 2 ports */
+#define KEYSTONE_RIO_MAX_PORTS_PATH_MODE_4              0x1 /* 1 ports */
+
+/*
+ * Register range defines
+ */
+#define KEYSTONE_RIO_CAR_CSR_REGS         0x0b000
+#define KEYSTONE_RIO_SERIAL_PORT_REGS     0x0b100
+#define KEYSTONE_RIO_ERR_MGMT_REGS        0x0c000
+#define KEYSTONE_RIO_PHY_REGS             0x1b000
+#define KEYSTONE_RIO_TRANSPORT_REGS       0x1b300
+#define KEYSTONE_RIO_PKT_BUF_REGS         0x1b600
+#define KEYSTONE_RIO_EVT_MGMT_REGS        0x1b900
+#define KEYSTONE_RIO_PORT_WRITE_REGS      0x1ba00
+#define KEYSTONE_RIO_LINK_REGS            0x1bd00
+#define KEYSTONE_RIO_FABRIC_REGS          0x1be00
 
 /*
  * Various RIO defines
@@ -497,7 +514,6 @@ struct keystone_rio_data {
 	struct keystone_rio_port_write_regs __iomem	*port_write_regs;
 	struct keystone_rio_link_layer_regs __iomem	*link_regs;
 	struct keystone_rio_fabric_regs __iomem		*fabric_regs;
-	u32						 car_csr_regs_base;
 
 	struct keystone_rio_board_controller_info	 board_rio_cfg;
 

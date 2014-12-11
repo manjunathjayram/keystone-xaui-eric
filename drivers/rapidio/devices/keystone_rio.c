@@ -1890,6 +1890,13 @@ static int keystone_local_config_read(struct rio_mport *mport,
 {
 	struct keystone_rio_data *krio_priv = mport->priv;
 
+	if (len != sizeof(u32))
+		return -EINVAL; /* only 32-bit access is supported */
+
+	if ((offset + len) > (krio_priv->board_rio_cfg.rio_regs_size
+			      - KEYSTONE_RIO_CAR_CSR_REGS))
+		return -EINVAL; /* only within the RIO regs range */
+
 	/*
 	 * Workaround for rionet: the processing element features must content
 	 * RIO_PEF_INB_MBOX and RIO_PEF_INB_DOORBELL bits that cannot be set on
@@ -1923,6 +1930,13 @@ static int keystone_local_config_write(struct rio_mport *mport,
 				       int index, u32 offset, int len, u32 data)
 {
 	struct keystone_rio_data *krio_priv = mport->priv;
+
+	if (len != sizeof(u32))
+		return -EINVAL; /* only 32-bit access is supported */
+
+	if ((offset + len) > (krio_priv->board_rio_cfg.rio_regs_size
+			      - KEYSTONE_RIO_CAR_CSR_REGS))
+		return -EINVAL; /* only within the RIO regs range */
 
 	dev_dbg(krio_priv->dev,
 		"local_conf_w: index %d offset 0x%x data 0x%x\n",
@@ -2511,15 +2525,15 @@ static int keystone_rio_get_controller_defaults(
 
 	/* Max possible ports configurations per path_mode */
 	if ((c->path_mode == 0 &&
-	     c->ports & ~KEYSTONE_MAX_PORTS_PATH_MODE_0) ||
+	     c->ports & ~KEYSTONE_RIO_MAX_PORTS_PATH_MODE_0) ||
 	    (c->path_mode == 1 &&
-	     c->ports & ~KEYSTONE_MAX_PORTS_PATH_MODE_1) ||
+	     c->ports & ~KEYSTONE_RIO_MAX_PORTS_PATH_MODE_1) ||
 	    (c->path_mode == 2 &&
-	     c->ports & ~KEYSTONE_MAX_PORTS_PATH_MODE_2) ||
+	     c->ports & ~KEYSTONE_RIO_MAX_PORTS_PATH_MODE_2) ||
 	    (c->path_mode == 3 &&
-	     c->ports & ~KEYSTONE_MAX_PORTS_PATH_MODE_3) ||
+	     c->ports & ~KEYSTONE_RIO_MAX_PORTS_PATH_MODE_3) ||
 	    (c->path_mode == 4 &&
-	     c->ports & ~KEYSTONE_MAX_PORTS_PATH_MODE_4)) {
+	     c->ports & ~KEYSTONE_RIO_MAX_PORTS_PATH_MODE_4)) {
 		dev_err(krio_priv->dev,
 			"\"path_mode\" and \"ports\" configuration mismatch\n");
 		return -EINVAL;
@@ -3125,16 +3139,16 @@ static int keystone_rio_probe(struct platform_device *pdev)
 	regs = ioremap(krio_priv->board_rio_cfg.rio_regs_base,
 		       krio_priv->board_rio_cfg.rio_regs_size);
 	krio_priv->regs		     = regs;
-	krio_priv->car_csr_regs	     = regs + 0xb000;
-	krio_priv->serial_port_regs  = regs + 0xb100;
-	krio_priv->err_mgmt_regs     = regs + 0xc000;
-	krio_priv->phy_regs	     = regs + 0x1b000;
-	krio_priv->transport_regs    = regs + 0x1b300;
-	krio_priv->pkt_buf_regs	     = regs + 0x1b600;
-	krio_priv->evt_mgmt_regs     = regs + 0x1b900;
-	krio_priv->port_write_regs   = regs + 0x1ba00;
-	krio_priv->link_regs	     = regs + 0x1bd00;
-	krio_priv->fabric_regs	     = regs + 0x1be00;
+	krio_priv->car_csr_regs	     = regs + KEYSTONE_RIO_CAR_CSR_REGS;
+	krio_priv->serial_port_regs  = regs + KEYSTONE_RIO_SERIAL_PORT_REGS;
+	krio_priv->err_mgmt_regs     = regs + KEYSTONE_RIO_ERR_MGMT_REGS;
+	krio_priv->phy_regs	     = regs + KEYSTONE_RIO_PHY_REGS;
+	krio_priv->transport_regs    = regs + KEYSTONE_RIO_TRANSPORT_REGS;
+	krio_priv->pkt_buf_regs	     = regs + KEYSTONE_RIO_PKT_BUF_REGS;
+	krio_priv->evt_mgmt_regs     = regs + KEYSTONE_RIO_EVT_MGMT_REGS;
+	krio_priv->port_write_regs   = regs + KEYSTONE_RIO_PORT_WRITE_REGS;
+	krio_priv->link_regs	     = regs + KEYSTONE_RIO_LINK_REGS;
+	krio_priv->fabric_regs	     = regs + KEYSTONE_RIO_FABRIC_REGS;
 
 	/* Register SerDes */
 	res = keystone_rio_serdes_register(
