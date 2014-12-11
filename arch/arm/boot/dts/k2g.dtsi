@@ -22,8 +22,13 @@
 		serial0	= &uart0;
 	};
 
+	chosen {
+		bootargs = "console=ttyS0,115200n8 debug earlyprintk rdinit=/sbin/init rw root=/dev/ram0 nosmp initrd=0x802000000,9M";
+	};
+
 	memory {
-		reg = <0x00000000 0x80000000 0x00000000 0x40000000>;
+		device_type = "memory";
+		reg = <0x00000008 0x00000000 0x00000000 0x80000000>;
 	};
 
 	cpus {
