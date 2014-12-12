@@ -340,6 +340,12 @@ struct keystone_rio_rx_chan_info {
 	int                       stream_id; /* stream id if using type 9 packet */
 };
 
+struct keystone_rio_tx_chan_info {
+	struct dma_chan	         *dma_channel;
+	const char	         *name;
+	u32			  queue_depth;
+};
+
 struct port_write_msg {
 	union rio_pw_msg msg;
 	u32              msg_count;
@@ -485,10 +491,6 @@ struct keystone_rio_data {
 	unsigned long		rxu_map_end;
 	unsigned long		rxu_map_bitmap[2];
 
-	struct dma_chan	       *tx_channel;
-	const char	       *tx_chan_name;
-	u32			tx_queue_depth;
-
 #ifdef CONFIG_RAPIDIO_DMA_ENGINE
 	struct list_head        dma_channels[KEYSTONE_RIO_LSU_NUM];
 	struct dma_chan        *dma_chan[KEYSTONE_RIO_MAX_PORT];
@@ -498,6 +500,7 @@ struct keystone_rio_data {
 	struct keystone_rio_mbox_info    tx_mbox[KEYSTONE_RIO_MAX_MBOX];
 	struct keystone_rio_mbox_info    rx_mbox[KEYSTONE_RIO_MAX_MBOX];
 	struct keystone_rio_rx_chan_info rx_channels[KEYSTONE_RIO_MAX_MBOX];
+	struct keystone_rio_tx_chan_info tx_channels[KEYSTONE_RIO_MAX_MBOX];
 
 	u32 __iomem					*jtagid_reg;
 	u32 __iomem					*serdes_sts_reg;

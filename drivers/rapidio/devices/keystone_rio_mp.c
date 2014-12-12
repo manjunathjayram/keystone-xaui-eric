@@ -140,7 +140,8 @@ static void keystone_rio_mp_inb_exit(int mbox,
 static int keystone_rio_mp_inb_init(int mbox,
 				    struct keystone_rio_data *krio_priv)
 {
-	struct keystone_rio_rx_chan_info *krx_chan;
+	struct keystone_rio_rx_chan_info *krx_chan =
+		&(krio_priv->rx_channels[mbox]);
 	struct dma_keystone_info config;
 	dma_cap_mask_t mask;
 	int err = -ENODEV;
@@ -149,14 +150,27 @@ static int keystone_rio_mp_inb_init(int mbox,
 	dma_cap_zero(mask);
 	dma_cap_set(DMA_SLAVE, mask);
 
-	/* DMA Rx channel */
-	krx_chan = &(krio_priv->rx_channels[mbox]);
+	/* If already initialized, return without error */
+	if (krx_chan->dma_channel)
+		return 0;
+
+	if (!krx_chan->name) {
+		dev_err(krio_priv->dev,
+			"Rx channel name for mbox %d is not defined!\n",
+			mbox);
+		return err;
+	}
+
 	krx_chan->priv = krio_priv;
 	krx_chan->chan_num = mbox;
-	krx_chan->dma_channel =
-		dma_request_channel_by_name(mask, krx_chan->name);
-	if (IS_ERR_OR_NULL(krx_chan->dma_channel))
+	krx_chan->dma_channel = dma_request_channel_by_name(mask,
+							    krx_chan->name);
+	if (IS_ERR_OR_NULL(krx_chan->dma_channel)) {
+		dev_err(krio_priv->dev,
+			"error requesting Rx channel %s, err %d\n",
+			krx_chan->name, err);
 		goto fail;
+	}
 
 	memset(&config, 0, sizeof(config));
 	config.direction	    = DMA_DEV_TO_MEM;
@@ -202,10 +216,9 @@ static int keystone_rio_mp_inb_init(int mbox,
 	return 0;
 
 fail:
-	if (krx_chan->dma_channel) {
-		dma_release_channel(krx_chan->dma_channel);
+	if (krx_chan->dma_channel)
 		krx_chan->dma_channel = NULL;
-	}
+
 	return err;
 }
 
@@ -399,16 +412,13 @@ int keystone_rio_open_inb_mbox(struct rio_mport *mport,
 		return -EBUSY;
 
 	dev_dbg(krio_priv->dev,
-		"open inb mbox: mport = 0x%x, dev_id = 0x%x,"
-		" mbox = %d, entries = %d\n",
+		"open_inb_mbox: mport = 0x%x, dev_id = 0x%x, mbox = %d, entries = %d\n",
 		(u32) mport, (u32) dev_id, mbox, entries);
 
 	/* Initialization of RapidIO inbound MP */
-	if (!(krx_chan->dma_channel)) {
-		res = keystone_rio_mp_inb_init(mbox, krio_priv);
-		if (res)
-			return res;
-	}
+	res = keystone_rio_mp_inb_init(mbox, krio_priv);
+	if (res)
+		return res;
 
 	rx_mbox->dev_id    = dev_id;
 	rx_mbox->entries   = entries;
@@ -578,64 +588,77 @@ end:
 	return buff;
 }
 
-static void keystone_rio_mp_outb_exit(struct keystone_rio_data *krio_priv)
+static void keystone_rio_mp_outb_exit(struct keystone_rio_data *krio_priv,
+				      int mbox)
 {
-	if (!(krio_priv->tx_channel))
+	struct keystone_rio_tx_chan_info *ktx_chan =
+		&(krio_priv->tx_channels[mbox]);
+
+	if (!(ktx_chan->dma_channel))
 		return;
 
-	dmaengine_pause(krio_priv->tx_channel);
-	dma_release_channel(krio_priv->tx_channel);
-	krio_priv->tx_channel = NULL;
+	dmaengine_pause(ktx_chan->dma_channel);
+	dma_release_channel(ktx_chan->dma_channel);
+	ktx_chan->dma_channel = NULL;
 
 	return;
 }
 
 static int keystone_rio_mp_outb_init(u8 port_id,
+				     int mbox,
 				     struct keystone_rio_data *krio_priv)
 {
+	struct keystone_rio_tx_chan_info *ktx_chan =
+		&(krio_priv->tx_channels[mbox]);
 	struct dma_keystone_info config;
 	dma_cap_mask_t mask;
 	int err = -ENODEV;
-	const char *name;
 
 	dma_cap_zero(mask);
 	dma_cap_set(DMA_SLAVE, mask);
 
-	/* DMA Tx channel */
-	name = krio_priv->tx_chan_name;
-	krio_priv->tx_channel = dma_request_channel_by_name(mask, name);
-	if (IS_ERR_OR_NULL(krio_priv->tx_channel)) {
+	/* If already initialized, return without error */
+	if (ktx_chan->dma_channel)
+		return 0;
+
+	if (!ktx_chan->name) {
 		dev_err(krio_priv->dev,
-			"error requesting Tx channel, err %d\n", err);
+			"Tx channel name for mbox %d is not defined!\n",
+			mbox);
+		return err;
+	}
+
+	ktx_chan->dma_channel = dma_request_channel_by_name(mask,
+							    ktx_chan->name);
+	if (IS_ERR_OR_NULL(ktx_chan->dma_channel)) {
+		dev_err(krio_priv->dev,
+			"error requesting Tx channel %s, err %d\n",
+			ktx_chan->name, err);
 		goto fail;
 	}
 
 	memset(&config, 0, sizeof(config));
 	config.direction	= DMA_MEM_TO_DEV;
-	config.tx_queue_depth	= krio_priv->tx_queue_depth;
-	err = dma_keystone_config(krio_priv->tx_channel, &config);
+	config.tx_queue_depth	= ktx_chan->queue_depth;
+	err = dma_keystone_config(ktx_chan->dma_channel, &config);
 	if (err) {
 		dev_err(krio_priv->dev,
-			"error configuring Tx channel, err %d\n", err);
+			"error configuring Tx channel for mbox %d, err %d\n",
+			mbox, err);
 		goto fail;
 	}
 
-	dev_dbg(krio_priv->dev, "opened Tx channel: %p\n",
-		krio_priv->tx_channel);
+	dev_dbg(krio_priv->dev, "opened Tx channel: %p (mbox %d)\n",
+		ktx_chan->dma_channel, mbox);
 
-	/*
-	 * For the time being we are using only the first transmit queue
-	 * In the future we may use queue 0 to 16 with multiple mbox support
-	 */
-	__raw_writel(port_id << 4, &(krio_priv->regs->tx_queue_sch_info[0]));
+	/* Set the output port Id to the corresponding Tx queue */
+	__raw_writel(port_id << 4, &(krio_priv->regs->tx_queue_sch_info[mbox]));
 
 	return 0;
 
 fail:
-	if (krio_priv->tx_channel) {
-		dma_release_channel(krio_priv->tx_channel);
-		krio_priv->tx_channel = NULL;
-	}
+	if (ktx_chan->dma_channel)
+		ktx_chan->dma_channel = NULL;
 
 	return err;
 }
@@ -675,16 +698,13 @@ int keystone_rio_open_outb_mbox(struct rio_mport *mport,
 		return -EBUSY;
 
 	dev_dbg(krio_priv->dev,
-		"open_outb_mbox: mport = 0x%x, dev_id = 0x%x, "
-		"mbox = %d, entries = %d\n",
+		"open_outb_mbox: mport = 0x%x, dev_id = 0x%x, mbox = %d, entries = %d\n",
 		(u32) mport, (u32) dev_id, mbox, entries);
 
 	/* Initialization of RapidIO outbound MP */
-	if (!(krio_priv->tx_channel)) {
-		res = keystone_rio_mp_outb_init(mport->index, krio_priv);
-		if (res)
-			return res;
-	}
+	res = keystone_rio_mp_outb_init(mport->index, mbox, krio_priv);
+	if (res)
+		return res;
 
 	tx_mbox->dev_id  = dev_id;
 	tx_mbox->entries = entries;
@@ -712,7 +732,7 @@ void keystone_rio_close_tx_mbox(int mbox,
 
 	tx_mbox->port = NULL;
 
-	keystone_rio_mp_outb_exit(krio_priv);
+	keystone_rio_mp_outb_exit(krio_priv, mbox);
 }
 
 /**
@@ -740,12 +760,14 @@ static void keystone_rio_tx_complete(void *data)
 	struct keystone_rio_mbox_info *mbox = &(krio_priv->tx_mbox[mbox_id]);
 	struct rio_mport *port		    = mbox->port;
 	void *dev_id			    = mbox->dev_id;
+	struct keystone_rio_tx_chan_info *ktx_chan =
+		&(krio_priv->tx_channels[mbox_id]);
 
 	dev_dbg(krio_priv->dev,
 		"tx_complete: psdata[0] = %08x, psdata[1] = %08x\n",
 		p_info->psdata[0], p_info->psdata[1]);
 
-	p_info->status = dma_async_is_tx_complete(krio_priv->tx_channel,
+	p_info->status = dma_async_is_tx_complete(ktx_chan->dma_channel,
 						  p_info->cookie, NULL, NULL);
 
 	WARN_ON(p_info->status != DMA_SUCCESS && p_info->status != DMA_ERROR);
@@ -810,6 +832,8 @@ int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 				     const size_t len)
 {
 	struct keystone_rio_data *krio_priv = mport->priv;
+	struct keystone_rio_tx_chan_info *ktx_chan =
+		&(krio_priv->tx_channels[mbox]);
 	struct dma_async_tx_descriptor *desc;
 	struct keystone_rio_packet *p_info;
 	u32 plen;
@@ -910,7 +934,7 @@ int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 	}
 
 	desc = dmaengine_prep_slave_sg(
-		krio_priv->tx_channel,
+		ktx_chan->dma_channel,
 		p_info->sg,
 		p_info->sg_ents,
 		DMA_MEM_TO_DEV,

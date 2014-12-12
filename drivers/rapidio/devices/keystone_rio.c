@@ -2260,7 +2260,10 @@ static int keystone_rio_get_mbox_defaults(int mbox,
 					  struct device_node *node_rio,
 					  struct keystone_rio_data *krio_priv)
 {
-	struct keystone_rio_rx_chan_info *krx_chan = &(krio_priv->rx_channels[mbox]);
+	struct keystone_rio_rx_chan_info *krx_chan =
+	    &(krio_priv->rx_channels[mbox]);
+	struct keystone_rio_tx_chan_info *ktx_chan =
+	    &(krio_priv->tx_channels[mbox]);
 	struct device_node *node;
 	char node_name[24];
 
@@ -2268,7 +2271,6 @@ static int keystone_rio_get_mbox_defaults(int mbox,
 	node = of_get_child_by_name(node_rio, node_name);
 	if (!node) {
 		dev_err(krio_priv->dev, "could not find %s node\n", node_name);
-		of_node_put(node);
 		return -ENODEV;
 	}
 
@@ -2276,11 +2278,9 @@ static int keystone_rio_get_mbox_defaults(int mbox,
 
 	/* DMA rx chan config */
 	if (of_property_read_string(node, "rx_channel", &krx_chan->name) < 0) {
-		char name[8];
-		dev_warn(krio_priv->dev,
-			 "missing \"rx_channel\" parameter\n");
-		snprintf(name, sizeof(name), "riorx-%d", mbox);
-		krx_chan->name = name;
+		dev_err(krio_priv->dev, "missing \"rx_channel\" parameter\n");
+		of_node_put(node);
+		return -ENOENT;
 	}
 
 	if (of_property_read_u32_array(node, "rx_queue_depth",
@@ -2310,6 +2310,21 @@ static int keystone_rio_get_mbox_defaults(int mbox,
 	} else {
 		krx_chan->packet_type = RIO_PACKET_TYPE_STREAM;
 	}
+
+	/* DMA tx chan config */
+	if (of_property_read_string(node, "tx_channel", &ktx_chan->name) < 0) {
+		dev_err(krio_priv->dev, "missing \"tx_channel\" parameter\n");
+		of_node_put(node);
+		return -ENOENT;
+	}
+
+	if (of_property_read_u32(node, "tx_queue_depth",
+				 &ktx_chan->queue_depth) < 0) {
+		dev_warn(krio_priv->dev,
+			 "missing \"tx_queue_depth\" parameter\n");
+		ktx_chan->queue_depth = 128;
+	}
+
 	of_node_put(node);
 
 	return 0;
@@ -2567,21 +2582,6 @@ static int keystone_rio_get_controller_defaults(
 	}
 #endif
 
-	/* DMA tx chan config */
-	if (of_property_read_string(node, "tx_channel",
-				    &krio_priv->tx_chan_name) < 0){
-		dev_warn(krio_priv->dev,
-			 "missing \"tx_channel\" parameter\n");
-		krio_priv->tx_chan_name = "riotx";
-	}
-
-	if (of_property_read_u32(node, "tx_queue_depth",
-				 &krio_priv->tx_queue_depth) < 0) {
-		dev_warn(krio_priv->dev,
-			 "missing \"tx_queue_depth\" parameter\n");
-		krio_priv->tx_queue_depth = 128;
-	}
-
 	/* RXU mapping resources */
 	if (of_property_read_u32_array(node, "rxu_map_range", &temp[0], 2)) {
 		krio_priv->rxu_map_start = KEYSTONE_RIO_RXU_MAP_MIN;
@@ -2614,8 +2614,14 @@ static int keystone_rio_get_controller_defaults(
 		krio_priv->num_mboxes = KEYSTONE_RIO_MAX_MBOX;
 	}
 
-	for (mbox = 0; mbox < krio_priv->num_mboxes; mbox++)
-		(void) keystone_rio_get_mbox_defaults(mbox, node, krio_priv);
+	/* Retrieve the per-mailboxes properties */
+	for (mbox = 0; mbox < krio_priv->num_mboxes; mbox++) {
+		int res;
+
+		res = keystone_rio_get_mbox_defaults(mbox, node, krio_priv);
+		if (res)
+			return res;
+	}
 
 	/* Interrupt config */
 	c->rio_irq = irq_of_parse_and_map(node, 0);
