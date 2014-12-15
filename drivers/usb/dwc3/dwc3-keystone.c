@@ -35,21 +35,14 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <linux/of.h>
 #include <linux/clk.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/interrupt.h>
-#include <linux/spinlock.h>
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
-#include <linux/ioport.h>
-#include <linux/irqdomain.h>
 #include <linux/io.h>
-#include <linux/irq.h>
-#include <linux/usb/otg.h>
-#include <linux/usb/nop-usb-xceiv.h>
+#include <linux/of_platform.h>
 
 #include "core.h"
 #include "io.h"
@@ -91,68 +84,12 @@ struct kdwc3_irq_regs {
 
 struct dwc3_keystone {
 	struct platform_device	*dwc;
-	struct platform_device	*usb2_phy;
-	struct platform_device	*usb3_phy;
 	struct device		*dev;
 	struct clk		*clk;
-	struct irq_domain	*domain;
-	u32			dma_status:1;
-	u32			phy_regs_base;
-	u32			phy_regs_size;
-	u32			usbss_regs_base;
-	u32			usbss_regs_size;
-	int			virq;
-
-	struct kdwc3_phy_regs __iomem	*phy;
 	struct kdwc3_irq_regs __iomem	*usbss;
 };
 
-static int kdwc3_phy_init(struct dwc3_keystone *kdwc)
-{
-	int error;
-	u32 val;
-
-	val  = readl(&kdwc->phy->phy_clock);
-	writel(val | PHY_REF_SSP_EN(1), &kdwc->phy->phy_clock);
-	udelay(20);
-
-	error = clk_prepare_enable(kdwc->clk);
-	if (error < 0) {
-		dev_dbg(kdwc->dev, "unable to enable usb clock, err %d\n",
-			error);
-		writel(val, &kdwc->phy->phy_clock);
-		return error;
-	}
-
-	/* soft reset usbss */
-	writel(1, &kdwc->usbss->sysconfig);
-	while (readl(&kdwc->usbss->sysconfig) & 1)
-		;
-
-	val = readl(&kdwc->usbss->revision);
-	dev_info(kdwc->dev, "usbss revision %x\n", val);
-
-	return 0;
-}
-
-static void kdwc3_phy_exit(struct dwc3_keystone *kdwc)
-{
-	u32 val;
-
-	clk_disable_unprepare(kdwc->clk);
-
-	val  = readl(&kdwc->phy->phy_clock);
-	val &= ~PHY_REF_SSP_EN(MASK);
-	writel(val, &kdwc->phy->phy_clock);
-}
-
-static void kdwc3_dev_exit(struct dwc3_keystone *kdwc)
-{
-	if (kdwc && kdwc->dwc) {
-		platform_device_unregister(kdwc->dwc);
-		kdwc->dwc = NULL;
-	}
-}
+static u64 kdwc3_dma_mask;
 
 static void kdwc3_enable_irqs(struct dwc3_keystone *kdwc)
 {
@@ -204,113 +141,13 @@ static int kdwc3_irq_init(struct dwc3_keystone *kdwc)
 	}
 
 	kdwc3_enable_irqs(kdwc);
-	kdwc->virq = irq;
 	return 0;
 }
 
-static int kdwc3_dev_init(struct dwc3_keystone *kdwc)
-{
-	struct device *dev = kdwc->dev;
-	struct platform_device *pdev = to_platform_device(dev), *dwc;
-	struct resource resources[2], *res;
-	struct platform_device_info info = {
-		.parent		= dev,
-		.name		= "dwc3",
-		.res		= resources,
-		.num_res	= ARRAY_SIZE(resources),
-		.dma_mask	= dma_get_mask(dev),
-	};
-
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res) {
-		dev_err(dev, "failed to find xhci resource\n");
-		return -ENODEV;
-	}
-	
-	memset(resources, 0, sizeof(resources));
-
-	resources[0].start = res->start;
-	resources[0].end   = res->end;
-	resources[0].name  = res->name;
-	resources[0].flags = res->flags;
-
-	resources[1].start = kdwc->virq;
-	resources[1].end   = kdwc->virq;
-	resources[1].name  = "irq0";
-	resources[1].flags = IORESOURCE_IRQ;
-
-	dev_dbg(dev, "registering %s.%d, irq=%d, mem=%08lx-%08lx\n",
-		info.name, 0 , (int)resources[1].start,
-		(unsigned long)resources[0].start,
-		(unsigned long)resources[0].end);
-
-	dwc = platform_device_register_full(&info);
-	if (IS_ERR(dwc)) {
-		dev_err(dev, "failed to register dwc device\n");
-		return PTR_ERR(dwc);
-	}
-
-	kdwc->dwc = dwc;
-
-	return 0;
-}
-
-static int dwc3_keystone_register_phys(struct dwc3_keystone *kdwc)
-{
-	struct nop_usb_xceiv_platform_data pdata;
-	struct platform_device	*pdev;
-	int			ret;
-
-	memset(&pdata, 0x00, sizeof(pdata));
-
-	pdev = platform_device_alloc("nop_usb_xceiv", 0);
-	if (!pdev)
-		return -ENOMEM;
-
-	kdwc->usb2_phy = pdev;
-	pdata.type = USB_PHY_TYPE_USB2;
-
-	ret = platform_device_add_data(kdwc->usb2_phy, &pdata, sizeof(pdata));
-	if (ret)
-		goto err1;
-
-	pdev = platform_device_alloc("nop_usb_xceiv", 1);
-	if (!pdev) {
-		ret = -ENOMEM;
-		goto err1;
-	}
-
-	kdwc->usb3_phy = pdev;
-	pdata.type = USB_PHY_TYPE_USB3;
-
-	ret = platform_device_add_data(kdwc->usb3_phy, &pdata, sizeof(pdata));
-	if (ret)
-		goto err2;
-
-	ret = platform_device_add(kdwc->usb2_phy);
-	if (ret)
-		goto err2;
-
-	ret = platform_device_add(kdwc->usb3_phy);
-	if (ret)
-		goto err3;
-
-	return 0;
-
-err3:
-	platform_device_del(kdwc->usb2_phy);
-
-err2:
-	platform_device_put(kdwc->usb3_phy);
-
-err1:
-	platform_device_put(kdwc->usb2_phy);
-
-	return ret;
-}
 static int kdwc3_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
+	struct device_node	*node = pdev->dev.of_node;
 	struct dwc3_keystone *kdwc;
 	struct resource *res;
 	int error;
@@ -323,87 +160,61 @@ static int kdwc3_probe(struct platform_device *pdev)
 
 	kdwc->dev = dev;
 
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!res) {
+		dev_err(dev, "missing usbss resource\n");
+		return -ENODEV;
+	}
+
+	kdwc->usbss = devm_ioremap_resource(dev, res);
+	if (IS_ERR(kdwc->usbss))
+		return PTR_ERR(kdwc->usbss);
+
+	dev_dbg(dev, "usbss control start=%08x size=%d mapped=%08x\n",
+		(u32)(res->start), (int)resource_size(res),
+		(u32)(kdwc->usbss));
+
+	kdwc3_dma_mask = dma_get_mask(dev);
+	dev->dma_mask = &kdwc3_dma_mask;
+
 	kdwc->clk = devm_clk_get(dev, "usb");
 	if (IS_ERR_OR_NULL(kdwc->clk)) {
 		dev_err(dev, "unable to get kdwc usb clock\n");
 		return -ENODEV;
 	}
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
-	if (!res) {
-		dev_err(dev, "missing usbss resource\n");
-		return -ENODEV;
-	}
-
-	kdwc->usbss_regs_base = res->start;
-	kdwc->usbss_regs_size = resource_size(res);
-
-	res = devm_request_mem_region(dev, res->start,
-				      resource_size(res), dev_name(dev));
-	if (!res) {
-		dev_err(dev, "can't request usbss region\n");
-		return -ENODEV;
-	}
-
-	kdwc->usbss = devm_ioremap(dev, res->start, resource_size(res));
-	if (!kdwc->usbss) {
-		dev_err(dev, "ioremap failed on usbss region\n");
-		return -ENODEV;
-	}
-
-	dev_dbg(dev, "usbss control start=%08x size=%d mapped=%08x\n",
-		(u32)(res->start), (int)resource_size(res),
-		(u32)(kdwc->usbss));
-
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 2);
-	if (!res) {
-		dev_err(dev, "missing usb phy resource\n");
-		return -ENODEV;
-	}
-
-	kdwc->phy_regs_base = res->start;
-	kdwc->phy_regs_size = resource_size(res);
-
-	res = devm_request_mem_region(dev, res->start,
-				      resource_size(res), dev_name(dev));
-	if (!res) {
-		dev_err(dev, "can't request usb phy region\n");
-		return -ENODEV;
-	}
-
-	kdwc->phy = devm_ioremap(dev, res->start, resource_size(res));
-	if (!kdwc->phy) {
-		dev_err(dev, "ioremap failed on usb phy region\n");
-		return -ENODEV;
-	}
-
-	dev_dbg(dev, "phy control start=%08x size=%d mapped=%08x\n",
-		(u32)(res->start), (int)resource_size(res),
-		(u32)(kdwc->phy));
-
-	error = dwc3_keystone_register_phys(kdwc);
-	if (error) {
-		dev_err(dev, "couldn't register PHYs\n");
+	error = clk_prepare_enable(kdwc->clk);
+	if (error < 0) {
+		dev_dbg(kdwc->dev, "unable to enable usb clock, err %d\n",
+			error);
 		return error;
 	}
-
-	/* Initialize usb phy */
-	error = kdwc3_phy_init(kdwc);
-	if (error)
-		return error;
 
 	error = kdwc3_irq_init(kdwc);
+	if (error)
+		goto err_irq;
+
+	error = of_platform_populate(node, NULL, NULL, dev);
 	if (error) {
-		kdwc3_phy_exit(kdwc);
-		return error;
+		dev_err(&pdev->dev, "failed to create dwc3 core\n");
+		goto err_core;
 	}
 
-	error = kdwc3_dev_init(kdwc);
-	if (error) {
-		kdwc3_disable_irqs(kdwc);
-		kdwc3_phy_exit(kdwc);
-		return error;
-	}
+	return 0;
+
+err_core:
+	kdwc3_disable_irqs(kdwc);
+err_irq:
+	clk_disable_unprepare(kdwc->clk);
+
+	return error;
+}
+
+static int kdwc3_remove_core(struct device *dev, void *c)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+
+	platform_device_unregister(pdev);
 
 	return 0;
 }
@@ -412,12 +223,10 @@ static int kdwc3_remove(struct platform_device *pdev)
 {
 	struct dwc3_keystone *kdwc = platform_get_drvdata(pdev);
 
-	if (kdwc) {
-		kdwc3_dev_exit(kdwc);
-		kdwc3_disable_irqs(kdwc);
-		kdwc3_phy_exit(kdwc);
-		platform_set_drvdata(pdev, NULL);
-	}
+	kdwc3_disable_irqs(kdwc);
+	device_for_each_child(&pdev->dev, NULL, kdwc3_remove_core);
+	clk_disable_unprepare(kdwc->clk);
+	platform_set_drvdata(pdev, NULL);
 	return 0;
 }
 
