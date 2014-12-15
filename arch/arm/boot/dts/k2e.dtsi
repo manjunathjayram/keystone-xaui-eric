@@ -690,8 +690,38 @@
 			sc-id = <0x7000 0x71ff>;
 		};
 
-		dwc: dwc@2680000 {
+		usb: usb@2680000 {
 			interrupts = <0 152 0xf01>;
+			dwc3@2690000 {
+				interrupts = <0 152 0xf01>;
+			};
+		};
+
+		usb1_phy: usb_phy@2620750 {
+			compatible = "ti,keystone-usbphy";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			reg = <0x2620750 24>;
+			status = "disabled";
+		};
+
+		usb1: usb@25000000 {
+			compatible = "ti,keystone-dwc3";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			reg = <0x25000000 0x10000>;
+			clocks = <&clkusb1>;
+			clock-names = "usb";
+			interrupts = <0 414 0xf01>;
+			ranges;
+			status = "disabled";
+
+			dwc3@25010000 {
+				compatible = "synopsys,dwc3";
+				reg = <0x25010000 0x70000>;
+				interrupts = <0 414 0xf01>;
+				usb-phy = <&usb1_phy>, <&usb1_phy>;
+			};
 		};
 
 		xgedma: pktdma@2fa1000 {
