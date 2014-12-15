@@ -431,20 +431,29 @@ static int rionet_remove_dev(struct device *dev, struct subsys_interface *sif)
 {
 	struct rio_dev *rdev = to_rio_dev(dev);
 	unsigned char netid = rdev->net->hport->id;
-	struct rionet_peer *peer, *tmp;
+	struct rionet_peer *peer;
+	int state, found = 0;
 
-	if (dev_rionet_capable(rdev)) {
-		list_for_each_entry_safe(peer, tmp, &nets[netid].peers, node) {
-			if (peer->rdev == rdev) {
-				if (nets[netid].active[rdev->destid]) {
-					nets[netid].active[rdev->destid] = NULL;
-					nets[netid].nact--;
-				}
+	if (!dev_rionet_capable(rdev))
+		return 0;
 
-				list_del(&peer->node);
-				kfree(peer);
-				break;
-			}
+	list_for_each_entry(peer, &nets[netid].peers, node) {
+		if (peer->rdev == rdev) {
+			list_del(&peer->node);
+			kfree(peer);
+			found = 1;
+			break;
+		}
+	}
+
+	if (found) {
+		if (nets[netid].active[rdev->destid]) {
+			state = atomic_read(&rdev->state);
+			if (state != RIO_DEVICE_GONE &&
+			    state != RIO_DEVICE_INITIALIZING)
+				rio_send_doorbell(rdev, RIONET_DOORBELL_LEAVE);
+			nets[netid].active[rdev->destid] = NULL;
+			nets[netid].nact--;
 		}
 	}
 
@@ -543,8 +552,11 @@ static int rionet_setup_netdev(struct rio_mport *mport, struct net_device *ndev)
 	rnet->msg_enable = RIONET_DEFAULT_MSGLEVEL;
 
 	rc = register_netdev(ndev);
-	if (rc != 0)
+	if (rc != 0) {
+		free_pages((unsigned long)nets[mport->id].active,
+			   get_order(rionet_active_bytes));
 		goto out;
+	}
 
 	printk(KERN_INFO "%s: %s %s Version %s, MAC %pM, %s\n",
 	       ndev->name,
@@ -558,8 +570,6 @@ static int rionet_setup_netdev(struct rio_mport *mport, struct net_device *ndev)
 	return rc;
 }
 
-static unsigned long net_table[RIONET_MAX_NETS/sizeof(unsigned long) + 1];
-
 static int rionet_add_dev(struct device *dev, struct subsys_interface *sif)
 {
 	int rc = -ENODEV;
@@ -568,19 +578,16 @@ static int rionet_add_dev(struct device *dev, struct subsys_interface *sif)
 	struct net_device *ndev = NULL;
 	struct rio_dev *rdev = to_rio_dev(dev);
 	unsigned char netid = rdev->net->hport->id;
-	int oldnet;
 
 	if (netid >= RIONET_MAX_NETS)
 		return rc;
-
-	oldnet = test_and_set_bit(netid, net_table);
 
 	/*
 	 * If first time through this net, make sure local device is rionet
 	 * capable and setup netdev (this step will be skipped in later probes
 	 * on the same net).
 	 */
-	if (!oldnet) {
+	if (nets[netid].ndev == NULL) {
 		rio_local_read_config_32(rdev->net->hport, RIO_SRC_OPS_CAR,
 					 &lsrc_ops);
 		rio_local_read_config_32(rdev->net->hport, RIO_DST_OPS_CAR,
@@ -598,18 +605,19 @@ static int rionet_add_dev(struct device *dev, struct subsys_interface *sif)
 			rc = -ENOMEM;
 			goto out;
 		}
-		nets[netid].ndev = ndev;
+
 		rc = rionet_setup_netdev(rdev->net->hport, ndev);
 		if (rc) {
 			printk(KERN_ERR "%s: failed to setup netdev (rc=%d)\n",
 			       DRV_NAME, rc);
+			free_netdev(ndev);
 			goto out;
 		}
 
 		INIT_LIST_HEAD(&nets[netid].peers);
 		nets[netid].nact = 0;
-	} else if (nets[netid].ndev == NULL)
-		goto out;
+		nets[netid].ndev = ndev;
+	}
 
 #if !defined(CONFIG_TI_KEYSTONE_RAPIDIO)
 	/*
@@ -669,6 +677,34 @@ static int rionet_shutdown(struct notifier_block *nb, unsigned long code,
 	return NOTIFY_DONE;
 }
 
+static void rionet_remove_mport(struct device *dev,
+				struct class_interface *class_intf)
+{
+	struct rio_mport *mport = to_rio_mport(dev);
+	struct net_device *ndev;
+	int id = mport->id;
+
+	pr_debug("%s %s\n", __func__, mport->name);
+
+	WARN(nets[id].nact, "%s called when connected to %d peers\n",
+	     __func__, nets[id].nact);
+	WARN(nets[id].ndev == NULL, "%s called for mport without NDEV\n",
+	     __func__);
+
+	if (nets[id].ndev != NULL) {
+		ndev = nets[id].ndev;
+		netif_stop_queue(ndev);
+		unregister_netdev(ndev);
+
+		free_pages((unsigned long)nets[id].active,
+			   get_order(sizeof(void *) *
+			   RIO_MAX_ROUTE_ENTRIES(mport->sys_size)));
+		nets[id].active = NULL;
+		free_netdev(ndev);
+		nets[id].ndev = NULL;
+	}
+}
+
 #ifdef MODULE
 static struct rio_device_id rionet_id_table[] = {
 	{RIO_DEVICE(RIO_ANY_ID, RIO_ANY_ID)},
@@ -689,6 +725,13 @@ static struct notifier_block rionet_notifier = {
 	.notifier_call = rionet_shutdown,
 };
 
+/* the rio_mport_interface is used to handle local mport devices */
+static struct class_interface rio_mport_interface __refdata = {
+	.class = &rio_mport_class,
+	.add_dev = NULL,
+	.remove_dev = rionet_remove_mport,
+};
+
 static int __init rionet_init(void)
 {
 	int ret;
@@ -699,39 +742,22 @@ static int __init rionet_init(void)
 		       DRV_NAME, ret);
 		return ret;
 	}
+
+	ret = class_interface_register(&rio_mport_interface);
+	if (ret) {
+		pr_err("%s: class_interface_register error: %d\n",
+		       DRV_NAME, ret);
+		return ret;
+	}
+
 	return subsys_interface_register(&rionet_interface);
 }
 
 static void __exit rionet_exit(void)
 {
-	struct rionet_private *rnet;
-	struct net_device *ndev;
-	struct rionet_peer *peer, *tmp;
-	int i;
-
-	for (i = 0; i < RIONET_MAX_NETS; i++) {
-		if (nets[i].ndev != NULL) {
-			ndev = nets[i].ndev;
-			rnet = netdev_priv(ndev);
-			unregister_netdev(ndev);
-
-			list_for_each_entry_safe(peer,
-						 tmp, &nets[i].peers, node) {
-				list_del(&peer->node);
-				kfree(peer);
-			}
-
-			free_pages((unsigned long)nets[i].active,
-				 get_order(sizeof(void *) *
-				 RIO_MAX_ROUTE_ENTRIES(rnet->mport->sys_size)));
-			nets[i].active = NULL;
-
-			free_netdev(ndev);
-		}
-	}
-
 	unregister_reboot_notifier(&rionet_notifier);
 	subsys_interface_unregister(&rionet_interface);
+	class_interface_unregister(&rio_mport_interface);
 }
 
 late_initcall(rionet_init);
