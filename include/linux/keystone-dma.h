@@ -20,7 +20,8 @@
 #define DMA_HAS_PSINFO		BIT(31)
 #define DMA_HAS_EPIB		BIT(30)
 #define DMA_HAS_FLOWTAG		BIT(29)
-#define DMA_HAS_PKTTYPE         BIT(28)
+#define DMA_HAS_EFLAGS		BIT(28)
+#define DMA_HAS_PKTTYPE         BIT(27)
 #define DMA_QNUM_SHIFT		24
 #define DMA_QNUM_MASK		BITS(2)
 #define DMA_FLOWTAG_SHIFT	18
@@ -38,8 +39,9 @@ typedef void (*dma_notify_fn)(struct dma_chan *chan, void *arg);
 #define DMA_KEYSTONE_CONFIG	1004
 #define DMA_RXFREE_REFILL	1005
 #define DMA_GET_TX_QUEUE	1006
-#define DMA_GET_ONE             1007
-#define DMA_RXFREE_REFILL_ONE   1008
+#define DMA_RXFREE_FLUSH	1007
+#define DMA_GET_ONE             1008
+#define DMA_RXFREE_REFILL_ONE   1009
 
 struct dma_notify_info {
 	dma_notify_fn		 fn;
@@ -138,5 +140,11 @@ static inline int dma_rxfree_refill_one(struct dma_chan *chan, int pool,
 	return dmaengine_device_control(chan, DMA_RXFREE_REFILL_ONE,
 					(unsigned long) &info);
 }
+
+static inline int dma_rxfree_flush(struct dma_chan *chan)
+{
+	return dmaengine_device_control(chan, DMA_RXFREE_FLUSH, 0);
+}
+
 #endif /* __MACH_KEYSTONE_DMA_H__ */
 

@@ -901,14 +901,13 @@ int arch_setup_msi_irq(struct pci_dev *pdev, struct msi_desc *desc)
 
 void arch_teardown_msi_irq(unsigned int irq)
 {
-	struct irq_data *irq_data = irq_get_chip_data(irq);
-	struct keystone_pcie_info *info = irq_data_get_irq_chip_data(irq_data);
+	struct msi_desc *entry = irq_get_msi_desc(irq);
+	struct pci_dev *pdev = entry->dev;
+	struct keystone_pcie_info *info = pbus_to_kspci(pdev->bus);
 
 	if (info) {
 		int pos = irq - irq_linear_revmap(info->msi_irqd, 0);
-
-		irq_set_chip_and_handler(irq, NULL, NULL);
-		irq_set_chip_data(irq, NULL);
+		dynamic_irq_cleanup(irq);
 		clear_bit(pos, msi_irq_bits);
 		return;
 	}
@@ -1342,10 +1341,10 @@ static __init struct pci_bus *keystone_pcie_scan(int nr,
 	struct keystone_pcie_info *info;
 	struct pci_bus *bus = NULL;
 
+	pr_info(DRIVER_NAME ": Starting PCI scan, nr %d...\n", nr);
 	if (nr != 0)
 		return bus;
 
-	pr_info(DRIVER_NAME ": Starting PCI scan...\n");
 	info = (struct keystone_pcie_info *)sys->private_data;
 
 	bus = pci_scan_root_bus(NULL, sys->busnr, &keystone_pci_ops, sys,
@@ -1421,13 +1420,14 @@ static const struct of_device_id keystone_pci_match_ids[] __initconst = {
 	{}
 };
 
-static int __init keystone_pcie_rc_init(void)
+static int __init keystone_pcie_controller_init(struct device_node *np,
+						int domain)
 {
 	struct keystone_pcie_info *rc_info;
 	const struct of_device_id *of_id;
-	struct device_node *np;
 	int err = -EINVAL, i;
 	struct clk *pcie_clk;
+	int port = 0;
 
 	pr_info(DRIVER_NAME ": keystone_pcie_rc_init - start\n");
 
@@ -1437,22 +1437,19 @@ static int __init keystone_pcie_rc_init(void)
 		return -ENOMEM;
 	}
 
-	np = of_find_matching_node(NULL, keystone_pci_match_ids);
-	if (!np) {
-		pr_err(DRIVER_NAME ": Unable to find pcie device node\n");
-		goto err;
-	}
-
 	of_id = of_match_node(keystone_pci_match_ids, np);
+
 	if (of_id)
 		rc_info->pdata = (struct keystone_pcie_pdata *)of_id->data;
 
 	/* Setup platform specific initialization */
-	if (rc_info->pdata)
-		err = rc_info->pdata->setup(rc_info->pdata, np);
+	if (rc_info->pdata) {
+		of_property_read_u32(np, "ti,pcie-port", &port);
+		err = rc_info->pdata->setup(rc_info->pdata, np, port);
 
-	if (err < 0)
-		goto err;
+		if (err < 0)
+			goto err;
+	}
 
 	/* Enable controller Power and Clock domains */
 	pcie_clk = of_clk_get(np, 0);
@@ -1515,9 +1512,8 @@ static int __init keystone_pcie_rc_init(void)
 		for (i = 0; i < rc_info->num_msi_irqs; i++)
 			irq_create_mapping(rc_info->msi_irqd, i);
 	}
-	of_node_put(np);
 	keystone_pcie_hw.private_data = (void **)&rc_info;
-	pcibios_min_mem = 0;
+	keystone_pcie_hw.domain = domain;
 	pci_common_init(&keystone_pcie_hw);
 	abort_check_base = 0;
 	pr_info(DRIVER_NAME ": keystone_pcie_rc_init - end\n");
@@ -1531,4 +1527,19 @@ err:
 	return err;
 }
 
+
+static int __init keystone_pcie_rc_init(void)
+{
+	struct device_node *np = NULL;
+	int ret = 0, domain = 0;
+
+	pcibios_min_mem = 0;
+
+	for_each_matching_node(np, keystone_pci_match_ids) {
+		if (of_device_is_available(np))
+			ret = keystone_pcie_controller_init(np, domain);
+		domain++;
+	}
+	return ret;
+}
 subsys_initcall(keystone_pcie_rc_init);

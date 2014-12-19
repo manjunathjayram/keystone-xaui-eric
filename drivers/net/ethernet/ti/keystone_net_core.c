@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 Texas Instruments Incorporated
+ * Copyright (C) 2012 - 2014 Texas Instruments Incorporated
  * Authors: Cyril Chemparathy <cyril@ti.com>
  *	    Sandeep Paulraj <s-paulraj@ti.com>
  *
@@ -47,6 +47,12 @@ static inline int emac_arch_get_mac_addr(char *x,
 
 	addr1 = __raw_readl(efuse_mac + 4);
 	addr0 = __raw_readl(efuse_mac);
+
+	/* tmp: workaround for MAC ID regs swapping issue */
+	if (!(addr0 & 0x00ff0000)) {
+		addr0 = addr1;
+		addr1 = __raw_readl(efuse_mac);
+	}
 
 	x[0] = (addr1 & 0x0000ff00) >> 8;
 	x[1] = addr1 & 0x000000ff;
@@ -578,7 +584,7 @@ EXPORT_SYMBOL(netcp_unregister_rxhook);
 		    NETIF_MSG_PKTDATA	| NETIF_MSG_TX_QUEUED	|	\
 		    NETIF_MSG_RX_STATUS)
 
-#define NETCP_NAPI_WEIGHT_RX	128
+#define NETCP_NAPI_WEIGHT_RX	64
 #define NETCP_NAPI_WEIGHT_TX	64
 #define NETCP_TX_TIMEOUT	(5 * HZ)
 #define NETCP_MIN_PACKET_SIZE	ETH_ZLEN
@@ -593,11 +599,11 @@ static int netcp_debug_level;
 static const char *netcp_rx_state_str(struct netcp_priv *netcp)
 {
 	static const char * const state_str[] = {
-		[RX_STATE_POLL]		= "poll",
-		[RX_STATE_SCHEDULED]	= "scheduled",
-		[RX_STATE_TEARDOWN]	= "teardown",
-		[RX_STATE_INTERRUPT]	= "interrupt",
 		[RX_STATE_INVALID]	= "invalid",
+		[RX_STATE_INTERRUPT]	= "interrupt",
+		[RX_STATE_SCHEDULED]	= "scheduled",
+		[RX_STATE_POLL]		= "poll",
+		[RX_STATE_TEARDOWN]	= "teardown",
 	};
 
 	if (netcp->rx_state < 0 || netcp->rx_state >= ARRAY_SIZE(state_str))
@@ -610,7 +616,7 @@ static inline void netcp_set_rx_state(struct netcp_priv *netcp,
 				     enum netcp_rx_state state)
 {
 	netcp->rx_state = state;
-	cpu_relax();
+	smp_wmb();
 }
 
 static inline bool netcp_is_alive(struct netcp_priv *netcp)
@@ -619,6 +625,7 @@ static inline bool netcp_is_alive(struct netcp_priv *netcp)
 		netcp->rx_state == RX_STATE_INTERRUPT);
 }
 
+#ifdef DEBUG
 static void netcp_dump_packet(struct netcp_packet *p_info, const char *cause)
 {
 	struct netcp_priv *netcp = p_info->netcp;
@@ -643,6 +650,7 @@ static void netcp_dump_packet(struct netcp_packet *p_info, const char *cause)
 		tail[0x08], tail[0x09], tail[0x0a], tail[0x0b],
 		tail[0x0c], tail[0x0d], tail[0x0e], tail[0x0f]);
 }
+#endif
 
 static inline void netcp_frag_free(bool is_frag, void *ptr)
 {
@@ -665,23 +673,25 @@ static void netcp_rx_complete(void *data)
 
 	status = dma_async_is_tx_complete(netcp->rx_channel,
 					  p_info->cookie, NULL, NULL);
-	WARN_ON(status != DMA_SUCCESS && status != DMA_ERROR);
-	WARN_ON(netcp->rx_state != RX_STATE_INTERRUPT	&&
-		netcp->rx_state != RX_STATE_POLL	&&
-		netcp->rx_state != RX_STATE_TEARDOWN);
+	WARN_ONCE((status != DMA_SUCCESS && status != DMA_ERROR),
+		"in netcp_rx_complete dma status: %d\n", status);
+	WARN_ONCE((netcp->rx_state != RX_STATE_POLL	 &&
+		   netcp->rx_state != RX_STATE_TEARDOWN),
+		"in netcp_rx_complete rx_state: (%d) %s\n",
+			netcp->rx_state, netcp_rx_state_str(netcp));
 
-	/* sg[2] describes the primary buffer */
+	/* sg[3] describes the primary buffer */
 	/* Build a new sk_buff for this buffer */
-	dma_unmap_single(&netcp->pdev->dev, sg_dma_address(&p_info->sg[2]),
-			p_info->primary_bufsiz, DMA_FROM_DEVICE);
+	dma_unmap_single(&netcp->pdev->dev, sg_dma_address(&p_info->sg[3]),
+			p_info->primary_datsiz, DMA_FROM_DEVICE);
 	skb = build_skb(p_info->primary_bufptr, p_info->primary_bufsiz);
 	if (unlikely(!skb)) {
 		 /* Free the primary buffer */
 		netcp_frag_free((p_info->primary_bufsiz <= PAGE_SIZE), 
 				p_info->primary_bufptr);
 		 /* Free other buffers in the scatterlist */
-		for (frags = 0, sg = sg_next(&p_info->sg[2]);
-				frags < NETCP_SGLIST_SIZE-3 && sg;
+		for (frags = 0, sg = sg_next(&p_info->sg[3]);
+				frags < NETCP_SGLIST_SIZE - 4 && sg;
 				++frags, sg = sg_next(sg)) {
 			dma_unmap_page(&netcp->pdev->dev, sg_dma_address(sg),
 					PAGE_SIZE, DMA_FROM_DEVICE);
@@ -694,12 +704,12 @@ static void netcp_rx_complete(void *data)
 
 	/* Update data, tail, and len */
 	skb_reserve(skb, NET_IP_ALIGN + NET_SKB_PAD);
-	len = sg_dma_len(&p_info->sg[2]);
+	len = sg_dma_len(&p_info->sg[3]);
 	__skb_put(skb, len);
 
-	/* Fill in the page fragment list from sg[3] and later */
-	for (frags = 0, sg = sg_next(&p_info->sg[2]);
-			frags < NETCP_SGLIST_SIZE-3 && sg;
+	/* Fill in the page fragment list from sg[4] and later */
+	for (frags = 0, sg = sg_next(&p_info->sg[3]);
+			frags < NETCP_SGLIST_SIZE - 4 && sg;
 			++frags, sg = sg_next(sg)) {
 		dma_unmap_page(&netcp->pdev->dev, sg_dma_address(sg),
 				PAGE_SIZE, DMA_FROM_DEVICE);
@@ -707,8 +717,11 @@ static void netcp_rx_complete(void *data)
 		skb_add_rx_frag(skb, frags, sg_page(sg), sg->offset, len, PAGE_SIZE);
 	}
 
-	/* Remove the FCS from the packet (last 4 bytes) */
-	__pskb_trim(skb, skb->len - ETH_FCS_LEN);
+	/* Remove FCS from the packet (last 4 bytes) for platforms
+	 * that don't have capability to do this in CPSW
+	 */
+	if (!(netcp->hw_capabilities & CPSW_HAS_P0_TX_CRC_REMOVE))
+		__pskb_trim(skb, skb->len - ETH_FCS_LEN);
 
 	if (unlikely(netcp->rx_state == RX_STATE_TEARDOWN)) {
 		dev_dbg(netcp->dev,
@@ -737,9 +750,6 @@ static void netcp_rx_complete(void *data)
 		netcp->ndev->stats.rx_errors++;
 		return;
 	}
-
-	BUG_ON(netcp->rx_state != RX_STATE_POLL);
-
 
 	netcp->ndev->last_rx = jiffies;
 
@@ -796,8 +806,8 @@ static void netcp_rxpool_free(void *arg, unsigned q_num, unsigned bufsize,
 	if (q_num == 0) {
 		struct netcp_packet *p_info = desc->callback_param;
 
-		dma_unmap_single(dev, sg_dma_address(&p_info->sg[2]),
-				p_info->primary_bufsiz, DMA_FROM_DEVICE);
+		dma_unmap_single(dev, sg_dma_address(&p_info->sg[3]),
+				p_info->primary_datsiz, DMA_FROM_DEVICE);
 		netcp_frag_free((p_info->primary_bufsiz <= PAGE_SIZE), 
 				p_info->primary_bufptr);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
@@ -844,10 +854,12 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		bufsiz = SKB_DATA_ALIGN(size + NET_IP_ALIGN + NET_SKB_PAD) +
 			 SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
 		if (bufsiz <= PAGE_SIZE) {
-			bufptr = netdev_alloc_frag(bufsiz);
+			bufptr = __netdev_alloc_frag(bufsiz,
+					GFP_ATOMIC | __GFP_COLD | __GFP_DMA);
 			p_info->primary_bufsiz = bufsiz;
 		} else {
-			bufptr = kmalloc(bufsiz, GFP_ATOMIC | __GFP_COLD);
+			bufptr = kmalloc(bufsiz,
+					GFP_ATOMIC | __GFP_COLD | __GFP_DMA);
 			p_info->primary_bufsiz = 0;
 		}
 		if (!bufptr) {
@@ -856,18 +868,23 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 			return NULL;
 		}
 		p_info->primary_bufptr = bufptr;
+		p_info->primary_datsiz = size;
 		
 		/* Same as skb_reserve(skb, NET_IP_ALIGN + NET_SKB_PAD) */
 		data = bufptr + NET_IP_ALIGN + NET_SKB_PAD;
 
 		sg_init_table(p_info->sg, NETCP_SGLIST_SIZE);
 		sg_set_buf(&p_info->sg[0], p_info->epib, sizeof(p_info->epib));
-		sg_set_buf(&p_info->sg[1], p_info->psdata, sizeof(p_info->psdata));
-		sg_set_buf(&p_info->sg[2], data, size);
+		sg_set_buf(&p_info->sg[1], p_info->psdata,
+			   NETCP_MAX_RX_PSDATA_LEN * sizeof(u32));
+		sg_set_buf(&p_info->sg[2], &p_info->eflags,
+			   sizeof(p_info->eflags));
+		sg_set_buf(&p_info->sg[3], data, size);
 
-		p_info->sg_ents = 2 + dma_map_sg(&netcp->pdev->dev, &p_info->sg[2],
-						 1, DMA_FROM_DEVICE);
-		if (p_info->sg_ents != 3) {
+		p_info->sg_ents = 3 + dma_map_sg(&netcp->pdev->dev,
+						 &p_info->sg[3], 1,
+						 DMA_FROM_DEVICE);
+		if (p_info->sg_ents != 4) {
 			dev_err(netcp->dev, "dma map failed\n");
 			netcp_frag_free((bufsiz <= PAGE_SIZE), bufptr);
 			kmem_cache_free(netcp_pinfo_cache, p_info);
@@ -875,10 +892,12 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		}
 
 		desc = dmaengine_prep_slave_sg(netcp->rx_channel, p_info->sg,
-					       3, DMA_DEV_TO_MEM,
-					       DMA_HAS_EPIB | DMA_HAS_PSINFO);
+					       4, DMA_DEV_TO_MEM,
+					       DMA_HAS_EPIB | DMA_HAS_PSINFO |
+					       DMA_HAS_EFLAGS);
 		if (IS_ERR_OR_NULL(desc)) {
-			dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[2], 1, DMA_FROM_DEVICE);
+			dma_unmap_sg(&netcp->pdev->dev, &p_info->sg[3], 1,
+				     DMA_FROM_DEVICE);
 			netcp_frag_free((bufsiz <= PAGE_SIZE), bufptr);
 			kmem_cache_free(netcp_pinfo_cache, p_info);
 			err = PTR_ERR(desc);
@@ -899,7 +918,7 @@ static struct dma_async_tx_descriptor *netcp_rxpool_alloc(void *arg,
 		/* Allocate a secondary receive queue entry */
 		struct scatterlist sg[1];
 
-		page = alloc_page(GFP_ATOMIC | GFP_DMA32 | __GFP_COLD);
+		page = alloc_page(GFP_ATOMIC | __GFP_COLD | __GFP_DMA);
 		if (!page) {
 			dev_warn(netcp->dev, "page alloc failed for pool %d\n", q_num);
 			return NULL;
@@ -965,8 +984,16 @@ static int netcp_poll(struct napi_struct *napi, int budget)
 static void netcp_rx_notify(struct dma_chan *chan, void *arg)
 {
 	struct netcp_priv *netcp = arg;
+	enum netcp_rx_state rx_state;
 
-	BUG_ON(netcp->rx_state != RX_STATE_INTERRUPT);
+	rx_state = netcp->rx_state;
+	if (rx_state != RX_STATE_INTERRUPT) {
+		WARN_ONCE((rx_state != RX_STATE_TEARDOWN),
+			"rx_state == %d: %s",
+			rx_state, netcp_rx_state_str(netcp));
+		return;
+	}
+
 	dmaengine_pause(netcp->rx_channel);
 	netcp_set_rx_state(netcp, RX_STATE_SCHEDULED);
 	napi_schedule(&netcp->napi);
@@ -996,7 +1023,7 @@ static inline void netcp_set_txpipe_state(struct netcp_tx_pipe *tx_pipe,
 		netcp_tx_state_str(new_state));
 
 	tx_pipe->dma_poll_state = new_state;
-	cpu_relax();
+	smp_wmb();
 }
 
 static int netcp_tx_unmap_skb(struct device *dev, struct sk_buff *skb, int offset, int len)
@@ -1133,8 +1160,15 @@ static int netcp_tx_poll(struct napi_struct *napi, int budget)
 static void netcp_tx_notify(struct dma_chan *chan, void *arg)
 {
 	struct netcp_tx_pipe *tx_pipe = arg;
+	enum netcp_tx_state tx_state;
 
-	BUG_ON(tx_pipe->dma_poll_state != TX_STATE_INTERRUPT);
+	tx_state = tx_pipe->dma_poll_state;
+	if (tx_state != TX_STATE_INTERRUPT) {
+		WARN_ONCE(true, "tx_state == %d: %s",
+			tx_state, netcp_tx_state_str(tx_state));
+		return;
+	}
+
 	dmaengine_pause(tx_pipe->dma_channel);
 	netcp_set_txpipe_state(tx_pipe, TX_STATE_SCHEDULED);
 	napi_schedule(&tx_pipe->dma_poll_napi);
@@ -1208,7 +1242,9 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 		skb->len = NETCP_MIN_PACKET_SIZE;
 	}
 
+#ifdef DEBUG
 	netcp_dump_packet(&p_info, "txs");
+#endif
 
 	skb_tx_timestamp(skb);
 
@@ -1543,8 +1579,11 @@ static int netcp_ndo_open(struct net_device *ndev)
 
 	name = netcp->rx_chan_name;
 	netcp->rx_channel = dma_request_channel_by_name(mask, name);
-	if (IS_ERR_OR_NULL(netcp->rx_channel))
+	if (IS_ERR_OR_NULL(netcp->rx_channel)) {
+		dev_err(netcp->dev, "Failed to open DMA channel \"%s\": %ld\n",
+				name, PTR_ERR(netcp->rx_channel));
 		goto fail;
+	}
 
 	memset(&config, 0, sizeof(config));
 	config.direction		= DMA_DEV_TO_MEM;
@@ -1578,16 +1617,28 @@ static int netcp_ndo_open(struct net_device *ndev)
 		if (module->open != NULL) {
 			err = module->open(intf_modpriv->module_priv, ndev);
 			if (err != 0) {
-				dev_err(netcp->dev, "Open failed\n");
+				dev_err(netcp->dev, "Open failed in %s\n",
+						module->name);
 				goto fail;
 			}
 		}
 	}
 
+	/*
+	 * Since queues open with dma enabled, this order is critical:
+	 * 1) The RX state must be set before the notifier runs or
+	 *    we'll get a BUG assertion in netcp_rx_notify().
+	 * 2) NAPI must be enabled before the notifier runs or the
+	 *    NAPI schedule request will be lost.
+	 * 3) The notifier must be registered before packets arrive
+	 *    or they'll be completed in hard IRQ context (which is bad).
+	 * 4) Once RX buffers are available packets may arrive immediately,
+	 *    so fill the free queues LAST.
+	 */
 	netcp_set_rx_state(netcp, RX_STATE_INTERRUPT);
-	dma_rxfree_refill(netcp->rx_channel);
 	napi_enable(&netcp->napi);
 	dma_set_notify(netcp->rx_channel, netcp_rx_notify, netcp);
+	dma_rxfree_refill(netcp->rx_channel);
 
 	netif_tx_wake_all_queues(ndev);
 
@@ -1608,28 +1659,19 @@ static int netcp_ndo_stop(struct net_device *ndev)
 	struct netcp_priv *netcp = netdev_priv(ndev);
 	struct netcp_intf_modpriv *intf_modpriv;
 	struct netcp_module *module;
-	unsigned long flags;
 	int err = 0;
-
-	spin_lock_irqsave(&netcp->lock, flags);
 
 	netif_tx_stop_all_queues(ndev);
 	netif_carrier_off(ndev);
 
-	BUG_ON(!netcp_is_alive(netcp));
+	napi_disable(&netcp->napi);
+	dmaengine_pause(netcp->rx_channel);
+	dma_rxfree_flush(netcp->rx_channel);
 
 	netcp_set_rx_state(netcp, RX_STATE_TEARDOWN);
-
-	dmaengine_pause(netcp->rx_channel);
-
-	spin_unlock_irqrestore(&netcp->lock, flags);
-
-	napi_disable(&netcp->napi);
-
-	if (netcp->rx_channel) {
-		dma_release_channel(netcp->rx_channel);
-		netcp->rx_channel = NULL;
-	}
+	dma_poll(netcp->rx_channel, -1);
+	dma_release_channel(netcp->rx_channel);
+	netcp->rx_channel = NULL;
 
 	netcp_set_rx_state(netcp, RX_STATE_INVALID);
 
@@ -1640,13 +1682,13 @@ static int netcp_ndo_stop(struct net_device *ndev)
 		module = intf_modpriv->netcp_module;
 		if (module->close != NULL) {
 			err = module->close(intf_modpriv->module_priv, ndev);
-			if (err != 0) {
-				dev_err(netcp->dev, "Close failed\n");
-				goto out;
-			}
+			if (err != 0)
+				dev_err(netcp->dev,
+					"Close failed in module %s (%d)\n",
+					module->name, err);
 		}
 	}
-out:
+
 	dev_dbg(netcp->dev, "netcp device %s stopped\n", ndev->name);
 
 	return 0;
@@ -1792,6 +1834,20 @@ u32 netcp_get_streaming_switch(struct netcp_device *netcp_device, int port)
 }
 EXPORT_SYMBOL(netcp_get_streaming_switch);
 
+u32 netcp_get_streaming_switch2(struct netcp_device *netcp_device, int port)
+{
+	u32 reg, offset = 0;
+	void __iomem *thread_map = netcp_device->streaming_switch;
+
+	if (port > 0)
+		/* each port has 8 priorities, which needs 8 bytes setting */
+		offset = (port - 1) * 8;
+
+	reg = readl(thread_map + offset) & 0xff;
+	return reg;
+}
+EXPORT_SYMBOL(netcp_get_streaming_switch2);
+
 u32 netcp_set_streaming_switch(struct netcp_device *netcp_device,
 				int port, u32 new_value)
 {
@@ -1816,6 +1872,36 @@ u32 netcp_set_streaming_switch(struct netcp_device *netcp_device,
 }
 EXPORT_SYMBOL(netcp_set_streaming_switch);
 
+u32 netcp_set_streaming_switch2(struct netcp_device *netcp_device,
+				   int port, u32 new_value)
+{
+	u32 reg, offset;
+	u32 old_value;
+	int i;
+	void __iomem *thread_map = netcp_device->streaming_switch;
+
+	reg = (new_value << 24) | (new_value << 16) |
+	      (new_value << 8) | (new_value);
+	if (port == 0) {
+		/* return 1st port priority 0 setting for all the ports */
+		old_value = readl(thread_map);
+		old_value &= 0xff;
+		for (i = 0; i < 16; i++, thread_map += 4)
+			writel(reg, thread_map);
+	} else {
+		/* each port has 8 priorities, which needs 8 bytes setting */
+		offset = (port - 1) * 8;
+
+		/* return priority 0 setting for the port */
+		old_value = readl(thread_map + offset);
+		old_value &= 0xff;
+		writel(reg, thread_map + offset);
+		writel(reg, thread_map + offset + 4);
+	}
+
+	return old_value;
+}
+EXPORT_SYMBOL(netcp_set_streaming_switch2);
 
 static const struct net_device_ops netcp_netdev_ops = {
 	.ndo_open		= netcp_ndo_open,
@@ -1980,7 +2066,7 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 	netif_napi_add(ndev, &netcp->napi, netcp_poll, NETCP_NAPI_WEIGHT_RX);
 
 	/* Register the network device */
-	ndev->dev_id		= 0;
+	ndev->dev_id		= cpsw_port;
 	ndev->watchdog_timeo	= NETCP_TX_TIMEOUT;
 	ndev->netdev_ops	= &netcp_netdev_ops;
 
@@ -2186,6 +2272,8 @@ static struct platform_driver netcp_driver = {
 
 extern int  keystone_cpsw_init(void);
 extern void keystone_cpsw_exit(void);
+extern int  keystone_cpsw2_init(void);
+extern void keystone_cpsw2_exit(void);
 #ifdef CONFIG_TI_KEYSTONE_XGE
 extern int  keystone_cpswx_init(void);
 extern void keystone_cpswx_exit(void);
@@ -2210,6 +2298,10 @@ static int __init netcp_init(void)
 	if (err)
 		goto cpsw_fail;
 
+	err = keystone_cpsw2_init();
+	if (err)
+		goto cpsw_fail;
+
 #ifdef CONFIG_TI_KEYSTONE_XGE
 	err = keystone_cpswx_init();
 	if (err)
@@ -2230,6 +2322,7 @@ module_init(netcp_init);
 static void __exit netcp_exit(void)
 {
 	keystone_cpsw_exit();
+	keystone_cpsw2_exit();
 #ifdef CONFIG_TI_KEYSTONE_XGE
 	keystone_cpswx_exit();
 #endif

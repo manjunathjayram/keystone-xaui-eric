@@ -300,6 +300,7 @@ struct cpswx_priv {
 	struct kobject			pvlan_kobj;
 	struct kobject			stats_kobj;
 	spinlock_t			hw_stats_lock;
+	struct device_node              *serdes;
 };
 
 struct cpswx_intf {
@@ -1517,6 +1518,9 @@ static void _cpsw_adjust_link(struct cpswx_slave *slave, bool *link)
 	if (!phy)
 		return;
 
+	if (!slave->ale)
+		return;
+
 	slave_port = slave->port_num;
 
 	if (phy->link) {
@@ -2126,7 +2130,9 @@ static int init_slave(struct cpswx_priv *cpsw_dev,
 		cpsw_dev->link[slave_num] = XGMII_LINK_MAC_PHY;
 	}
 
-	cpsw_dev->phy_node[slave_num] = of_parse_phandle(node, "phy-handle", 0);
+	if (cpsw_dev->link[slave_num] == XGMII_LINK_MAC_PHY)
+		cpsw_dev->phy_node[slave_num] =
+			of_parse_phandle(node, "phy-handle", 0);
 
 	return 0;
 }
@@ -2360,6 +2366,8 @@ static int cpswx_probe(struct netcp_device *netcp_device,
 
 	cpsw_dev->interfaces = interfaces;
 
+	cpsw_dev->serdes = of_get_child_by_name(node, "serdes");
+
 	if (cpsw_dev->init_serdes_at_probe == 1) {
 		cpsw_dev->clk = clk_get(cpsw_dev->dev, "clk_xge");
 		if (IS_ERR(cpsw_dev->clk)) {
@@ -2374,7 +2382,8 @@ static int cpswx_probe(struct netcp_device *netcp_device,
 		if (ret)
 			goto exit;
 
-		ret = xge_serdes_init_156p25Mhz();
+		/* needs the serdes pll to acces switch regs */
+		ret = xge_serdes_init(cpsw_dev->serdes);
 		if (ret)
 			goto exit;
 	}
@@ -2405,6 +2414,38 @@ exit:
 		iounmap(cpsw_dev->ss_regs);
 	*inst_priv = NULL;
 	kfree(cpsw_dev);
+	return ret;
+}
+
+static int cpswx_attach_serdes(struct cpswx_slave *slave,
+			       struct cpswx_intf *cpsw_intf)
+{
+	struct cpswx_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+	phy_interface_t phy_mode;
+	int has_phy = 0;
+	int ret;
+
+	if (slave->link_interface == SGMII_LINK_MAC_PHY) {
+		has_phy = 1;
+		phy_mode = PHY_INTERFACE_MODE_SGMII;
+		slave->phy_port_t = PORT_MII;
+	} else if (slave->link_interface == XGMII_LINK_MAC_PHY) {
+		has_phy = 1;
+		/* +++FIXME: PHY_INTERFACE_MODE_XGMII ?? */
+		phy_mode = PHY_INTERFACE_MODE_NA;
+		slave->phy_port_t = PORT_FIBRE;
+	}
+
+	if (has_phy) {
+		/* init the PHY to facilitate serdes link training */
+		slave->phy = of_phy_connect(cpsw_intf->ndev,
+					    cpsw_intf->phy_node,
+					    &cpsw_adjust_link, 0,
+					    phy_mode,
+					    slave);
+	}
+
+	ret = xge_serdes_init(cpsw_dev->serdes);
 	return ret;
 }
 
@@ -2506,7 +2547,9 @@ static int cpswx_attach(void *inst_priv, struct net_device *ndev,
 	list_add(&cpsw_intf->cpsw_intf_list, &cpsw_dev->cpsw_intf_head);
 
 	*intf_priv = cpsw_intf;
-	return 0;
+
+	for_each_slave(cpsw_intf, cpswx_attach_serdes, cpsw_intf);
+	return ret;
 }
 
 static int cpswx_release(void *intf_modpriv)

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 Texas Instruments Incorporated
+ * Copyright (C) 2012 - 2014 Texas Instruments Incorporated
  * Authors: Sandeep Paulraj <s-paulraj@ti.com>
  *
  * This program is free software; you can redistribute it and/or
@@ -33,10 +33,12 @@
 #include <linux/etherdevice.h>
 #include <linux/platform_device.h>
 #include <linux/ptp_classify.h>
+#include <linux/atomic.h>
 
 #include "cpsw_ale.h"
 #include "keystone_net.h"
 #include "cpts.h"
+#include "keystone_serdes.h"
 
 #define NETCP_DRIVER_NAME	"TI KeyStone Ethernet Driver"
 #define NETCP_DRIVER_VERSION	"v1.2.2"
@@ -155,6 +157,10 @@
 /* s: 0-based slave_port */
 #define SGMII_BASE(s) \
 	(((s) < 2) ? cpsw_dev->sgmii_port_regs : cpsw_dev->sgmii_port34_regs)
+
+/* CPSW SERDES */
+#define CPSW_SERDES_MAX_NUM		1
+#define CPSW_LANE_NUM_PER_SERDES	4
 
 struct cpts_port_ts_ctl {
 	int	uni;
@@ -298,85 +304,6 @@ struct cpsw_ale_regs {
 	u32	ale_tblw0;
 	u32	ale_portctl[6];
 };
-
-struct cpsw_priv {
-	struct device			*dev;
-	struct clk			*cpgmac;
-	struct netcp_device		*netcp_device;
-	u32				 num_slaves;
-	u32				 ale_ageout;
-	u32				 ale_entries;
-	u32				 ale_ports;
-	u32				 sgmii_module_ofs;
-	u32				 sgmii_module34_ofs;
-	u32				 switch_module_ofs;
-	u32				 host_port_reg_ofs;
-	u32				 slave_reg_ofs;
-	u32				 sliver_reg_ofs;
-	u32				 slave23_reg_ofs;
-	u32				 hw_stats_reg_ofs;
-	u32				 ale_reg_ofs;
-	u32				 cpts_reg_ofs;
-
-	int				 host_port;
-	u32				 rx_packet_max;
-
-	struct cpsw_regs __iomem	*regs;
-	struct cpsw_ss_regs __iomem	*ss_regs;
-	struct cpsw_hw_stats __iomem	*hw_stats_regs[2];
-	struct cpsw_host_regs __iomem	*host_port_regs;
-	struct cpsw_ale_regs __iomem	*ale_reg;
-
-	void __iomem			*sgmii_port_regs;
-	void __iomem			*sgmii_port34_regs;
-
-	struct cpsw_ale			*ale;
-	u32				 ale_refcnt;
-
-	u32				 link[MAX_SLAVES + 1];
-	struct device_node		*phy_node[MAX_SLAVES];
-
-	u32				 intf_tx_queues;
-
-	u32				 multi_if;
-	u32				 slaves_per_interface;
-	u32				 num_interfaces;
-	struct device_node		*interfaces;
-	struct list_head		 cpsw_intf_head;
-
-	u64				 hw_stats[MAX_SLAVES * 36];
-	int				 init_serdes_at_probe;
-	struct kobject			kobj;
-	struct kobject			tx_pri_kobj;
-	struct kobject			pvlan_kobj;
-	struct kobject			port_ts_kobj[MAX_SLAVES];
-	struct kobject			stats_kobj;
-	spinlock_t			hw_stats_lock;
-	struct cpts			cpts;
-	int				cpts_registered;
-	int				force_no_hwtstamp;
-};
-
-struct cpsw_intf {
-	struct net_device	*ndev;
-	struct device		*dev;
-	struct cpsw_priv	*cpsw_priv;
-	struct device_node	*phy_node;
-	u32			 num_slaves;
-	u32			 slave_port;
-	struct cpsw_slave	*slaves;
-	u32			 intf_tx_queues;
-	const char		*tx_chan_name;
-	u32			 tx_queue_depth;
-	struct netcp_tx_pipe	 tx_pipe;
-	u32			 multi_if;
-	struct list_head	 cpsw_intf_list;
-	struct timer_list	 timer;
-	u32			 sgmii_link;
-	unsigned long		 active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
-};
-
-static struct cpsw_priv *priv;		/* FIXME: REMOVE THIS!! */
 
 /*
  * Statistic management
@@ -558,6 +485,90 @@ static const struct netcp_ethtool_stat et_stats[] = {
 };
 
 #define ETHTOOL_STATS_NUM ARRAY_SIZE(et_stats)
+
+struct cpsw_priv {
+	struct device			*dev;
+	struct clk			*cpgmac;
+	struct netcp_device		*netcp_device;
+	u32				 num_slaves;
+	u32				 ale_ageout;
+	u32				 ale_entries;
+	u32				 ale_ports;
+	u32				 sgmii_module_ofs;
+	u32				 sgmii_module34_ofs;
+	u32				 switch_module_ofs;
+	u32				 host_port_reg_ofs;
+	u32				 slave_reg_ofs;
+	u32				 sliver_reg_ofs;
+	u32				 slave23_reg_ofs;
+	u32				 hw_stats_reg_ofs;
+	u32				 ale_reg_ofs;
+	u32				 cpts_reg_ofs;
+
+	int				 host_port;
+	u32				 rx_packet_max;
+
+	struct cpsw_regs __iomem	*regs;
+	struct cpsw_ss_regs __iomem	*ss_regs;
+	struct cpsw_hw_stats __iomem	*hw_stats_regs[2];
+	struct cpsw_host_regs __iomem	*host_port_regs;
+	struct cpsw_ale_regs __iomem	*ale_reg;
+
+	void __iomem			*sgmii_port_regs;
+	void __iomem			*sgmii_port34_regs;
+
+	struct cpsw_ale			*ale;
+	atomic_t			 ale_refcnt;
+
+	u32				 link[MAX_SLAVES + 1];
+	struct device_node		*phy_node[MAX_SLAVES];
+
+	u32				 intf_tx_queues;
+
+	u32				 multi_if;
+	u32				 slaves_per_interface;
+	u32				 num_interfaces;
+	struct device_node		*interfaces;
+	struct list_head		 cpsw_intf_head;
+
+	u64				 hw_stats[ETHTOOL_STATS_NUM];
+	u32				 hw_stats_prev[ETHTOOL_STATS_NUM];
+	int				 init_serdes_at_probe;
+	struct kobject			kobj;
+	struct kobject			tx_pri_kobj;
+	struct kobject			pvlan_kobj;
+	struct kobject			port_ts_kobj[MAX_SLAVES];
+	struct kobject			stats_kobj;
+	spinlock_t			hw_stats_lock;
+	struct cpts			cpts;
+	int				cpts_registered;
+	int				force_no_hwtstamp;
+	void __iomem			*serdes_regs[CPSW_SERDES_MAX_NUM];
+	u32				num_serdes;
+	u32				serdes_lanes;
+	struct serdes			serdes;
+};
+
+struct cpsw_intf {
+	struct net_device	*ndev;
+	struct device		*dev;
+	struct cpsw_priv	*cpsw_priv;
+	struct device_node	*phy_node;
+	u32			 num_slaves;
+	u32			 slave_port;
+	struct cpsw_slave	*slaves;
+	u32			 intf_tx_queues;
+	const char		*tx_chan_name;
+	u32			 tx_queue_depth;
+	struct netcp_tx_pipe	 tx_pipe;
+	u32			 multi_if;
+	struct list_head	 cpsw_intf_list;
+	struct timer_list	 timer;
+	u32			 sgmii_link;
+	unsigned long		 active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
+};
+
+static struct cpsw_priv *global_priv;		/* FIXME: REMOVE THIS!! */
 
 struct cpsw_attribute {
 	struct attribute attr;
@@ -1723,7 +1734,7 @@ static void cpsw_reset_mod_stats(struct cpsw_priv *cpsw_dev, int stat_mod)
 		if (et_stats[i].type == stat_mod) {
 			cpsw_dev->hw_stats[i] = 0;
 			p = base + et_stats[i].offset;
-			*p = 0xffffffff;
+			cpsw_dev->hw_stats_prev[i] = readl_relaxed(p);
 		}
 	}
 	return;
@@ -1886,9 +1897,11 @@ static void cpsw_update_stats(struct cpsw_priv *cpsw_dev, uint64_t *data)
 	struct cpsw_hw_stats __iomem *cpsw_statsa = cpsw_dev->hw_stats_regs[0];
 	struct cpsw_hw_stats __iomem *cpsw_statsb = cpsw_dev->hw_stats_regs[1];
 	u64 *hw_stats = &cpsw_dev->hw_stats[0];
+	u32 *hw_stats_prev = &cpsw_dev->hw_stats_prev[0];
 	void __iomem *base = NULL;
 	u32  __iomem *p;
-	u32 tmp = 0, val, pair_size = (ETHTOOL_STATS_NUM / 2);
+	u32 curr, delta;
+	u32 val, pair_size = (ETHTOOL_STATS_NUM / 2);
 	int i, j, pair;
 
 	for (pair = 0; pair < 2; pair++) {
@@ -1916,12 +1929,13 @@ static void cpsw_update_stats(struct cpsw_priv *cpsw_dev, uint64_t *data)
 			}
 
 			p = base + et_stats[j].offset;
-			tmp = *p;
-			hw_stats[j] += tmp;
+			curr = readl_relaxed(p);
+			delta = curr - hw_stats_prev[j];
+			hw_stats_prev[j] = curr;
+			hw_stats[j] += delta;
+
 			if (data)
 				data[j] = hw_stats[j];
-
-			*p = tmp;
 		}
 	}
 
@@ -1932,9 +1946,9 @@ static void keystone_get_ethtool_stats(struct net_device *ndev,
 				       struct ethtool_stats *stats,
 				       uint64_t *data)
 {
-	spin_lock_bh(&priv->hw_stats_lock);
-	cpsw_update_stats(priv, data);
-	spin_unlock_bh(&priv->hw_stats_lock);
+	spin_lock_bh(&global_priv->hw_stats_lock);
+	cpsw_update_stats(global_priv, data);
+	spin_unlock_bh(&global_priv->hw_stats_lock);
 
 	return;
 }
@@ -2138,14 +2152,14 @@ static int cpsw_port_reset(struct cpsw_slave *slave)
 	u32 i, v;
 
 	/* Set the soft reset bit */
-	__raw_writel(SOFT_RESET,
-		     &slave->sliver->soft_reset);
+	__iowmb();
+	__raw_writel(SOFT_RESET, &slave->sliver->soft_reset);
+	__iowmb();
 
 	/* Wait for the bit to clear */
 	for (i = 0; i < DEVICE_EMACSL_RESET_POLL_COUNT; i++) {
 		v = __raw_readl(&slave->sliver->soft_reset);
-		if ((v & SOFT_RESET_MASK) !=
-		    SOFT_RESET)
+		if ((v & SOFT_RESET_MASK) != SOFT_RESET)
 			return 0;
 	}
 
@@ -2163,12 +2177,24 @@ static void cpsw_port_config(struct cpsw_slave *slave, int max_rx_len)
 
 	__raw_writel(max_rx_len, &slave->sliver->rx_maxlen);
 
+	__iowmb();
 	__raw_writel(MACSL_ENABLE | MACSL_RX_ENABLE_EXT_CTL |
 		     MACSL_RX_ENABLE_CSF, &slave->sliver->mac_control);
 }
 
-static void cpsw_slave_stop(struct cpsw_slave *slave, struct cpsw_priv *priv)
+static void cpsw_slave_stop(struct cpsw_slave *slave,
+			    struct cpsw_intf *cpsw_intf)
 {
+	struct cpsw_priv *priv = cpsw_intf->cpsw_priv;
+	void __iomem *sgmii_port_regs;
+
+	if (slave->slave_num < 2)
+		sgmii_port_regs = priv->sgmii_port_regs;
+	else
+		sgmii_port_regs = priv->sgmii_port34_regs;
+
+	keystone_sgmii_rtreset(sgmii_port_regs, slave->slave_num, true);
+
 	cpsw_port_reset(slave);
 
 	if (!slave->phy)
@@ -2211,6 +2237,8 @@ static void cpsw_slave_open(struct cpsw_slave *slave,
 
 	cpsw_port_reset(slave);
 
+	keystone_sgmii_rtreset(sgmii_port_regs, slave->slave_num, false);
+
 	cpsw_port_config(slave, priv->rx_packet_max);
 
 	cpsw_set_slave_mac(slave, cpsw_intf);
@@ -2252,43 +2280,61 @@ static void cpsw_slave_open(struct cpsw_slave *slave,
 	}
 }
 
-static void cpsw_init_host_port(struct cpsw_priv *priv,
-				struct cpsw_intf *cpsw_intf)
+static int cpsw_init_ale(struct cpsw_priv *cpsw_dev)
 {
-	int bypass_en = 1;
+	struct cpsw_ale_params ale_params;
 
+	memset(&ale_params, 0, sizeof(ale_params));
+
+	ale_params.dev			= cpsw_dev->dev;
+	ale_params.ale_regs		= (void *)((u32)cpsw_dev->ale_reg);
+	ale_params.ale_ageout		= cpsw_dev->ale_ageout;
+	ale_params.ale_entries		= cpsw_dev->ale_entries;
+	ale_params.ale_ports		= cpsw_dev->ale_ports;
+
+	cpsw_dev->ale = cpsw_ale_create(&ale_params);
+	if (!cpsw_dev->ale) {
+		dev_err(cpsw_dev->dev, "error initializing ale engine\n");
+		return -ENODEV;
+	}
+
+	dev_info(cpsw_dev->dev, "Created a cpsw ale engine\n");
+
+	cpsw_ale_start(cpsw_dev->ale);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0, ALE_BYPASS,
+			cpsw_dev->multi_if ? 1 : 0);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0, ALE_NO_PORT_VLAN, 1);
+
+	cpsw_ale_control_set(cpsw_dev->ale, cpsw_dev->host_port,
+			     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0,
+			     ALE_PORT_UNKNOWN_VLAN_MEMBER,
+			     CPSW_MASK_ALL_PORTS);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0,
+			     ALE_PORT_UNKNOWN_MCAST_FLOOD,
+			     CPSW_MASK_PHYS_PORTS);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0,
+			     ALE_PORT_UNKNOWN_REG_MCAST_FLOOD,
+			     CPSW_MASK_ALL_PORTS);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0,
+			     ALE_PORT_UNTAGGED_EGRESS,
+			     CPSW_MASK_ALL_PORTS);
+
+	return 0;
+}
+
+static void cpsw_init_host_port(struct cpsw_priv *priv)
+{
 	/* Max length register */
 	__raw_writel(MAX_SIZE_STREAM_BUFFER,
 		     &priv->host_port_regs->rx_maxlen);
 
-	if (priv->ale_refcnt == 1)
-		cpsw_ale_start(priv->ale);
-
-	if (!priv->multi_if)
-		bypass_en = 0;
-
-	cpsw_ale_control_set(priv->ale, 0, ALE_BYPASS, bypass_en);
-
-	cpsw_ale_control_set(priv->ale, 0, ALE_NO_PORT_VLAN, 1);
-
-	cpsw_ale_control_set(priv->ale, priv->host_port,
-			     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
-
-	cpsw_ale_control_set(priv->ale, 0,
-			     ALE_PORT_UNKNOWN_VLAN_MEMBER,
-			     CPSW_MASK_ALL_PORTS);
-
-	cpsw_ale_control_set(priv->ale, 0,
-			     ALE_PORT_UNKNOWN_MCAST_FLOOD,
-			     CPSW_MASK_PHYS_PORTS);
-
-	cpsw_ale_control_set(priv->ale, 0,
-			     ALE_PORT_UNKNOWN_REG_MCAST_FLOOD,
-			     CPSW_MASK_ALL_PORTS);
-
-	cpsw_ale_control_set(priv->ale, 0,
-			     ALE_PORT_UNTAGGED_EGRESS,
-			     CPSW_MASK_ALL_PORTS);
 }
 
 /* Sliver regs memmap are contiguous but slave port regs are not */
@@ -2672,9 +2718,10 @@ static void cpsw_timer(unsigned long arg)
 			netif_carrier_off(cpsw_intf->ndev);
 	}
 
-	spin_lock_bh(&cpsw_dev->hw_stats_lock);
+	/* A timer runs as a BH, no need to block them */
+	spin_lock(&cpsw_dev->hw_stats_lock);
 	cpsw_update_stats(cpsw_dev, NULL);
-	spin_unlock_bh(&cpsw_dev->hw_stats_lock);
+	spin_unlock(&cpsw_dev->hw_stats_lock);
 
 	cpsw_intf->timer.expires = jiffies + (HZ/10);
 	add_timer(&cpsw_intf->timer);
@@ -2807,13 +2854,20 @@ static inline void cpsw_register_cpts(struct cpsw_priv *cpsw_dev)
 	if (cpsw_dev->cpts_registered > 0)
 		goto done;
 
+	if (ptp_filter_init(phy_ptp_filter, ARRAY_SIZE(phy_ptp_filter))) {
+		dev_err(cpsw_dev->dev, "bad ptp filter\n");
+		return;
+	}
+
 	cpsw_dev->cpts.filter = cpsw_ptp_filter;
 	cpsw_dev->cpts.filter_size = ARRAY_SIZE(cpsw_ptp_filter);
 
 	/* Let cpts calculate the mult and shift */
 	if (cpts_register(cpsw_dev->dev, &cpsw_dev->cpts,
-			  cpsw_dev->cpts.cc.mult, cpsw_dev->cpts.cc.shift))
+			  cpsw_dev->cpts.cc.mult, cpsw_dev->cpts.cc.shift)) {
 		dev_err(cpsw_dev->dev, "error registering cpts device\n");
+		return;
+	}
 
 done:
 	++cpsw_dev->cpts_registered;
@@ -2836,6 +2890,76 @@ static inline void cpsw_unregister_cpts(struct cpsw_priv *cpsw_dev)
 	cpsw_dev->cpts.filter_size = 0;
 	cpts_unregister(&cpsw_dev->cpts);
 }
+
+static void cpsw_update_cpts_dt_params(struct cpsw_priv *cpsw_dev,
+				  struct device_node *node)
+{
+	int ret;
+
+	ret = of_property_read_u32(node, "cpts_reg_ofs",
+				   &cpsw_dev->cpts_reg_ofs);
+	if (ret < 0)
+		dev_err(cpsw_dev->dev,
+			"missing cpts reg offset, err %d\n", ret);
+
+	ret = of_property_read_u32(node, "cpts_rftclk_sel",
+				   &cpsw_dev->cpts.rftclk_sel);
+	if (ret < 0) {
+		dev_err(cpsw_dev->dev,
+			"missing cpts rftclk_sel, err %d\n", ret);
+		cpsw_dev->cpts.rftclk_sel = 0;
+	}
+
+	ret = of_property_read_u32(node, "cpts_rftclk_freq",
+				   &cpsw_dev->cpts.rftclk_freq);
+	if (ret < 0) {
+		dev_vdbg(cpsw_dev->dev, "cpts rftclk freq not defined\n");
+		cpsw_dev->cpts.rftclk_freq = 0;
+	}
+
+	ret = of_property_read_u32(node, "cpts_ts_comp_length",
+				&cpsw_dev->cpts.ts_comp_length);
+	if (ret < 0) {
+		dev_err(cpsw_dev->dev,
+			"missing cpts ts_comp length, err %d\n", ret);
+		cpsw_dev->cpts.ts_comp_length = 1;
+	}
+
+	if (of_property_read_u32(node, "cpts_ts_comp_polarity",
+				&cpsw_dev->cpts.ts_comp_polarity))
+		cpsw_dev->cpts.ts_comp_polarity = 1;
+
+	if (of_property_read_u32(node, "cpts_clock_mult",
+				&cpsw_dev->cpts.cc.mult)) {
+		dev_err(cpsw_dev->dev,
+			"Missing cpts_clock_mult property in the DT.\n");
+		cpsw_dev->cpts.cc.mult = 0;
+	}
+
+	if (of_property_read_u32(node, "cpts_clock_shift",
+				&cpsw_dev->cpts.cc.shift)) {
+		dev_err(cpsw_dev->dev,
+			"Missing cpts_clock_shift property in the DT.\n");
+		cpsw_dev->cpts.cc.shift = 0;
+	}
+
+	if (of_property_read_u32(node, "cpts_clock_div",
+				&cpsw_dev->cpts.cc_div)) {
+		dev_err(cpsw_dev->dev,
+			"Missing cpts_clock_div property in the DT.\n");
+		cpsw_dev->cpts.cc_div = 1;
+	}
+
+	cpsw_dev->cpts.ignore_adjfreq =
+		of_property_read_bool(node, "cpts-ignore-adjfreq");
+
+	ret = of_property_read_u32(node, "num_slaves", &cpsw_dev->num_slaves);
+	if (ret < 0) {
+		dev_err(cpsw_dev->dev,
+			"missing num_slaves parameter, err %d\n", ret);
+		cpsw_dev->num_slaves = 2;
+	}
+}
 #else
 static inline int cpsw_mark_pkt_txtstamp(struct cpsw_intf *cpsw_intf,
 					struct netcp_packet *p_info)
@@ -2856,7 +2980,40 @@ static inline void cpsw_register_cpts(struct cpsw_priv *cpsw_dev)
 static inline void cpsw_unregister_cpts(struct cpsw_priv *cpsw_dev)
 {
 }
+
+static void cpsw_update_cpts_dt_params(struct cpsw_priv *cpsw_dev,
+				  struct device_node *node)
+{
+}
 #endif /* CONFIG_TI_CPTS */
+
+static int cpsw_serdes_init(struct cpsw_priv *cpsw_dev)
+{
+	int i, total_slaves, slaves;
+	int ret = 0;
+
+	for (i = 0, total_slaves = cpsw_dev->num_slaves;
+	     i < cpsw_dev->num_serdes;
+	     i++, total_slaves -= cpsw_dev->serdes_lanes) {
+		if (total_slaves <= 0)
+			break;
+
+		if (total_slaves > cpsw_dev->serdes_lanes)
+			slaves = cpsw_dev->serdes_lanes;
+		else
+			slaves = total_slaves;
+
+		serdes_reset(cpsw_dev->serdes_regs[i], slaves);
+		ret = serdes_init(cpsw_dev->serdes_regs[i], &cpsw_dev->serdes,
+				  slaves);
+		if (ret < 0) {
+			dev_err(cpsw_dev->dev,
+				"cpsw serdes initialization failed\n");
+			break;
+		}
+	}
+	return ret;
+}
 
 static int cpsw_tx_hook(int order, void *data, struct netcp_packet *p_info)
 {
@@ -2882,7 +3039,6 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 	struct cpsw_intf *cpsw_intf = intf_priv;
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 	struct netcp_priv *netcp = netdev_priv(ndev);
-	struct cpsw_ale_params ale_params;
 	int ret = 0;
 	u32 reg;
 
@@ -2915,36 +3071,22 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 		cpsw_intf->tx_pipe.dma_channel,
 		cpsw_intf->tx_pipe.dma_psflags);
 
-	cpsw_dev->ale_refcnt++;
-	if (cpsw_dev->ale_refcnt == 1) {
-		memset(&ale_params, 0, sizeof(ale_params));
-
-		ale_params.dev			= cpsw_dev->dev;
-		ale_params.ale_regs		= (void *)((u32)priv->ale_reg);
-		ale_params.ale_ageout		= cpsw_dev->ale_ageout;
-		ale_params.ale_entries		= cpsw_dev->ale_entries;
-		ale_params.ale_ports		= cpsw_dev->ale_ports;
-
-		cpsw_dev->ale = cpsw_ale_create(&ale_params);
-		if (!cpsw_dev->ale) {
-			dev_err(cpsw_dev->dev, "error initializing ale engine\n");
-			ret = -ENODEV;
+	if (atomic_inc_return(&cpsw_dev->ale_refcnt) == 1) {
+		ret = cpsw_init_ale(cpsw_dev);
+		if (ret < 0) {
+			atomic_dec(&cpsw_dev->ale_refcnt);
 			goto ale_fail;
-		} else
-			dev_info(cpsw_dev->dev, "Created a cpsw ale engine\n");
+		}
+		cpsw_init_host_port(cpsw_dev);
 	}
 
 	for_each_slave(cpsw_intf, cpsw_slave_init, cpsw_dev);
 
-	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_dev);
+	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_intf);
 
 	/* Serdes init */
-	if (cpsw_dev->init_serdes_at_probe == 0) {
-		serdes_init();
-	}
-
-	/* initialize host and slave ports */
-	cpsw_init_host_port(cpsw_dev, cpsw_intf);
+	if (cpsw_dev->init_serdes_at_probe == 0)
+		cpsw_serdes_init(cpsw_dev);
 
 	/* disable priority elevation and enable statistics on all ports */
 	__raw_writel(0, &cpsw_dev->regs->ptype);
@@ -2956,6 +3098,7 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 	__raw_writel(CPSW_REG_VAL_STAT_ENABLE_ALL,
 		     &cpsw_dev->regs->stat_port_en);
 
+	/* initialize slave ports */
 	for_each_slave(cpsw_intf, cpsw_slave_open, cpsw_intf);
 
 	init_timer(&cpsw_intf->timer);
@@ -2998,11 +3141,10 @@ static int cpsw_close(void *intf_priv, struct net_device *ndev)
 
 	del_timer_sync(&cpsw_intf->timer);
 
-	cpsw_dev->ale_refcnt--;
-	if (!cpsw_dev->ale_refcnt)
+	if (atomic_dec_return(&cpsw_dev->ale_refcnt) == 0)
 		cpsw_ale_stop(cpsw_dev->ale);
 
-	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_dev);
+	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_intf);
 
 	if(!cpsw_dev->force_no_hwtstamp)
 		netcp_unregister_rxhook(netcp, CPSW_RXHOOK_ORDER,
@@ -3023,6 +3165,7 @@ static int cpsw_remove(struct netcp_device *netcp_device, void *inst_priv)
 {
 	struct cpsw_priv *cpsw_dev = inst_priv;
 	struct cpsw_intf *cpsw_intf, *tmp;
+	int i;
 
 	of_node_put(cpsw_dev->interfaces);
 
@@ -3035,6 +3178,9 @@ static int cpsw_remove(struct netcp_device *netcp_device, void *inst_priv)
 	BUG_ON(!list_empty(&cpsw_dev->cpsw_intf_head));
 
 	iounmap(cpsw_dev->ss_regs);
+	for (i = 0; i < cpsw_dev->num_serdes; i++)
+		if (cpsw_dev->serdes_regs[i])
+			iounmap(cpsw_dev->serdes_regs[i]);
 	memset(cpsw_dev, 0x00, sizeof(*cpsw_dev));	/* FIXME: Poison */
 	kfree(cpsw_dev);
 	return 0;
@@ -3157,15 +3303,11 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	struct net_device *ndev;
 	int slave_num = 0;
 	int i, ret = 0;
+	u32 temp[8];
 
 	if (!node) {
 		dev_err(dev, "device tree info unavailable\n");
 		return -ENODEV;
-	}
-
-	if (ptp_filter_init(phy_ptp_filter, ARRAY_SIZE(phy_ptp_filter))) {
-		dev_err(dev, "bad ptp filter\n");
-		return -EINVAL;
 	}
 
 	cpsw_dev = devm_kzalloc(dev, sizeof(struct cpsw_priv), GFP_KERNEL);
@@ -3179,22 +3321,96 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	cpsw_dev->dev = dev;
 	cpsw_dev->netcp_device = netcp_device;
 
-	priv = cpsw_dev;	/* FIXME: Remove this!! */
+	global_priv = cpsw_dev;	/* FIXME: Remove this!! */
 
-	regs = ioremap(TCI6614_SS_BASE, 0xf00);
-	BUG_ON(!regs);
-
-	ret = of_property_read_u32(node, "serdes_at_probe", &cpsw_dev->init_serdes_at_probe);
+	ret = of_property_read_u32(node, "num_serdes",
+				   &cpsw_dev->num_serdes);
 	if (ret < 0) {
-		dev_err(dev, "missing serdes_at_probe parameter, err %d\n", ret);
+		dev_err(dev, "missing num_serdes parameter\n");
+		cpsw_dev->num_serdes = CPSW_SERDES_MAX_NUM;
+	}
+	dev_dbg(dev, "serdes_ref_clk %u\n", cpsw_dev->num_serdes);
+
+	ret = of_property_read_u32(node, "serdes_lanes",
+				   &cpsw_dev->serdes_lanes);
+	if (ret < 0) {
+		dev_err(dev, "missing serdes_lanes parameter\n");
+		cpsw_dev->serdes_lanes = CPSW_LANE_NUM_PER_SERDES;
+	}
+	dev_dbg(dev, "serdes_lanes %u\n", cpsw_dev->serdes_lanes);
+
+	if (of_property_read_u32_array(node, "serdes_reg", (u32 *)&(temp[0]),
+					cpsw_dev->num_serdes * 2)) {
+		dev_err(dev, "No serdes regs defined\n");
+		ret = -ENODEV;
+		goto exit;
+	}
+
+	for (i = 0; i < cpsw_dev->num_serdes; i++) {
+		cpsw_dev->serdes_regs[i] = ioremap(temp[i*2], temp[i*2+1]);
+		if (!cpsw_dev->serdes_regs[i]) {
+			dev_err(dev, "can't map serdes regs\n");
+			ret = -ENOMEM;
+			goto exit;
+		}
+	}
+
+	ret = of_property_read_u32(node, "serdes_ref_clk",
+				   &cpsw_dev->serdes.clk);
+	if (ret < 0) {
+		dev_err(dev, "missing serdes_ref_clk parameter\n");
+		cpsw_dev->serdes.clk = SERDES_CLOCK_156P25M;
+	}
+	dev_dbg(dev, "serdes_ref_clk %u\n", cpsw_dev->serdes.clk);
+
+	ret = of_property_read_u32(node, "serdes_baud_rate",
+				   &cpsw_dev->serdes.rate);
+	if (ret < 0) {
+		dev_err(dev, "missing serdes_baud_rate parameter\n");
+		cpsw_dev->serdes.rate = SERDES_RATE_5G;
+	}
+	dev_dbg(dev, "serdes_baud_rate %u\n", cpsw_dev->serdes.rate);
+
+	ret = of_property_read_u32(node, "serdes_rate_mode",
+				   &cpsw_dev->serdes.rate_mode);
+	if (ret < 0) {
+		dev_err(dev, "missing serdes_rate_mode parameter\n");
+		cpsw_dev->serdes.rate_mode = SERDES_QUARTER_RATE;
+	}
+	dev_dbg(dev, "serdes_rate_mode %u\n", cpsw_dev->serdes.rate_mode);
+
+	ret = of_property_read_u32(node, "serdes_phy_intf",
+				   &cpsw_dev->serdes.intf);
+	if (ret < 0) {
+		dev_err(dev, "missing serdes_phy_intf parameter\n");
+		cpsw_dev->serdes.intf = SERDES_PHY_SGMII;
+	}
+	dev_dbg(dev, "serdes_phy_intf %u\n", cpsw_dev->serdes.intf);
+
+	ret = of_property_read_u32(node, "serdes_loopback",
+				   &cpsw_dev->serdes.loopback);
+	if (ret < 0) {
+		dev_err(dev, "missing serdes_loopback parameter\n");
+		cpsw_dev->serdes.loopback = 0;
+	}
+	dev_dbg(dev, "serdes_loopback %u\n", cpsw_dev->serdes.loopback);
+
+	ret = of_property_read_u32(node, "serdes_at_probe",
+				   &cpsw_dev->init_serdes_at_probe);
+	if (ret < 0) {
+		dev_err(dev, "missing serdes_at_probe parameter\n");
 		cpsw_dev->init_serdes_at_probe = 0;
 	}
 	dev_dbg(dev, "serdes_at_probe %u\n", cpsw_dev->init_serdes_at_probe);
-#if 0
-	if (cpsw_dev->init_serdes_at_probe == 1) {
-		serdes_init_6638_156p25Mhz();
+	if (cpsw_dev->init_serdes_at_probe == 1)
+		cpsw_serdes_init(cpsw_dev);
+
+	ret = of_property_read_u32(node, "num_slaves", &cpsw_dev->num_slaves);
+	if (ret < 0) {
+		dev_err(dev, "missing num_slaves parameter, err %d\n", ret);
+		cpsw_dev->num_slaves = 2;
 	}
-#endif
+
 	ret = of_property_read_u32(node, "sgmii_module_ofs",
 				   &cpsw_dev->sgmii_module_ofs);
 	if (ret < 0)
@@ -3240,58 +3456,7 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 	if (ret < 0)
 		dev_err(dev, "missing ale reg offset, err %d\n", ret);
 
-	ret = of_property_read_u32(node, "cpts_reg_ofs",
-				   &cpsw_dev->cpts_reg_ofs);
-	if (ret < 0)
-		dev_err(dev, "missing cpts reg offset, err %d\n", ret);
-
-	ret = of_property_read_u32(node, "cpts_rftclk_sel",
-				   &cpsw_dev->cpts.rftclk_sel);
-	if (ret < 0) {
-		dev_err(dev, "missing cpts rftclk_sel, err %d\n", ret);
-		cpsw_dev->cpts.rftclk_sel = 0;
-	}
-
-	ret = of_property_read_u32(node, "cpts_rftclk_freq",
-				   &cpsw_dev->cpts.rftclk_freq);
-	if (ret < 0) {
-		dev_vdbg(dev, "cpts rftclk freq not defined\n");
-		cpsw_dev->cpts.rftclk_freq = 0;
-	}
-
-	ret = of_property_read_u32(node, "cpts_ts_comp_length",
-				&cpsw_dev->cpts.ts_comp_length);
-	if (ret < 0) {
-		dev_err(dev, "missing cpts ts_comp length, err %d\n", ret);
-		cpsw_dev->cpts.ts_comp_length = 1;
-	}
-
-	if (of_property_read_u32(node, "cpts_clock_mult",
-				&cpsw_dev->cpts.cc.mult)) {
-		pr_err("Missing cpts_clock_mult property in the DT.\n");
-		cpsw_dev->cpts.cc.mult = 0;
-	}
-
-	if (of_property_read_u32(node, "cpts_clock_shift",
-				&cpsw_dev->cpts.cc.shift)) {
-		pr_err("Missing cpts_clock_shift property in the DT.\n");
-		cpsw_dev->cpts.cc.shift = 0;
-	}
-
-	if (of_property_read_u32(node, "cpts_clock_div",
-				&cpsw_dev->cpts.cc_div)) {
-		pr_err("Missing cpts_clock_div property in the DT.\n");
-		cpsw_dev->cpts.cc_div = 1;
-	}
-
-	cpsw_dev->cpts.ignore_adjfreq =
-		of_property_read_bool(node, "cpts-ignore-adjfreq");
-
-	ret = of_property_read_u32(node, "num_slaves", &cpsw_dev->num_slaves);
-	if (ret < 0) {
-		dev_err(dev, "missing num_slaves parameter, err %d\n", ret);
-		cpsw_dev->num_slaves = 2;
-	}
+	cpsw_update_cpts_dt_params(cpsw_dev, node);
 
 	ret = of_property_read_u32(node, "ale_ageout", &cpsw_dev->ale_ageout);
 	if (ret < 0) {
@@ -3393,8 +3558,15 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 		netcp_create_interface(netcp_device, &ndev,
 					       NULL, cpsw_dev->intf_tx_queues,
 					       1, 0);
-	/* init the hw stats lock */
+
+	/* init the hw stats */
 	spin_lock_init(&cpsw_dev->hw_stats_lock);
+	spin_lock_bh(&cpsw_dev->hw_stats_lock);
+	cpsw_reset_mod_stats(cpsw_dev, CPSW_STATSA_MODULE);
+	cpsw_reset_mod_stats(cpsw_dev, CPSW_STATSB_MODULE);
+	cpsw_reset_mod_stats(cpsw_dev, CPSW_STATSC_MODULE);
+	cpsw_reset_mod_stats(cpsw_dev, CPSW_STATSD_MODULE);
+	spin_unlock_bh(&cpsw_dev->hw_stats_lock);
 
 	ret = cpsw_create_sysfs_entries(cpsw_dev);
 	if (ret)
@@ -3405,6 +3577,11 @@ static int cpsw_probe(struct netcp_device *netcp_device,
 exit:
 	if (cpsw_dev->ss_regs)
 		iounmap(cpsw_dev->ss_regs);
+
+	for (i = 0; i < cpsw_dev->num_serdes; i++)
+		if (cpsw_dev->serdes_regs[i])
+			iounmap(cpsw_dev->serdes_regs[i]);
+
 	*inst_priv = NULL;
 	kfree(cpsw_dev);
 	return ret;

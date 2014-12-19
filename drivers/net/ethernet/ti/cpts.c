@@ -31,6 +31,25 @@
 
 #ifdef CONFIG_TI_CPTS
 
+struct cpts_tc_ts_converter {
+	u32 freq;
+	u32 mult;
+	u32 shift;
+	u32 div;
+};
+
+struct cpts_tc_ts_converter cpts_tc_ts_default_converters[] = {
+	{400000000, 2560, 10,  1},
+	{425000000, 5120,  7, 17},
+	{500000000, 2048, 10,  1},
+	{600000000, 5120, 10,  3},
+	{614400000, 5000, 10,  3},
+	{625000000, 4096,  9,  5},
+	{675000000, 5120,  7, 27},
+	{700000000, 5120,  9,  7},
+	{750000000, 4096, 10,  3},
+};
+
 static struct sock_filter ptp_default_filter[] = {
 	PTP_FILTER
 };
@@ -178,6 +197,11 @@ static int event_type(struct cpts_event *event)
 	return (event->high >> EVENT_TYPE_SHIFT) & EVENT_TYPE_MASK;
 }
 
+static int event_port(struct cpts_event *event)
+{
+	return (event->high >> PORT_NUMBER_SHIFT) & PORT_NUMBER_MASK;
+}
+
 static int cpts_fifo_pop(struct cpts *cpts, u32 *high, u32 *low)
 {
 	u32 r = cpts_read32(cpts, intstat_raw);
@@ -191,7 +215,7 @@ static int cpts_fifo_pop(struct cpts *cpts, u32 *high, u32 *low)
 	return -1;
 }
 
-static int cpts_event_list_clean_up(struct cpts *cpts)
+static int cpts_event_list_clean_up(struct cpts *cpts, int ev_type)
 {
 	struct list_head *this, *next;
 	struct cpts_event *event;
@@ -199,7 +223,7 @@ static int cpts_event_list_clean_up(struct cpts *cpts)
 
 	list_for_each_safe(this, next, &cpts->events) {
 		event = list_entry(this, struct cpts_event, list);
-		if (event_expired(event)) {
+		if (event_expired(event) || (ev_type == event_type(event))) {
 			list_del_init(&event->list);
 			list_add(&event->list, &cpts->pool);
 			++removed;
@@ -221,7 +245,7 @@ static int cpts_fifo_read(struct cpts *cpts, int match)
 		if (cpts_fifo_pop(cpts, &hi, &lo))
 			break;
 		if (list_empty(&cpts->pool)) {
-			removed = cpts_event_list_clean_up(cpts);
+			removed = cpts_event_list_clean_up(cpts, -1);
 			if (!removed) {
 				pr_err("cpts: event pool is empty\n");
 				return -1;
@@ -234,6 +258,7 @@ static int cpts_fifo_read(struct cpts *cpts, int match)
 		event->low = lo;
 		type = event_type(event);
 		switch (type) {
+		case CPTS_EV_HW:
 		case CPTS_EV_COMP:
 			event->tmo += (CPTS_COMP_TMO - CPTS_TMO);
 		case CPTS_EV_PUSH:
@@ -244,7 +269,6 @@ static int cpts_fifo_read(struct cpts *cpts, int match)
 			break;
 		case CPTS_EV_ROLL:
 		case CPTS_EV_HALF:
-		case CPTS_EV_HW:
 			break;
 		default:
 			pr_err("cpts: unknown event type\n");
@@ -373,7 +397,57 @@ static int cpts_ts_comp_add_reload(struct cpts *cpts, s64 add_ns, int enable)
 			break;
 		}
 	}
+	return reported;
+}
 
+static int cpts_ts_comp_hw_ts_ev_report_restart(struct cpts *cpts)
+{
+	struct list_head *this, *next;
+	struct ptp_clock_event pevent;
+	struct cpts_event *event;
+	int reported = 0, ev;
+	u64 ns;
+
+	list_for_each_safe(this, next, &cpts->events) {
+		event = list_entry(this, struct cpts_event, list);
+		ev = event_type(event);
+		if (ev == CPTS_EV_COMP) {
+			list_del_init(&event->list);
+			list_add(&event->list, &cpts->pool);
+			if (TS_COMP_LAST_REG(cpts) != event->low) {
+				pr_err("cpts ts_comp mismatch: %llx %08x\n",
+					cpts->ts_comp_last, event->low);
+				continue;
+			} else
+				pr_debug("cpts comp ev tstamp: %u\n",
+					event->low);
+
+			/* report the event */
+			ns = cpts_tstamp_cyc2time(cpts, event->low);
+			pevent.type = PTP_CLOCK_PPSUSR;
+			pevent.pps_times.ts_real = ns_to_timespec(ns);
+			ptp_clock_event(cpts->clock, &pevent);
+			++reported;
+
+			/* reload: add ns to ts_comp */
+			cpts_ts_comp_add_ns(cpts, NSEC_PER_SEC);
+			/* enable ts_comp pulse with new val */
+			cpts_disable_ts_comp(cpts);
+			cpts_enable_ts_comp(cpts);
+			continue;
+		} else if (ev == CPTS_EV_HW) {
+			list_del_init(&event->list);
+			list_add(&event->list, &cpts->pool);
+			/* report the event */
+			pevent.timestamp =
+				cpts_tstamp_cyc2time(cpts, event->low);
+			pevent.type = PTP_CLOCK_EXTTS;
+			pevent.index = event_port(event) - 1;
+			ptp_clock_event(cpts->clock, &pevent);
+			++reported;
+			continue;
+		}
+	}
 	return reported;
 }
 
@@ -518,47 +592,65 @@ static int cpts_ptp_settime(struct ptp_clock_info *ptp,
 }
 
 /* PPS */
-
-static int cpts_pps_reload(struct cpts *cpts)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&cpts->lock, flags);
-	cpts_ts_comp_add_reload(cpts, NSEC_PER_SEC, 1);
-	spin_unlock_irqrestore(&cpts->lock, flags);
-	return 0;
-}
-
 static int cpts_pps_enable(struct cpts *cpts, int on)
 {
+	unsigned long flags;
 	struct timespec ts;
+	u32 v;
 
 	if (cpts->pps_enable == on)
 		return 0;
 
 	cpts->pps_enable = on;
 
-	if (!on) {
-		cpts_disable_ts_comp(cpts);
+	if (!on)
 		return 0;
-	}
 
 	/* get current counter value */
-	cpts_write32(cpts, CPTS_EN, control);
+	v = cpts_read32(cpts, control) | CPTS_EN;
+	cpts_write32(cpts, v, control);
 	cpts_write32(cpts, TS_PEND_EN, int_enable);
 	cpts_ptp_gettime(&cpts->info, &ts);
 	cpts->ts_comp_last = cpts->tc.cycle_last;
 	/* align to next sec boundary and add one sec */
 	cpts_ts_comp_add_ns(cpts, 2 * NSEC_PER_SEC - ts.tv_nsec);
+	/* remove stale TS_COMP events */
+	spin_lock_irqsave(&cpts->lock, flags);
+	cpts_event_list_clean_up(cpts, CPTS_EV_COMP);
 	/* enable ts_comp pulse */
 	cpts_disable_ts_comp(cpts);
 	cpts_enable_ts_comp(cpts);
+	spin_unlock_irqrestore(&cpts->lock, flags);
 	return 0;
 }
 
 static int cpts_pps_init(struct cpts *cpts)
 {
 	cpts->pps_one_sec = cpts_cc_ns2cyc(cpts, NSEC_PER_SEC);
+	return 0;
+}
+
+/* HW TS */
+static int cpts_extts_enable(struct cpts *cpts, u32 index, int on)
+{
+	u32 v;
+
+	if (index >= cpts->info.n_ext_ts)
+		return -ENXIO;
+
+	if (((cpts->hw_ts_enable & BIT(index)) >> index) == on)
+		return 0;
+
+	v = cpts_read32(cpts, control);
+	if (on) {
+		v |= BIT(8 + index);
+		cpts->hw_ts_enable |= BIT(index);
+	} else {
+		v &= ~BIT(8 + index);
+		cpts->hw_ts_enable &= ~BIT(index);
+	}
+	cpts_write32(cpts, v, control);
+
 	return 0;
 }
 
@@ -570,6 +662,8 @@ static int cpts_ptp_enable(struct ptp_clock_info *ptp,
 	switch (rq->type) {
 	case PTP_CLK_REQ_PPS:
 		return cpts_pps_enable(cpts, on);
+	case PTP_CLK_REQ_EXTTS:
+		return cpts_extts_enable(cpts, rq->extts.index, on ? 1 : 0);
 	default:
 		break;
 	}
@@ -580,7 +674,7 @@ static struct ptp_clock_info cpts_info = {
 	.owner		= THIS_MODULE,
 	.name		= "CPTS timer",
 	.max_adj	= 1000000,
-	.n_ext_ts	= 0,
+	.n_ext_ts	= 8,
 	.pps		= 1,
 	.adjfreq	= cpts_ptp_adjfreq,
 	.adjtime	= cpts_ptp_adjtime,
@@ -589,18 +683,65 @@ static struct ptp_clock_info cpts_info = {
 	.enable		= cpts_ptp_enable,
 };
 
-static void cpts_overflow_check(struct work_struct *work)
+static int cpts_check_ts_comp_hw_ts_ev(struct cpts *cpts)
 {
-	struct timespec ts;
-	struct cpts *cpts = container_of(work, struct cpts, overflow_work.work);
+	unsigned long flags;
 
-	cpts_write32(cpts, CPTS_EN, control);
+	spin_lock_irqsave(&cpts->lock, flags);
+	cpts_ts_comp_hw_ts_ev_report_restart(cpts);
+	spin_unlock_irqrestore(&cpts->lock, flags);
+	return 0;
+}
+
+static void cpts_overflow_check(unsigned long arg)
+{
+	struct cpts *cpts = (struct cpts *)arg;
+	struct timespec ts;
+	u32 v;
+
+	v = cpts_read32(cpts, control) | CPTS_EN;
+	cpts_write32(cpts, v, control);
 	cpts_write32(cpts, TS_PEND_EN, int_enable);
 	cpts_ptp_gettime(&cpts->info, &ts);
 	pr_debug("cpts overflow check at %ld.%09lu\n", ts.tv_sec, ts.tv_nsec);
-	if (cpts->pps_enable)
-		cpts_pps_reload(cpts);
-	schedule_delayed_work(&cpts->overflow_work, CPTS_OVERFLOW_PERIOD);
+	if (!cpts->pps_enable)
+		cpts_disable_ts_comp(cpts);
+	if (cpts->pps_enable || cpts->hw_ts_enable)
+		cpts_check_ts_comp_hw_ts_ev(cpts);
+	cpts->timer.expires = jiffies + CPTS_OVERFLOW_PERIOD;
+	add_timer(&cpts->timer);
+}
+
+static int cpts_get_rftclk_default_converters(struct cpts *cpts)
+{
+	struct cpts_tc_ts_converter *c = &cpts_tc_ts_default_converters[0];
+	struct cpts_tc_ts_converter *d_min_conv = NULL;
+	u32 a_size = ARRAY_SIZE(cpts_tc_ts_default_converters);
+	u32 f = cpts->rftclk_freq;
+	u32 d_min = 0xffffffff;
+	u32 i, d;
+
+	for (i = 0, c = &cpts_tc_ts_default_converters[0];
+					i < a_size; i++, c++) {
+		d = abs(f - c->freq);
+		if (d < d_min) {
+			d_min = d;
+			d_min_conv = c;
+		}
+	}
+
+	/* if ref clk freq differs from freq in the defaults
+	   for more than 1 MHz, do not return any multi/div/shif.
+	   1MHz is arbitrary but reasonable
+	*/
+	if (d_min >= 1000000)
+		return -1;
+
+	cpts->cc.mult	= d_min_conv->mult;
+	cpts->cc.shift	= d_min_conv->shift;
+	cpts->cc_div	= d_min_conv->div;
+
+	return 0;
 }
 
 #define CPTS_REF_CLOCK_NAME "cpsw_cpts_rft_clk"
@@ -619,16 +760,20 @@ static void cpts_clk_init(struct cpts *cpts)
 		cpts->rftclk_freq = clk_get_rate(cpts->refclk);
 
 	if (!cpts->cc.mult && !cpts->cc.shift) {
-		/*
-		   calculate the multiplier/shift to
-		   convert CPTS counter ticks to ns.
-		*/
-		rate = cpts->rftclk_freq;
-		max_sec = ((1ULL << CPTS_COUNTER_BITS) - 1) + (rate - 1);
-		do_div(max_sec, rate);
+		if (cpts_get_rftclk_default_converters(cpts)) {
+			/*
+			   calculate the multiplier/shift to
+			   convert CPTS counter ticks to ns.
+			*/
+			rate = cpts->rftclk_freq;
+			max_sec = ((1ULL << CPTS_COUNTER_BITS) - 1) +
+								(rate - 1);
+			do_div(max_sec, rate);
 
-		clocks_calc_mult_shift(&cpts->cc.mult, &cpts->cc.shift, rate,
-					NSEC_PER_SEC, max_sec);
+			clocks_calc_mult_shift(&cpts->cc.mult, &cpts->cc.shift,
+						rate, NSEC_PER_SEC, max_sec);
+			cpts->cc_div = 1;
+		}
 	}
 
 	pr_info("cpts rftclk rate(%u HZ),mult(%u),shift(%u),div(%u)\n",
@@ -773,6 +918,7 @@ int cpts_register(struct device *dev, struct cpts *cpts,
 #ifdef CONFIG_TI_CPTS
 	int err, i;
 	unsigned long flags;
+	u32 v;
 
 	if (cpts->filter == NULL) {
 		cpts->filter = ptp_default_filter;
@@ -807,7 +953,13 @@ int cpts_register(struct device *dev, struct cpts *cpts,
 	cpts_clk_init(cpts);
 	/* mult may be updated during clk init */
 	cpts->cc_mult = cpts->cc.mult;
-	cpts_write32(cpts, CPTS_EN, control);
+
+	v = cpts_read32(cpts, control) | CPTS_EN;
+	if (cpts->ts_comp_polarity)
+		v |= TS_COMP_POLARITY;
+	else
+		v &= ~TS_COMP_POLARITY;
+	cpts_write32(cpts, v, control);
 	cpts_write32(cpts, TS_PEND_EN, int_enable);
 
 	cpts_cyc2ns_set_max_cap(cpts);
@@ -821,8 +973,11 @@ int cpts_register(struct device *dev, struct cpts *cpts,
 
 	cpts->cc_total = cpts->tc.cycle_last;
 
-	INIT_DELAYED_WORK(&cpts->overflow_work, cpts_overflow_check);
-	schedule_delayed_work(&cpts->overflow_work, CPTS_OVERFLOW_PERIOD);
+	init_timer(&cpts->timer);
+	cpts->timer.data        = (unsigned long)cpts;
+	cpts->timer.function    = cpts_overflow_check;
+	cpts->timer.expires     = jiffies + CPTS_OVERFLOW_PERIOD;
+	add_timer(&cpts->timer);
 
 	cpts->phc_index = ptp_clock_index(cpts->clock);
 #endif
@@ -834,7 +989,7 @@ void cpts_unregister(struct cpts *cpts)
 #ifdef CONFIG_TI_CPTS
 	if (cpts->clock) {
 		ptp_clock_unregister(cpts->clock);
-		cancel_delayed_work_sync(&cpts->overflow_work);
+		del_timer_sync(&cpts->timer);
 	}
 	if (cpts->refclk)
 		cpts_clk_release(cpts);

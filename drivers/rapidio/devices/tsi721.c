@@ -717,6 +717,12 @@ static int tsi721_request_msix(struct rio_mport *mport)
 		free_irq(
 			priv->msix[TSI721_VECT_IDB].vector,
 			(void *)mport);
+	else {
+		priv->msix[TSI721_VECT_IDB].in_use = true;
+		priv->msix[TSI721_VECT_IDB].devid = (void *)mport;
+		priv->msix[TSI721_VECT_PWRX].in_use = true;
+		priv->msix[TSI721_VECT_PWRX].devid = (void *)mport;
+	}
 out:
 	return err;
 }
@@ -857,6 +863,32 @@ static int tsi721_request_irq(struct rio_mport *mport)
 	return err;
 }
 
+static void tsi721_free_irq(struct rio_mport *mport)
+{
+	struct tsi721_device *priv = mport->priv;
+
+#ifdef CONFIG_PCI_MSI
+	if (priv->flags & TSI721_USING_MSIX) {
+		int i;
+
+		for (i = 0; i < TSI721_VECT_MAX; i++) {
+			if (priv->msix[i].in_use) {
+				free_irq(priv->msix[i].vector,
+					 priv->msix[i].devid);
+				priv->msix[i].in_use = false;
+				priv->msix[i].devid = NULL;
+			}
+		}
+
+		pci_disable_msix(priv->pdev);
+	} else if (priv->flags & TSI721_USING_MSI) {
+		free_irq(priv->pdev->irq, (void *)mport);
+		pci_disable_msi(priv->pdev);
+	} else
+#endif
+	free_irq(priv->pdev->irq, (void *)mport);
+}
+
 /**
  * tsi721_init_pc2sr_mapping - initializes outbound (PCIe->SRIO)
  * translation regions.
@@ -994,6 +1026,11 @@ static int tsi721_port_write_init(struct tsi721_device *priv)
 	/* Use reliable port-write capture mode */
 	iowrite32(TSI721_RIO_PW_CTL_PWC_REL, priv->regs + TSI721_RIO_PW_CTL);
 	return 0;
+}
+
+static void tsi721_port_write_free(struct tsi721_device *priv)
+{
+	kfifo_free(&priv->pw_fifo);
 }
 
 static int tsi721_doorbell_init(struct tsi721_device *priv)
@@ -1580,12 +1617,11 @@ static int tsi721_open_outb_mbox(struct rio_mport *mport, void *dev_id,
 
 #ifdef CONFIG_PCI_MSI
 	if (priv->flags & TSI721_USING_MSIX) {
+		int idx = TSI721_VECT_OMB0_DONE + mbox;
+
 		/* Request interrupt service if we are in MSI-X mode */
-		rc = request_irq(
-			priv->msix[TSI721_VECT_OMB0_DONE + mbox].vector,
-			tsi721_omsg_msix, 0,
-			priv->msix[TSI721_VECT_OMB0_DONE + mbox].irq_name,
-			(void *)mport);
+		rc = request_irq(priv->msix[idx].vector, tsi721_omsg_msix, 0,
+				 priv->msix[idx].irq_name, (void *)mport);
 
 		if (rc) {
 			dev_dbg(&priv->pdev->dev,
@@ -1594,20 +1630,26 @@ static int tsi721_open_outb_mbox(struct rio_mport *mport, void *dev_id,
 			goto out_stat;
 		}
 
-		rc = request_irq(priv->msix[TSI721_VECT_OMB0_INT + mbox].vector,
-			tsi721_omsg_msix, 0,
-			priv->msix[TSI721_VECT_OMB0_INT + mbox].irq_name,
-			(void *)mport);
+		priv->msix[idx].in_use = true;
+		priv->msix[idx].devid = (void *)mport;
+
+		idx = TSI721_VECT_OMB0_INT + mbox;
+		rc = request_irq(priv->msix[idx].vector, tsi721_omsg_msix, 0,
+				 priv->msix[idx].irq_name, (void *)mport);
 
 		if (rc)	{
 			dev_dbg(&priv->pdev->dev,
 				"Unable to allocate MSI-X interrupt for "
 				"MBOX%d-INT\n", mbox);
-			free_irq(
-				priv->msix[TSI721_VECT_OMB0_DONE + mbox].vector,
-				(void *)mport);
+			idx = TSI721_VECT_OMB0_DONE + mbox;
+			free_irq(priv->msix[idx].vector, (void *)mport);
+			priv->msix[idx].in_use = false;
+			priv->msix[idx].devid = NULL;
 			goto out_stat;
 		}
+
+		priv->msix[idx].in_use = true;
+		priv->msix[idx].devid = (void *)mport;
 	}
 #endif /* CONFIG_PCI_MSI */
 
@@ -1688,10 +1730,16 @@ static void tsi721_close_outb_mbox(struct rio_mport *mport, int mbox)
 
 #ifdef CONFIG_PCI_MSI
 	if (priv->flags & TSI721_USING_MSIX) {
-		free_irq(priv->msix[TSI721_VECT_OMB0_DONE + mbox].vector,
-			 (void *)mport);
-		free_irq(priv->msix[TSI721_VECT_OMB0_INT + mbox].vector,
-			 (void *)mport);
+		int idx = TSI721_VECT_OMB0_DONE + mbox;
+
+		free_irq(priv->msix[idx].vector, (void *)mport);
+		priv->msix[idx].in_use = false;
+		priv->msix[idx].devid = NULL;
+
+		idx = TSI721_VECT_OMB0_INT + mbox;
+		free_irq(priv->msix[idx].vector, (void *)mport);
+		priv->msix[idx].in_use = false;
+		priv->msix[idx].devid = NULL;
 	}
 #endif /* CONFIG_PCI_MSI */
 
@@ -1895,11 +1943,11 @@ static int tsi721_open_inb_mbox(struct rio_mport *mport, void *dev_id,
 
 #ifdef CONFIG_PCI_MSI
 	if (priv->flags & TSI721_USING_MSIX) {
+		int idx = TSI721_VECT_IMB0_RCV + mbox;
+
 		/* Request interrupt service if we are in MSI-X mode */
-		rc = request_irq(priv->msix[TSI721_VECT_IMB0_RCV + mbox].vector,
-			tsi721_imsg_msix, 0,
-			priv->msix[TSI721_VECT_IMB0_RCV + mbox].irq_name,
-			(void *)mport);
+		rc = request_irq(priv->msix[idx].vector, tsi721_imsg_msix, 0,
+				 priv->msix[idx].irq_name, (void *)mport);
 
 		if (rc) {
 			dev_dbg(&priv->pdev->dev,
@@ -1908,20 +1956,26 @@ static int tsi721_open_inb_mbox(struct rio_mport *mport, void *dev_id,
 			goto out_desc;
 		}
 
-		rc = request_irq(priv->msix[TSI721_VECT_IMB0_INT + mbox].vector,
-			tsi721_imsg_msix, 0,
-			priv->msix[TSI721_VECT_IMB0_INT + mbox].irq_name,
-			(void *)mport);
+		priv->msix[idx].in_use = true;
+		priv->msix[idx].devid = (void *)mport;
+
+		idx = TSI721_VECT_IMB0_INT + mbox;
+		rc = request_irq(priv->msix[idx].vector, tsi721_imsg_msix, 0,
+				 priv->msix[idx].irq_name, (void *)mport);
 
 		if (rc)	{
 			dev_dbg(&priv->pdev->dev,
 				"Unable to allocate MSI-X interrupt for "
 				"IBOX%d-INT\n", mbox);
-			free_irq(
-				priv->msix[TSI721_VECT_IMB0_RCV + mbox].vector,
-				(void *)mport);
+			idx = TSI721_VECT_IMB0_RCV + mbox;
+			free_irq(priv->msix[idx].vector, (void *)mport);
+			priv->msix[idx].in_use = false;
+			priv->msix[idx].devid = NULL;
 			goto out_desc;
 		}
+
+		priv->msix[idx].in_use = true;
+		priv->msix[idx].devid = (void *)mport;
 	}
 #endif /* CONFIG_PCI_MSI */
 
@@ -1989,10 +2043,16 @@ static void tsi721_close_inb_mbox(struct rio_mport *mport, int mbox)
 
 #ifdef CONFIG_PCI_MSI
 	if (priv->flags & TSI721_USING_MSIX) {
-		free_irq(priv->msix[TSI721_VECT_IMB0_RCV + mbox].vector,
-				(void *)mport);
-		free_irq(priv->msix[TSI721_VECT_IMB0_INT + mbox].vector,
-				(void *)mport);
+		int idx = TSI721_VECT_IMB0_RCV + mbox;
+
+		free_irq(priv->msix[idx].vector, (void *)mport);
+		priv->msix[idx].in_use = false;
+		priv->msix[idx].devid = NULL;
+
+		idx = TSI721_VECT_IMB0_INT + mbox;
+		free_irq(priv->msix[idx].vector, (void *)mport);
+		priv->msix[idx].in_use = false;
+		priv->msix[idx].devid = NULL;
 	}
 #endif /* CONFIG_PCI_MSI */
 
@@ -2208,6 +2268,24 @@ static void tsi721_disable_ints(struct tsi721_device *priv)
 	iowrite32(0, priv->regs + TSI721_RIO_EM_DEV_INT_EN);
 }
 
+static struct rio_ops tsi721_rio_ops = {
+	.lcread			= tsi721_lcread,
+	.lcwrite		= tsi721_lcwrite,
+	.cread			= tsi721_cread_dma,
+	.cwrite			= tsi721_cwrite_dma,
+	.dsend			= tsi721_dsend,
+	.open_inb_mbox		= tsi721_open_inb_mbox,
+	.close_inb_mbox		= tsi721_close_inb_mbox,
+	.open_outb_mbox		= tsi721_open_outb_mbox,
+	.close_outb_mbox	= tsi721_close_outb_mbox,
+	.add_outb_message	= tsi721_add_outb_message,
+	.add_inb_buffer		= tsi721_add_inb_buffer,
+	.get_inb_message	= tsi721_get_inb_message,
+	.map_inb		= tsi721_rio_map_inb_mem,
+	.unmap_inb		= tsi721_rio_unmap_inb_mem,
+	.pwenable		= tsi721_pw_enable,
+};
+
 /**
  * tsi721_setup_mport - Setup Tsi721 as RapidIO subsystem master port
  * @priv: pointer to tsi721 private data
@@ -2218,39 +2296,15 @@ static int tsi721_setup_mport(struct tsi721_device *priv)
 {
 	struct pci_dev *pdev = priv->pdev;
 	int err = 0;
-	struct rio_ops *ops;
-
 	struct rio_mport *mport;
-
-	ops = kzalloc(sizeof(struct rio_ops), GFP_KERNEL);
-	if (!ops) {
-		dev_dbg(&pdev->dev, "Unable to allocate memory for rio_ops\n");
-		return -ENOMEM;
-	}
-
-	ops->lcread = tsi721_lcread;
-	ops->lcwrite = tsi721_lcwrite;
-	ops->cread = tsi721_cread_dma;
-	ops->cwrite = tsi721_cwrite_dma;
-	ops->dsend = tsi721_dsend;
-	ops->open_inb_mbox = tsi721_open_inb_mbox;
-	ops->close_inb_mbox = tsi721_close_inb_mbox;
-	ops->open_outb_mbox = tsi721_open_outb_mbox;
-	ops->close_outb_mbox = tsi721_close_outb_mbox;
-	ops->add_outb_message = tsi721_add_outb_message;
-	ops->add_inb_buffer = tsi721_add_inb_buffer;
-	ops->get_inb_message = tsi721_get_inb_message;
-	ops->map_inb = tsi721_rio_map_inb_mem;
-	ops->unmap_inb = tsi721_rio_unmap_inb_mem;
 
 	mport = kzalloc(sizeof(struct rio_mport), GFP_KERNEL);
 	if (!mport) {
-		kfree(ops);
 		dev_dbg(&pdev->dev, "Unable to allocate memory for mport\n");
 		return -ENOMEM;
 	}
 
-	mport->ops = ops;
+	mport->ops = &tsi721_rio_ops;
 	mport->index = 0;
 	mport->sys_size = 0; /* small system */
 	mport->phy_type = RIO_PHY_SERIAL;
@@ -2281,10 +2335,9 @@ static int tsi721_setup_mport(struct tsi721_device *priv)
 
 	err = tsi721_request_irq(mport);
 
-	if (!err) {
+	if (!err)
 		tsi721_interrupts_init(priv);
-		ops->pwenable = tsi721_pw_enable;
-	} else {
+	else {
 		dev_err(&pdev->dev, "Unable to get assigned PCI IRQ "
 			"vector %02X err=0x%x\n", pdev->irq, err);
 		goto err_exit;
@@ -2311,8 +2364,22 @@ static int tsi721_setup_mport(struct tsi721_device *priv)
 
 err_exit:
 	kfree(mport);
-	kfree(ops);
 	return err;
+}
+
+static void tsi721_free_mport(struct tsi721_device *priv)
+{
+	struct rio_mport *mport = priv->mport;
+
+	rio_unregister_mport(mport);
+
+#ifdef CONFIG_RAPIDIO_DMA_ENGINE
+	tsi721_unregister_dma(priv);
+#endif
+	tsi721_free_irq(mport);
+
+	kfree(mport);
+	priv->mport = NULL;
 }
 
 static int tsi721_probe(struct pci_dev *pdev,
@@ -2476,9 +2543,12 @@ static int tsi721_probe(struct pci_dev *pdev,
 	if (err)
 		goto err_free_consistent;
 
+	pci_set_drvdata(pdev, priv);
+
 	return 0;
 
 err_free_consistent:
+	tsi721_port_write_free(priv);
 	tsi721_doorbell_free(priv);
 err_free_bdma:
 	tsi721_bdma_maint_free(priv);
@@ -2498,6 +2568,44 @@ err_exit:
 	return err;
 }
 
+static void tsi721_remove(struct pci_dev *pdev)
+{
+	struct tsi721_device *priv = pci_get_drvdata(pdev);
+	dev_info(&pdev->dev, "Remove notification\n");
+
+	priv->mport->shutdown = true;
+
+	tsi721_free_mport(priv);
+
+	tsi721_disable_ints(priv);
+	tsi721_bdma_maint_free(priv);
+	tsi721_doorbell_free(priv);
+	tsi721_port_write_free(priv);
+
+	if (priv->regs)
+		iounmap(priv->regs);
+	if (priv->odb_base)
+		iounmap(priv->odb_base);
+
+	pci_release_regions(pdev);
+	pci_clear_master(pdev);
+	pci_disable_device(pdev);
+	pci_set_drvdata(pdev, NULL);
+	kfree(priv);
+}
+
+static void tsi721_shutdown(struct pci_dev *pdev)
+{
+	struct tsi721_device *priv = pci_get_drvdata(pdev);
+
+	dev_info(&pdev->dev, "Shutdown notification\n");
+	priv->mport->shutdown = true;
+	rio_unregister_mport(priv->mport);
+	tsi721_disable_ints(priv);
+	pci_clear_master(pdev);
+	pci_disable_device(pdev);
+}
+
 static DEFINE_PCI_DEVICE_TABLE(tsi721_pci_tbl) = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_IDT, PCI_DEVICE_ID_TSI721) },
 	{ 0, }	/* terminate list */
@@ -2509,14 +2617,11 @@ static struct pci_driver tsi721_driver = {
 	.name		= "tsi721",
 	.id_table	= tsi721_pci_tbl,
 	.probe		= tsi721_probe,
+	.remove		= tsi721_remove,
+	.shutdown	= tsi721_shutdown,
 };
 
-static int __init tsi721_init(void)
-{
-	return pci_register_driver(&tsi721_driver);
-}
-
-device_initcall(tsi721_init);
+module_pci_driver(tsi721_driver);
 
 MODULE_DESCRIPTION("IDT Tsi721 PCIExpress-to-SRIO bridge driver");
 MODULE_AUTHOR("Integrated Device Technology, Inc.");

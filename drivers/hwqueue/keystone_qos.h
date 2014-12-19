@@ -17,7 +17,15 @@
 #ifndef __KEYSTONE_QOS_FW_H
 #define __KEYSTONE_QOS_FW_H
 
+/* These should be kernel-wide definitions, but they're not */
+#ifndef U32_MAX
+#define	U32_MAX	((u32)(~0U))
+#define	S32_MAX	((s32)(U32_MAX >> 1))
+#endif
+
 #define QOS_MAX_INPUTS			128
+#define	QOS_MAX_CHILDREN		8
+#define	QOS_MAX_TREES			8
 
 #define QOS_RETCODE_SUCCESS		1
 
@@ -49,16 +57,22 @@
 #define	QOS_SCHED_FLAG_CIR_BYTES	BIT(1)
 #define	QOS_SCHED_FLAG_CONG_BYTES	BIT(2)
 #define	QOS_SCHED_FLAG_THROTL_BYTES	BIT(3)
+#define	QOS_SCHED_FLAG_IS_JOINT		BIT(4)
 
 #define QOS_DEFAULT_OVERHEAD_BYTES	24
 
 #define QOS_CREDITS_PACKET_SHIFT	20
 #define QOS_CREDITS_BYTE_SHIFT		11
 
-#define QOS_BYTE_NORMALIZATION_FACTOR	3000
-#define QOS_PACKET_NORMALIZATION_FACTOR	2
+#define QOS_WRR_PACKET_SHIFT		17
+#define QOS_WRR_BYTE_SHIFT		8
 
-#define	QOS_MAX_WEIGHT			((1 << 28) - 1)
+#define QOS_BYTE_NORMALIZATION_FACTOR	(50u << QOS_WRR_BYTE_SHIFT)
+#define QOS_PACKET_NORMALIZATION_FACTOR	(2u << QOS_WRR_PACKET_SHIFT)
+
+#define	QOS_MAX_WEIGHT			U32_MAX
+#define	QOS_MAX_CREDITS			0x1fffffff
+#define QOS_MIN_CREDITS_WARN		(50u << QOS_WRR_BYTE_SHIFT)
 
 #define to_qnode(_n)	container_of(_n, struct khwq_qos_tree_node, node)
 
@@ -78,9 +92,10 @@ enum khwq_qos_drop_mode {
 };
 
 enum khwq_qos_tree_node_type {
+	QOS_NODE_DEFAULT,
 	QOS_NODE_PRIO,
 	QOS_NODE_WRR,
-	QOS_NODE_DEFAULT,
+	QOS_NODE_BLENDED,
 };
 
 enum khwq_qos_shadow_type {
@@ -146,7 +161,8 @@ struct khwq_qos_info {
 	u32				 refcount;
 	struct khwq_qos_shadow		 shadows[QOS_MAX_SHADOW];
 	struct khwq_qos_stats		 stats;
-	struct ktree			 qos_tree;
+	int				 qos_tree_count;
+	struct ktree			 qos_trees[QOS_MAX_TREES];
 	struct list_head		 drop_policies;
 	struct list_head		 stats_classes;
 	struct khwq_qos_drop_policy	*default_drop_policy;
@@ -199,6 +215,10 @@ struct khwq_qos_tree_node {
 	enum khwq_qos_tree_node_type	 type;
 	u32				 weight;
 	u32				 priority;
+	u32				 low_priority;
+	int				 prio_children;
+	int				 wrr_children;
+	int				 lowprio_children;
 	enum khwq_qos_accounting_type	 acct;
 	const char			*name;
 	int				 overhead_bytes;
@@ -213,12 +233,13 @@ struct khwq_qos_tree_node {
 	int	 child_port_count;	/* children that need ports	*/
 	int	 child_count;		/* number of children		*/
 	int	 parent_input;		/* input number of parent	*/
-	u32	 child_weight[4];
-	u32	 child_weight_sum;	/* sum of child weights		*/
+	u32	 child_weight[QOS_MAX_CHILDREN];
 	bool	 is_drop_input;		/* indicates that child's output
 					   feeds to the drop sched	*/
 	bool	 has_sched_port;	/* does this port need a sched?	*/
+	bool	 is_joint_port;		/* Even/odd joint pair		*/
 	int	 output_queue;		/* from DT or calculated	*/
+	int	 tree_index;		/* khwq_qos_info.qos_trees index */
 
 	/* allocated resources */
 	int	 sched_port_idx;	/* inherited by default nodes	*/
@@ -260,6 +281,9 @@ struct khwq_query_stats_regs {
 #define khwq_qos_make_id(pdsp, idx)	((pdsp) << 16 | (idx))
 #define khwq_qos_id_to_queue(info, idx)		\
 	((info)->drop_sched_queue_base + khwq_qos_id_to_idx(idx))
+
+#define	khwq_qos_id_even(idx)	((idx) & ~0x0001)
+#define	khwq_qos_id_odd(idx)	((idx) |  0x0001)
 
 int khwq_qos_alloc(struct khwq_qos_info *info, enum khwq_qos_shadow_type type);
 int khwq_qos_free(struct khwq_qos_info *info, enum khwq_qos_shadow_type type,
@@ -307,7 +331,6 @@ static inline int khwq_qos_free_##_field(struct khwq_qos_info *info,	       \
 
 DEFINE_ALLOC(QOS_DROP_CFG_PROF,	 drop_cfg);
 DEFINE_ALLOC(QOS_DROP_OUT_PROF,	 drop_out);
-DEFINE_ALLOC(QOS_SCHED_PORT_CFG, sched_port);
 
 #define DEFINE_FIELD_U32(_type, _field, _offset, _startbit, _nbits)	 \
 static inline int khwq_qos_get_##_field(struct khwq_qos_info *info,	 \
