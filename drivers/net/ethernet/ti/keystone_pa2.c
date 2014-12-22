@@ -575,13 +575,14 @@ static const u32 pa2_pdsp_const_reg_map[PA2_NUM_PDSPS][PA2_PDSP_CONST_NUM_REG] \
 		0xFFF82900,	/* C22: Split Context FIFO */
 		0xFFF83F00,	/* C23: PDSP Info*/
 		0x00000000,	/* C24: Reserved */
-		0x00000000,	/* C25: Reserved */
+		0xFFF80200,	/* C25: User Stats CB and FIFO
+				   (Global address of Post cluster) */
 		0x00000000,	/* C26: Reserved*/
 		0x00000000,	/* C27: Reserved*/
 		0xFF020500,	/* C28: Port (Interface-based) configurations */
 		0x00000000,	/* C29: Reserved*/
 		0x00000000,	/* C30: Reserved*/
-		0x00000000	 /* C31: Reserved*/
+		0x00000000	/* C31: Reserved*/
 	},
 	/* Post PDSP1: Modifier */
 	{
@@ -610,7 +611,8 @@ static const u32 pa2_pdsp_const_reg_map[PA2_NUM_PDSPS][PA2_PDSP_CONST_NUM_REG] \
 		0xFFF82900,	/* C22: Split Context FIFO */
 		0xFFF83F20,	/* C23: PDSP Info*/
 		0x00000000,	/* C24: Reserved */
-		0x00000000,	/* C25: Reserved */
+		0xFFF80240,	/* C25: User Stats CB and FIFO
+				   (Global address of Post cluster) */
 		0x00000000,	/* C26: Reserved*/
 		0x00000000,	/* C27: Reserved*/
 		0xFF020500,	/* C28: Port (Interface-based) configurations */
@@ -645,7 +647,8 @@ static const u32 pa2_pdsp_const_reg_map[PA2_NUM_PDSPS][PA2_PDSP_CONST_NUM_REG] \
 		0x00000000,	/* C22: Reserved */
 		0xFFF81F00,	/* C23: PDSP Info */
 		0xFFF80A00,	/* C24: Temporary Buffer */
-		0x00000000,	/* C25: Reserved*/
+		0xFFF80280,	/* C25: User Stats CB and FIFO
+				   (Global address of Post cluster) */
 		0xFF020400,	/* C26: Eflow Exception route */
 		0x00000000,	/* C27: Reserved*/
 		0xFF020500,	/* C28: Port (Interface-based) configurations */
@@ -680,7 +683,8 @@ static const u32 pa2_pdsp_const_reg_map[PA2_NUM_PDSPS][PA2_PDSP_CONST_NUM_REG] \
 		0x00000000,	/* C22: Reserved */
 		0xFFF81F20,	/* C23: PDSP Info */
 		0xFFF80A00,	/* C24: Temporary Buffer */
-		0x00000000,	/* C25: Reserved*/
+		0xFFF802C0,	/* C25: User Stats CB and FIFO
+				   (Global address of Post cluster) */
 		0xFF020400,	/* C26: Eflow Exception route */
 		0xFFF80800,	/* C27: Command Buffer */
 		0xFF020500,	/* C28: Port (Interface-based) configurations */
@@ -715,7 +719,8 @@ static const u32 pa2_pdsp_const_reg_map[PA2_NUM_PDSPS][PA2_PDSP_CONST_NUM_REG] \
 		0x00000000,	/* C22: Reserved */
 		0xFFF81F40,	/* C23: PDSP Info */
 		0xFFF80A00,	/* C24: Temporary Buffer */
-		0x00000000,	/* C25: Reserved*/
+		0xFFF80300,	/* C25: User Stats CB and FIFO
+				   (Global address of Post cluster) */
 		0xFF020400,	/* C26: Eflow Exception route */
 		0xFFF80900,	/* C27: Command Buffer */
 		0xFF020500,	/* C28: Port (Interface-based) configurations */
@@ -750,7 +755,8 @@ static const u32 pa2_pdsp_const_reg_map[PA2_NUM_PDSPS][PA2_PDSP_CONST_NUM_REG] \
 		0x00000000,	/* C22: Reserved */
 		0xFFF80F00,	/* C23: PDSP Info */
 		0xFFF80A00,	/* C24: Temporary Buffer */
-		0x00000000,	/* C25: Reserved*/
+		0xFFF80340,	/* C25: User Stats CB and FIFO
+				   (Global address of Post cluster) */
 		0xFF020400,	/* C26: Eflow Exception route */
 		0xFFF80800,	/* C27: Command Buffer */
 		0xFF020500,	/* C28: Port (Interface-based) configurations */
@@ -785,13 +791,14 @@ static const u32 pa2_pdsp_const_reg_map[PA2_NUM_PDSPS][PA2_PDSP_CONST_NUM_REG] \
 		0x00000000,	/* C22: Reserved */
 		0xFFF80F00,	/* C23: PDSP Info */
 		0xFFF80A00,	/* C24: Temporary Buffer */
-		0x00000000,	/* C25: Reserved*/
+		0xFFF80380,	/* C25: User Stats CB and FIFO
+				   (Global address of Post cluster) */
 		0xFF020400,	/* C26: Eflow Exception route */
 		0xFFF80800,	/* C27: Command Buffer */
 		0xFF020500,	/* C28: Port (Interface-based) configurations */
 		0x00000000,	/* C29: Reserved*/
 		0x00000000,	/* C30: Reserved*/
-		0x00000000          /* C31: Reserved*/
+		0x00000000 	/* C31: Reserved*/
 	}
 };
 
