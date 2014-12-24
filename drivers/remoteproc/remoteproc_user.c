@@ -539,8 +539,8 @@ static int uproc_driver_probe(struct platform_device *pdev)
 		if (!r)
 			break;
 		uio->mem[i].memtype = UIO_MEM_PHYS;
-		uio->mem[i].addr    = r->start;
-		uio->mem[i].size    = resource_size(r);
+		uio->mem[i].addr    = r->start & PAGE_MASK;
+		uio->mem[i].size    = PAGE_ALIGN(resource_size(r));
 		uio->mem[i].name    = r->name;
 	}
 
