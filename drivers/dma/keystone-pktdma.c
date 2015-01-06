@@ -61,12 +61,11 @@
 #define DESC_FLOWTAG_MASK	BITS(8)
 #define DESC_FLOWTAG_SHIFT	16
 #define DESC_LEN_MASK		BITS(22)
-#define DESC_TYPE_HOST		0
-#define DESC_TYPE_SHIFT		26
-#define DESC_EFLAGS_MASK	BITS(4)
-#define DESC_EFLAGS_SHIFT	20
-#define DESC_PKTTYPE_SHIFT      25
 #define DESC_PKTTYPE_MASK       BITS(5)
+#define DESC_PKTTYPE_SHIFT      25
+#define DESC_EFLAGS_SHIFT	20
+#define DESC_EFLAGS_MASK	BITS(4)
+
 
 #define DMA_DEFAULT_NUM_DESCS	128
 #define DMA_DEFAULT_PRIORITY	DMA_PRIO_MED_L
@@ -545,14 +544,13 @@ static bool chan_should_process(struct keystone_dma_chan *chan, bool in_poll)
  */
 #define dma_to_page(dma) (pfn_to_page(dma_to_pfn(NULL,(dma))))
 
-static int chan_complete(struct keystone_dma_chan *chan, struct hwqueue *queue,
-			 enum dma_status status, int budget, bool in_poll)
+static struct keystone_dma_desc *chan_complete_one(
+	struct keystone_dma_chan *chan,
+	struct hwqueue *queue)
 {
-	struct dma_async_tx_descriptor *adesc;
 	struct keystone_hw_desc *hwdesc;
-	struct keystone_dma_desc *desc;
+	struct keystone_dma_desc *desc = NULL;
 	struct scatterlist *sg;
-	int packets = 0;
 	dma_addr_t dma;
 	unsigned size;
 	unsigned sg_retlen = 0;
@@ -561,15 +559,11 @@ static int chan_complete(struct keystone_dma_chan *chan, struct hwqueue *queue,
 	u32 *data;
 	int len;
 
-	while (budget < 0 || packets < budget) {
-
-		if (!chan_should_process(chan, in_poll))
-			break;
-
+	for (;;) {
 		dma = hwqueue_pop(queue, &size, NULL, 0);
 		if (!dma) {
 			chan_dbg(chan, "processing stopped, no desc\n");
-			break;
+			return NULL;
 		}
 
 		/* Unmap the Host Packet Descriptor */
@@ -583,120 +577,140 @@ static int chan_complete(struct keystone_dma_chan *chan, struct hwqueue *queue,
 			dev_warn(chan_dev(chan),
 				 "failed to unmap descriptor 0x%08x\n",
 				 dma);
-			continue;
+		} else
+			break;
+	}
+
+	desc = desc_from_hwdesc(hwdesc);
+	prefetchw(desc);
+
+	chan_vdbg(chan, "popped desc %p hw %p from queue %d\n",
+		  desc, hwdesc, hwqueue_get_id(queue));
+	hwdesc_dump(chan, hwdesc, "complete");
+
+	sg = NULL;
+	sg_retlen = 0;
+	packet_size = 0;
+	accum_size = 0;
+
+	if (chan->direction == DMA_DEV_TO_MEM) {
+		sg = desc->sg;
+		packet_size = hwval_to_host(chan, hwdesc->desc_info) & BITS(22);
+
+		if (likely(desc->options & DMA_HAS_EPIB)) {
+			len  = sg_dma_len(sg) / sizeof(u32);
+			data = sg_virt(sg);
+			sg++;
+			sg_retlen++;
+			desc_copy(chan, data, hwdesc->epib, len);
 		}
 
-		desc = desc_from_hwdesc(hwdesc);
-		prefetchw(desc);
+		if (likely(desc->options & DMA_HAS_PSINFO)) {
+			len  = sg_dma_len(sg) / sizeof(u32);
+			data = sg_virt(sg);
+			sg++;
+			sg_retlen++;
+			desc_copy(chan, data, hwdesc->psdata, len);
+		}
 
-		chan_vdbg(chan, "popped desc %p hw %p from queue %d\n",
+		if ((desc->options & DMA_HAS_EFLAGS)) {
+			data = sg_virt(sg);
+			sg++;
+			sg_retlen++;
+			*data =	(hwval_to_host(chan, hwdesc->packet_info) >>
+				 DESC_EFLAGS_SHIFT) & DESC_EFLAGS_MASK;
+		}
+	}
+
+	/* Process the completed descriptor chain */
+	for (;;) {
+		struct keystone_dma_desc *this_desc = desc_from_hwdesc(hwdesc);
+
+		/* Populate the the scatterlist from the descriptors */
+		if (chan->direction == DMA_DEV_TO_MEM) {
+			dma_addr_t bufaddr = hwval_to_host(chan, hwdesc->buff);
+			unsigned buflen = hwval_to_host(chan, hwdesc->buff_len) & BITS(22);
+			unsigned q_num = hwval_to_host(chan, hwdesc->orig_len) >> 28;
+
+			WARN((q_num >= chan->rxpool_count),
+			     "Invalid q_num %d\n", q_num);
+			atomic_inc(&chan->rxpools[q_num].deficit);
+
+			if (sg_retlen < chan->scatterlist_size) {
+				sg_set_page(sg, dma_to_page(bufaddr), buflen,
+					    offset_in_page(bufaddr));
+				sg_dma_address(sg) = bufaddr;
+				accum_size += buflen;
+				sg++;
+			} else {
+				chan->rxpool_destructor(
+					chan->rxpool_param,
+					q_num, chan->rxpools[q_num].buffer_size,
+					desc_to_adesc(this_desc));
+			}
+
+			sg_retlen++;
+		}
+
+		dma = hwval_to_host(chan, hwdesc->next_desc);
+
+		/* If this isn't the first descriptor, free it */
+		if (this_desc != desc)
+			desc_put(chan, this_desc);
+
+		/* zero next_desc indicates end of the chain */
+		if (!dma)
+			break;
+
+		/* Unmap the next descriptor in the chain */
+		hwdesc = hwqueue_unmap(queue, dma, DESC_MIN_SIZE);
+		if (!hwdesc) {
+			dev_warn(chan_dev(chan),
+				 "unable to unmap descriptor 0x%08x\n",
+				 dma);
+			break;
+		}
+
+		chan_vdbg(chan, "chained desc %p hw %p from queue %d\n",
 			  desc, hwdesc, hwqueue_get_id(queue));
 		hwdesc_dump(chan, hwdesc, "complete");
-
-		sg = NULL;
-		sg_retlen = 0;
-		packet_size = 0;
-		accum_size = 0;
-
-		if (chan->direction == DMA_DEV_TO_MEM) {
-			sg = desc->sg;
-			packet_size = hwval_to_host(chan, hwdesc->desc_info) & BITS(22);
-
-			if (likely(desc->options & DMA_HAS_EPIB)) {
-				len  = sg_dma_len(sg) / sizeof(u32);
-				data = sg_virt(sg);
-				sg++;
-				sg_retlen++;
-				desc_copy(chan, data, hwdesc->epib, len);
-			}
-
-			if (likely(desc->options & DMA_HAS_PSINFO)) {
-				len  = sg_dma_len(sg) / sizeof(u32);
-				data = sg_virt(sg);
-				sg++;
-				sg_retlen++;
-				desc_copy(chan, data, hwdesc->psdata, len);
-			}
-
-			if ((desc->options & DMA_HAS_EFLAGS)) {
-				data = sg_virt(sg);
-				sg++;
-				sg_retlen++;
-				*data =
-				(hwval_to_host(chan, hwdesc->packet_info) >>
-				 DESC_EFLAGS_SHIFT) & DESC_EFLAGS_MASK;
-			}
-		}
-
-		/* Process the completed descriptor chain */
-		for (;;) {
-			struct keystone_dma_desc *this_desc = desc_from_hwdesc(hwdesc);
-
-			/* Populate the the scatterlist from the descriptors */
-			if (chan->direction == DMA_DEV_TO_MEM) {
-				dma_addr_t bufaddr = hwval_to_host(chan, hwdesc->buff);
-				unsigned buflen = hwval_to_host(chan, hwdesc->buff_len) & BITS(22);
-				unsigned q_num = hwval_to_host(chan, hwdesc->orig_len) >> 28;
-
-				WARN((q_num >= chan->rxpool_count),
-						"Invalid q_num %d\n", q_num);
-				atomic_inc(&chan->rxpools[q_num].deficit);
-
-				if (sg_retlen < chan->scatterlist_size) {
-					sg_set_page(sg, dma_to_page(bufaddr), buflen,
-							offset_in_page(bufaddr));
-					sg_dma_address(sg) = bufaddr;
-					accum_size += buflen;
-					sg++;
-				} else {
-					chan->rxpool_destructor(chan->rxpool_param,
-						q_num, chan->rxpools[q_num].buffer_size,
-						desc_to_adesc(this_desc));
-				}
-
-				sg_retlen++;
-			}
-
-			dma = hwval_to_host(chan, hwdesc->next_desc);
-
-			/* If this isn't the first descriptor, free it */
-			if (this_desc != desc)
-				desc_put(chan, this_desc);
-
-			/* zero next_desc indicates end of the chain */
-			if (!dma)
-				break;
-
-			/* Unmap the next descriptor in the chain */
-			hwdesc = hwqueue_unmap(queue, dma, DESC_MIN_SIZE);
-			if (!hwdesc) {
-				dev_warn(chan_dev(chan),
-					 "unable to unmap descriptor 0x%08x\n",
-					 dma);
-				break;
-			}
-
-			chan_vdbg(chan, "chained desc %p hw %p from queue %d\n",
-				  desc, hwdesc, hwqueue_get_id(queue));
-			hwdesc_dump(chan, hwdesc, "complete");
-		}
+	}
 		
-		if (chan->direction == DMA_DEV_TO_MEM) {
-			/* Mark the last filled-in entry as the end of the scatterlist */
-			sg_mark_end(sg-1);
+	if (chan->direction == DMA_DEV_TO_MEM) {
+		/* Mark the last filled-in entry as the end of the scatterlist */
+		sg_mark_end(sg-1);
 
-			/* Report scatterlist overflow */
-			if (sg_retlen > chan->scatterlist_size) {
-				dev_warn(chan_dev(chan), "scatterlist overflow: %d > %d\n",
-						sg_retlen, chan->scatterlist_size);
-			}
-
-			if (packet_size != accum_size) {
-				dev_warn(chan_dev(chan),
-					 "Packet size %u not equal to sum of fragments %u\n",
-					 packet_size, accum_size);
-			}
+		/* Report scatterlist overflow */
+		if (sg_retlen > chan->scatterlist_size) {
+			dev_warn(chan_dev(chan), "scatterlist overflow: %d > %d\n",
+				 sg_retlen, chan->scatterlist_size);
 		}
+
+		if (packet_size != accum_size) {
+			dev_warn(chan_dev(chan),
+				 "Packet size %u not equal to sum of fragments %u\n",
+				 packet_size, accum_size);
+		}
+	}
+
+	return desc;
+}
+
+static int chan_complete(struct keystone_dma_chan *chan, struct hwqueue *queue,
+			 enum dma_status status, int budget, bool in_poll)
+{
+	struct dma_async_tx_descriptor *adesc;
+	struct keystone_dma_desc *desc;
+	int packets = 0;
+
+	while (budget < 0 || packets < budget) {
+
+		if (!chan_should_process(chan, in_poll))
+			break;
+
+		desc = chan_complete_one(chan, queue);
+		if (!desc)
+			break;
 
 		desc->status = status;
 
@@ -1369,6 +1383,37 @@ static int chan_rxfree_flush(struct keystone_dma_chan *chan)
 	return 0;
 }
 
+static int chan_rxfree_refill_one(struct keystone_dma_chan *chan,
+				  int pool,
+				  struct dma_async_tx_descriptor *adesc)
+{
+	struct keystone_dma_desc *desc;
+	struct keystone_hw_desc *hwdesc;
+	int ret;
+
+	if (atomic_dec_return(&chan->rxpools[pool].deficit) < 0)
+		return -1;
+
+	desc = desc_from_adesc(adesc);
+	hwdesc = desc_to_hwdesc(desc);
+
+	desc->status = DMA_IN_PROGRESS;
+	ret = hwqueue_push(chan->q_submit[pool],
+			   desc->hwdesc_dma_addr,
+			   desc->hwdesc_dma_size, 0);
+
+	if (unlikely(ret < 0)) {
+		dev_warn(chan_dev(chan), "push error %d in %s\n", ret, __func__);
+		hwqueue_unmap(chan->q_submit[pool],
+			      desc->hwdesc_dma_addr,
+			      desc->hwdesc_dma_size);
+		desc_put(chan, desc);
+		return ret;
+	}
+
+	return 0;
+}
+
 static int chan_keystone_config(struct keystone_dma_chan *chan,
 		struct dma_keystone_info *config)
 {
@@ -1444,6 +1489,27 @@ static int chan_poll(struct keystone_dma_chan *chan, int budget)
 	return packets;
 }
 
+static void *chan_get_one(struct keystone_dma_chan *chan)
+{
+	struct dma_async_tx_descriptor *adesc;
+	struct keystone_dma_desc *desc;
+	void *callback_param;
+
+	desc = chan_complete_one(chan, chan->q_complete);
+	if (!desc) {
+		return NULL;
+	}
+
+	desc->status = DMA_SUCCESS;
+	adesc = desc_to_adesc(desc);
+	callback_param = adesc->callback_param;
+
+	/* Free the first descriptor in the chain */
+	desc_put(chan, desc);
+
+	return callback_param;
+}
+
 static int chan_control(struct dma_chan *achan, enum dma_ctrl_cmd cmd,
 			unsigned long arg)
 {
@@ -1451,6 +1517,7 @@ static int chan_control(struct dma_chan *achan, enum dma_ctrl_cmd cmd,
 	struct keystone_dma_device *dma = chan->dma;
 	struct dma_slave_config *config;
 	struct dma_notify_info *info;
+	struct dma_refill_info *rinfo;
 	struct dma_keystone_info *keystone_config;
 
 	int ret = -EINVAL;
@@ -1505,6 +1572,15 @@ static int chan_control(struct dma_chan *achan, enum dma_ctrl_cmd cmd,
 	case DMA_GET_TX_QUEUE:
 		if (chan->direction == DMA_MEM_TO_DEV)
 			ret = chan->qnum_submit[0];
+		break;
+
+	case DMA_GET_ONE:
+		ret = (int) chan_get_one(chan);
+		break;
+
+	case DMA_RXFREE_REFILL_ONE:
+		rinfo = (struct dma_refill_info *)arg;
+		ret = chan_rxfree_refill_one(chan, rinfo->pool, rinfo->desc);
 		break;
 
 	case DMA_TERMINATE_ALL:
@@ -1619,7 +1695,7 @@ chan_prep_slave_sg(struct dma_chan *achan, struct scatterlist *_sg,
 	if (unlikely(options & DMA_HAS_PKTTYPE))
 		packet_type =
 			((options >> DMA_PKTTYPE_SHIFT) & DMA_PKTTYPE_MASK) <<
-			         DESC_PKTTYPE_SHIFT;
+			DESC_PKTTYPE_SHIFT;
 
 	if (unlikely(!chan_is_alive(chan))) {
 		dev_err(chan_dev(chan), "cannot submit in state %s\n",
