@@ -398,8 +398,8 @@
 			};
 			descriptors {
 				pool-rio {
-					values = <128 256>;
-					region-id = <13>;
+					values = <1024 256>;
+					region-id = <15>;
 				};
 				pool-xge {
 					values = <1024 128>;

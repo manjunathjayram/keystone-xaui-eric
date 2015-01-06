@@ -301,6 +301,10 @@
 					values = <640 9>;
 					reserved;
 				};
+				riotx {
+					values = <672 2>;
+					reserved;
+				};
 				xge {
 					values = <8752 8>;
 					reserved;
@@ -324,6 +328,11 @@
 					id = <14>;
 					values	= <2048 128>;	/* num_desc desc_size */
 					link-index = <0x7800>;
+				};
+				region-15 {
+					id = <15>;
+					values	= <1024 128>;	/* num_desc desc_size */
+					link-index = <0x8000>;
 				};
 			};
 			descriptors {
@@ -1042,6 +1051,114 @@
 			rx_buffer_size = <1500 4096 0 0>;
 
 			sc-id = <0x7000 0x71ff>;
+		};
+
+		riodma: pktdma@2901000 {
+			compatible = "ti,keystone-pktdma";
+			reg = <0x2901000 0x020		/* 0 - global  */
+			       0x2901400 0x200		/* 1 - txchan  */
+			       0x2901800 0x200		/* 2 - rxchan  */
+			       0x2901c00 0x200		/* 3 - txsched */
+			       0x2902000 0x280>;	/* 4 - rxflow  */
+			/* clocks = <&clkpktproc>; */
+			enable-all;
+			/* debug; */
+			dma-coherent;
+
+			logical-queue-managers	= <4>;
+			queues-per-queue-manager = <4096>;
+			qm-base-address = <0x23a80000 0x23a90000
+					   0x23aa0000 0x23ab0000>;
+
+			channels {
+				riotx0 {
+					transmit;
+					label		= "riotx0";
+					channel		= <0>;
+					pool		= "pool-rio";
+					submit-queue	= <672>;
+					/*complete-queue = <657>;*/
+					priority	= <3>;
+					/*debug;*/
+				};
+				riotx1 {
+					transmit;
+					label		= "riotx1";
+					channel		= <1>;
+					pool		= "pool-rio";
+					submit-queue	= <673>;
+					/*complete-queue = <658>;*/
+					priority	= <2>;
+					/*debug;*/
+				};
+				riorx0 {
+					receive;
+					label		= "riorx0";
+					pool		= "pool-rio";
+					/*debug;*/
+					complete-queue	= <8714>;
+					flow		= <18>;
+				};
+				riorx1 {
+					receive;
+					label		= "riorx1";
+					pool		= "pool-rio";
+					/*debug;*/
+					complete-queue	= <8715>;
+					flow		= <19>;
+				};
+			};
+		};
+
+		rapidio: rapidio@2900000 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			reg = <0x2900000 0x40000        /* rio regs */
+			       0x2620000 0x1000         /* boot config regs */
+		               0x232c000 0x2000>;       /* serdes config regs */
+			reg-names = "rio", "boot_config", "serdes";
+			clocks = <&clksrio>;
+			clock-names = "clk_srio";
+			compatible = "ti,keystone-rapidio";
+			dma-coherent;
+
+			keystone2-serdes;
+			baudrate  = <1>;              /* 2.5Gbps */
+			path_mode = <4>;              /* 1 port in 4x */
+			port-register-timeout = <30>; /* 30 seconds */
+
+			lsu = <0 0>;            /* available LSU range (start end) */
+			num-dio-channels = <8>; /* number of DIO DMA channels */
+
+                        ports = <0x1>;      /* bitfield of port(s) to probe */
+                        dev-id-size = <0>;  /* RapidIO common transport system
+					     * size.
+					     * 0 - Small size. 8-bit deviceID
+					     *     fields. 256 devices.
+					     * 1 - Large size, 16-bit deviceID
+					     *     fields. 65536 devices.
+					     */
+			interrupts = <0 152 0xf01 0 153 0xf01>; /* RIO and LSU IRQs */
+
+			num-mboxes = <2>;
+
+			mbox-0 {
+				rx_channel = "riorx0";
+				rx_queue_depth	= <256 0 0 0>;
+				rx_buffer_size	= <4096 0 0 0>;
+				/*stream_id = <0>;*/
+				tx_channel = "riotx0";
+				tx_queue_depth = <256>;
+			};
+
+			mbox-1 {
+				rx_channel = "riorx1";
+				rx_queue_depth	= <256 0 0 0>;
+				rx_buffer_size	= <4096 0 0 0>;
+				/*stream_id = <1>;*/
+				tx_channel = "riotx1";
+				tx_queue_depth = <256>;
+			};
 		};
 
 		xgedma: pktdma@2fa1000 {
