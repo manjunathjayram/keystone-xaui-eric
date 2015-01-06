@@ -21,10 +21,13 @@
 #define DMA_HAS_EPIB		BIT(30)
 #define DMA_HAS_FLOWTAG		BIT(29)
 #define DMA_HAS_EFLAGS		BIT(28)
+#define DMA_HAS_PKTTYPE         BIT(27)
 #define DMA_QNUM_SHIFT		24
 #define DMA_QNUM_MASK		BITS(2)
 #define DMA_FLOWTAG_SHIFT	18
 #define DMA_FLOWTAG_MASK	BITS(6)
+#define DMA_PKTTYPE_SHIFT       13
+#define DMA_PKTTYPE_MASK        BITS(5)
 #define DMA_PORT(x)		x
 
 typedef void (*dma_notify_fn)(struct dma_chan *chan, void *arg);
