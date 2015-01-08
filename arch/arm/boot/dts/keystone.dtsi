@@ -466,6 +466,7 @@
 			#address-cells = <3>;
 			#size-cells = <2>;
 			#interrupt-cells = <2>;
+			status = "disabled";
 			compatible = "ti,keystone2-pci";
 			reg =  <0x21800000 0x8000   /* pcie-regs */
 				0x0262014c 4	    /* device cfg */
