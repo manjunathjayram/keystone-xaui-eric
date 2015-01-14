@@ -845,5 +845,9 @@
 			clock-names = "pcie";
 			enable-linktrain;
 		};
+
+		pci-controller@21800000 {
+			status = "ok";
+		};
 	};
 };
