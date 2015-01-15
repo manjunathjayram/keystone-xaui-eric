@@ -366,6 +366,7 @@ int keystone_rio_lsu_start_transfer(int lsu,
 		if (((status & KEYSTONE_RIO_LSU_FULL_MASK) == 0x0)
 		    && ((status & KEYSTONE_RIO_LSU_BUSY_MASK) == 0x0))
 			break;
+
 		count++;
 		if (count >= KEYSTONE_RIO_TIMEOUT_CNT) {
 			dev_err(krio_priv->dev,
@@ -428,6 +429,49 @@ out:
 }
 
 /*
+ * Cancel a LSU transfer
+ */
+static inline void keystone_rio_lsu_cancel_transfer(
+	int lsu,
+	struct keystone_rio_data *krio_priv)
+{
+	u32 status;
+	u32 count = 0;
+
+	while (1) {
+		/* Read register 6 to get the lock */
+		status = __raw_readl(
+			&(krio_priv->regs->lsu_reg[lsu].busy_full));
+
+		/* If not busy or if full, we can flush */
+		if (((status & KEYSTONE_RIO_LSU_FULL_MASK) == 0x0)
+		    || (status & KEYSTONE_RIO_LSU_BUSY_MASK)) {
+			break;
+		}
+
+		count++;
+		if (count >= KEYSTONE_RIO_TIMEOUT_CNT) {
+			dev_err(krio_priv->dev,
+				"no LSU%d shadow register available for flushing\n",
+				lsu);
+			return;
+		}
+
+		ndelay(KEYSTONE_RIO_TIMEOUT_NSEC);
+	}
+
+	if (status & KEYSTONE_RIO_LSU_FULL_MASK) {
+		/* Flush the transaction with our privID */
+		__raw_writel(BIT(0) | (8 << 28),
+			     &(krio_priv->regs->lsu_reg[lsu].busy_full));
+	} else {
+		/* Flush the transaction with our privID and CBusy bit */
+		__raw_writel(BIT(0) | BIT(27) | (8 << 28),
+			     &(krio_priv->regs->lsu_reg[lsu].busy_full));
+	}
+}
+
+/*
  * Complete a LSU transfer
  */
 int keystone_rio_lsu_complete_transfer(int lsu,
@@ -451,22 +495,20 @@ int keystone_rio_lsu_complete_transfer(int lsu,
 	switch (status & KEYSTONE_RIO_LSU_CC_MASK) {
 	case KEYSTONE_RIO_LSU_CC_TIMEOUT:
 		res = -ETIMEDOUT;
-		/* LSU Reg 6 - flush the transaction */
-		__raw_writel(1, &(krio_priv->regs->lsu_reg[lsu].busy_full));
+		keystone_rio_lsu_cancel_transfer(lsu, krio_priv);
 		break;
 	case KEYSTONE_RIO_LSU_CC_XOFF:
 	case KEYSTONE_RIO_LSU_CC_ERROR:
 	case KEYSTONE_RIO_LSU_CC_INVALID:
 	case KEYSTONE_RIO_LSU_CC_DMA:
 		res = -EIO;
-		/* LSU Reg 6 - flush this transaction */
-		__raw_writel(1, &(krio_priv->regs->lsu_reg[lsu].busy_full));
+		keystone_rio_lsu_cancel_transfer(lsu, krio_priv);
 		break;
 	case KEYSTONE_RIO_LSU_CC_RETRY:
-		res = -EAGAIN;
+		res = -EBUSY;
 		break;
 	case KEYSTONE_RIO_LSU_CC_CANCELED:
-		res = -EBUSY;
+		res = -EIO;
 		break;
 	default:
 		break;
@@ -482,6 +524,7 @@ int keystone_rio_lsu_complete_transfer(int lsu,
 static void keystone_rio_lsu_dma_callback(void *data)
 {
 	struct completion *lsu_completion = (struct completion *) data;
+
 	complete(lsu_completion);
 }
 
@@ -571,11 +614,29 @@ static int keystone_rio_lsu_raw_async_transfer(
 	ret = wait_for_completion_interruptible_timeout(
 		&lsu_completion,
 		msecs_to_jiffies(KEYSTONE_RIO_TIMEOUT_MSEC));
+
 	status = dma_async_is_tx_complete(dma_chan, cookie, NULL, NULL);
 	if (status != DMA_SUCCESS)
 		res = -EIO;
-	if (ret == 0)
+
+	/* case of transfer timeout */
+	if (ret == 0) {
+		dev_dbg(krio_priv->dev,
+			"transfer incomplete (timeout) for dma channel 0x%x\n",
+			(u32) dma_chan);
 		res = -ETIMEDOUT;
+	}
+
+	/* Interrupted transfer */
+	if (ret == -ERESTARTSYS)
+		res = -ERESTARTSYS;
+
+	if (ret <= 0) {
+		/* Need to cancel current pending transfers in case of error */
+		dmaengine_device_control(dma_chan,
+					 DMA_TERMINATE_ALL,
+					 0);
+	}
 
 	return res;
 }
@@ -1352,8 +1413,8 @@ static void keystone_rio_handle_logical_error(
 		__raw_writel(val & ~BIT(err),
 			     &krio_priv->err_mgmt_regs->err_det);
 
-		dev_warn(krio_priv->dev,
-			 "logical layer error %d detected\n", err);
+		dev_dbg(krio_priv->dev,
+			"logical layer error %d detected\n", err);
 
 		/* Acknowledge local logical layer error as well if needed */
 		if ((err == 22) || (err == 26)) {

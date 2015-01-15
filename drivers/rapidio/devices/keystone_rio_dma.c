@@ -288,7 +288,7 @@ static void keystone_rio_dma_tasklet(unsigned long data)
 			"%s: LSU%d DMA transfer failed with %d\n",
 			__func__, chan->lsu, res);
 
-		keystone_rio_dma_complete_all(chan);
+		/* Stop current transfer */
 		return;
 	}
 
@@ -382,35 +382,6 @@ static void keystone_rio_dma_free_chan_resources(struct dma_chan *dchan)
 	chan->current_transfer = NULL;
 }
 
-static enum dma_status keystone_rio_dma_tx_status(struct dma_chan *dchan,
-						  dma_cookie_t cookie,
-						  struct dma_tx_state *txstate)
-{
-	struct keystone_rio_dma_chan *chan = from_dma_chan(dchan);
-	struct keystone_rio_dma_desc *desc = chan->current_transfer;
-	dma_cookie_t last_used;
-	dma_cookie_t last_completed;
-	enum dma_status status;
-
-	spin_lock_bh(&chan->lock);
-	last_completed = chan->completed_cookie;
-	last_used      = dchan->cookie;
-	spin_unlock_bh(&chan->lock);
-
-	if ((desc) && (desc->status == DMA_ERROR))
-		return DMA_ERROR;
-
-	status = dma_async_is_complete(cookie, last_completed, last_used);
-
-	dma_set_tx_state(txstate, last_completed, last_used, 0);
-
-	dev_dbg(chan_dev(chan),
-		"%s: exit, ret: %d, last_completed: %d, last_used: %d\n",
-		__func__, (int) status, last_completed, last_used);
-
-	return status;
-}
-
 static void keystone_rio_dma_issue_pending(struct dma_chan *dchan)
 {
 	struct keystone_rio_dma_chan *chan = from_dma_chan(dchan);
@@ -427,6 +398,55 @@ static void keystone_rio_dma_issue_pending(struct dma_chan *dchan)
 
 	} else
 		dev_dbg(chan_dev(chan),	"%s: DMA channel busy\n", __func__);
+}
+
+static enum dma_status keystone_rio_dma_tx_status(struct dma_chan *dchan,
+						  dma_cookie_t cookie,
+						  struct dma_tx_state *txstate)
+{
+	struct keystone_rio_dma_chan *chan = from_dma_chan(dchan);
+	struct keystone_rio_dma_desc *desc = chan->current_transfer;
+	dma_cookie_t last_used;
+	dma_cookie_t last_completed;
+	enum dma_status status;
+
+	spin_lock_bh(&chan->lock);
+	last_completed = chan->completed_cookie;
+	last_used      = dchan->cookie;
+	spin_unlock_bh(&chan->lock);
+
+	/*
+	 * In case of error, totally complete the current transfer
+	 * and start the new then return error
+	 */
+	if ((desc) && (desc->status == DMA_ERROR)) {
+
+		keystone_rio_dma_complete_all(chan);
+
+		spin_lock_bh(&chan->lock);
+
+		/* Even if not the last, stop the current transfer */
+		chan->current_transfer = NULL;
+
+		keystone_rio_dma_chan_set_state(chan, RIO_CHAN_STATE_WAITING,
+						RIO_CHAN_STATE_ACTIVE);
+
+		spin_unlock_bh(&chan->lock);
+
+		keystone_rio_dma_issue_pending(dchan);
+
+		return DMA_ERROR;
+	}
+
+	status = dma_async_is_complete(cookie, last_completed, last_used);
+
+	dma_set_tx_state(txstate, last_completed, last_used, 0);
+
+	dev_dbg(chan_dev(chan),
+		"%s: exit, ret: %d, last_completed: %d, last_used: %d\n",
+		__func__, (int) status, last_completed, last_used);
+
+	return status;
 }
 
 static dma_cookie_t keystone_rio_dma_tx_submit(
@@ -626,6 +646,7 @@ static int keystone_rio_dma_terminate_all(struct keystone_rio_dma_chan *chan)
 	spin_lock_bh(&chan->lock);
 	list_splice_init(&chan->active_list, &list);
 	list_splice_init(&chan->queue, &list);
+	chan->current_transfer = NULL;
 	spin_unlock_bh(&chan->lock);
 
 	keystone_rio_dma_chan_force_state(chan, RIO_CHAN_STATE_ACTIVE);
