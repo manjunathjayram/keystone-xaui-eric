@@ -425,7 +425,7 @@ static enum dma_status keystone_rio_dma_tx_status(struct dma_chan *dchan,
 	 */
 	if ((desc) && (desc->status == DMA_ERROR)) {
 
-		dev_dbg(chan_dev(chan),	"%s: DMA error\n");
+		dev_dbg(chan_dev(chan),	"DMA error\n");
 
 		keystone_rio_dma_complete_all(chan);
 
@@ -563,8 +563,7 @@ keystone_rio_dma_prep_slave_sg(struct dma_chan *dchan,
 		desc->status      = DMA_SUCCESS;
 		desc->port_id     = dma_to_mport(dchan->device)->index;
 		desc->dest_id     = rext->destid;
-		/* RapidIO address must be 64bit aligned */
-		desc->rio_addr    = (rio_addr & ~0x7);
+		desc->rio_addr    = rio_addr;
 		desc->rio_addr_u  = 0;
 		desc->buff_addr   = sg_dma_address(sg);
 		desc->size        = sg_dma_len(sg);
@@ -582,6 +581,7 @@ keystone_rio_dma_prep_slave_sg(struct dma_chan *dchan,
 		/* Check if we can switch to SWRITE */
 		if ((packet_type == KEYSTONE_RIO_PACKET_TYPE_NWRITE)
 		    && ((desc->size & 0x7) == 0)
+		    && ((desc->rio_addr & 0x7) == 0)
 		    && ((desc->buff_addr & 0x7) == 0)) {
 			packet_type = KEYSTONE_RIO_PACKET_TYPE_SWRITE;
 		}
