@@ -26,8 +26,10 @@
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
 #include <asm/memory.h>
+#include <asm/psci.h>
 
 #include "keystone.h"
+asm(".arch_extension sec\n\t");
 
 static void __cpuinit keystone_smp_secondary_initmem(void)
 {
@@ -56,7 +58,7 @@ keystone_smp_boot_secondary(unsigned int cpu, struct task_struct *idle)
 		"mov    r0, #0\n"	/* power on cmd	*/
 		"mov    r1, %1\n"	/* cpu		*/
 		"mov    r2, %2\n"	/* start	*/
-		".inst  0xe1600070\n"	/* SMI		*/
+		"smc	#0\n"		/* SMI		*/
 		"mov    %0, r0\n"
 		: "=r" (error)
 		: "r"(cpu), "r"(start)
@@ -69,18 +71,29 @@ keystone_smp_boot_secondary(unsigned int cpu, struct task_struct *idle)
 }
 
 #ifdef CONFIG_HOTPLUG_CPU
-static int keystone_cpu_kill(unsigned int cpu)
+static void keystone_cpu_die(unsigned int cpu)
 {
-	BUG();
-}
+#ifdef CONFIG_ARM_PSCI
+	struct psci_power_state pwr_state = {0, 0, 0};
 
-static int keystone_cpu_die(unsigned int cpu)
-{
-	BUG();
-}
-static int keystone_cpu_disable(unsigned int cpu)
-{
-	BUG();
+	printk(KERN_INFO "keystone_cpu_die(%d) from %d using PSCI\n", cpu,
+	       smp_processor_id());
+
+	if (psci_ops.cpu_off)
+		psci_ops.cpu_off(pwr_state);
+#else
+	/*
+	 * We may want to add here a direct smc call to monitor
+	 * if the kernel doesn't support PSCI API
+	 */
+#endif
+
+	/*
+	 * we shouldn't come here. But in case something went
+	 * wrong the code below prevents kernel from crush
+	 */
+	while (1)
+		cpu_do_idle();
 }
 #endif
 
@@ -88,8 +101,6 @@ struct smp_operations keystone_smp_ops __initdata = {
 	.smp_secondary_init	= keystone_smp_secondary_init,
 	.smp_boot_secondary	= keystone_smp_boot_secondary,
 #ifdef CONFIG_HOTPLUG_CPU
-	.cpu_kill		= keystone_cpu_kill,
 	.cpu_die		= keystone_cpu_die,
-	.cpu_disable		= keystone_cpu_disable,
 #endif
 };
