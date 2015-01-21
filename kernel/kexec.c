@@ -117,6 +117,12 @@ int kexec_should_crash(struct task_struct *p)
  */
 #define KIMAGE_NO_DEST (-1UL)
 
+#ifndef CONFIG_ARCH_KEYSTONE
+#define IDMAP_ADDR_OFFSET	0x0ULL
+#define IDMAP_PFN_OFFSET	0x0
+#endif
+
+
 static int kimage_is_destination_range(struct kimage *image,
 				       unsigned long start, unsigned long end);
 static struct page *kimage_alloc_page(struct kimage *image,
@@ -286,7 +292,8 @@ static int kimage_crash_alloc(struct kimage **rimage, unsigned long entry,
 
 	image = NULL;
 	/* Verify we have a valid entry point */
-	if ((entry < crashk_res.start) || (entry > crashk_res.end)) {
+	if ((entry < (crashk_res.start - IDMAP_ADDR_OFFSET)) ||
+	    (entry > (crashk_res.end - IDMAP_ADDR_OFFSET))) {
 		result = -EADDRNOTAVAIL;
 		goto out;
 	}
@@ -299,7 +306,7 @@ static int kimage_crash_alloc(struct kimage **rimage, unsigned long entry,
 	/* Enable the special crash kernel control page
 	 * allocation policy.
 	 */
-	image->control_page = crashk_res.start;
+	image->control_page = crashk_res.start - IDMAP_ADDR_OFFSET;
 	image->type = KEXEC_TYPE_CRASH;
 
 	/*
@@ -318,7 +325,8 @@ static int kimage_crash_alloc(struct kimage **rimage, unsigned long entry,
 		mstart = image->segment[i].mem;
 		mend = mstart + image->segment[i].memsz - 1;
 		/* Ensure we are within the crash kernel limits */
-		if ((mstart < crashk_res.start) || (mend > crashk_res.end))
+		if ((mstart < (crashk_res.start - IDMAP_ADDR_OFFSET)) ||
+		    (mend > (crashk_res.end - IDMAP_ADDR_OFFSET)))
 			goto out_free;
 	}
 
@@ -435,7 +443,7 @@ static struct page *kimage_alloc_normal_control_pages(struct kimage *image,
 		pages = kimage_alloc_pages(GFP_KERNEL, order);
 		if (!pages)
 			break;
-		pfn   = page_to_pfn(pages);
+		pfn   = page_to_pfn(pages) - IDMAP_PFN_OFFSET;
 		epfn  = pfn + count;
 		addr  = pfn << PAGE_SHIFT;
 		eaddr = epfn << PAGE_SHIFT;
@@ -520,7 +528,8 @@ static struct page *kimage_alloc_crash_control_pages(struct kimage *image,
 		}
 		/* If I don't overlap any segments I have found my hole! */
 		if (i == image->nr_segments) {
-			pages = pfn_to_page(hole_start >> PAGE_SHIFT);
+			pages = pfn_to_page(hole_start >> PAGE_SHIFT) +
+				IDMAP_PFN_OFFSET;
 			break;
 		}
 	}
@@ -550,6 +559,8 @@ struct page *kimage_alloc_control_pages(struct kimage *image,
 
 static int kimage_add_entry(struct kimage *image, kimage_entry_t entry)
 {
+	phys_addr_t pa_tmp;
+
 	if (*image->entry != 0)
 		image->entry++;
 
@@ -562,7 +573,8 @@ static int kimage_add_entry(struct kimage *image, kimage_entry_t entry)
 			return -ENOMEM;
 
 		ind_page = page_address(page);
-		*image->entry = virt_to_phys(ind_page) | IND_INDIRECTION;
+		pa_tmp = virt_to_phys(ind_page) - IDMAP_ADDR_OFFSET;
+		*image->entry = (unsigned int)pa_tmp | IND_INDIRECTION;
 		image->entry = ind_page;
 		image->last_entry = ind_page +
 				      ((PAGE_SIZE/sizeof(kimage_entry_t)) - 1);
@@ -627,7 +639,7 @@ static void kimage_free_entry(kimage_entry_t entry)
 {
 	struct page *page;
 
-	page = pfn_to_page(entry >> PAGE_SHIFT);
+	page = pfn_to_page(entry >> PAGE_SHIFT) + IDMAP_PFN_OFFSET;
 	kimage_free_pages(page);
 }
 
@@ -714,7 +726,7 @@ static struct page *kimage_alloc_page(struct kimage *image,
 	 * have a match.
 	 */
 	list_for_each_entry(page, &image->dest_pages, lru) {
-		addr = page_to_pfn(page) << PAGE_SHIFT;
+		addr = (page_to_pfn(page) - IDMAP_PFN_OFFSET) << PAGE_SHIFT;
 		if (addr == destination) {
 			list_del(&page->lru);
 			return page;
@@ -729,12 +741,12 @@ static struct page *kimage_alloc_page(struct kimage *image,
 		if (!page)
 			return NULL;
 		/* If the page cannot be used file it away */
-		if (page_to_pfn(page) >
+		if ((page_to_pfn(page) - IDMAP_PFN_OFFSET) >
 				(KEXEC_SOURCE_MEMORY_LIMIT >> PAGE_SHIFT)) {
 			list_add(&page->lru, &image->unuseable_pages);
 			continue;
 		}
-		addr = page_to_pfn(page) << PAGE_SHIFT;
+		addr = (page_to_pfn(page) - IDMAP_PFN_OFFSET) << PAGE_SHIFT;
 
 		/* If it is the destination page we want use it */
 		if (addr == destination)
@@ -757,7 +769,8 @@ static struct page *kimage_alloc_page(struct kimage *image,
 			struct page *old_page;
 
 			old_addr = *old & PAGE_MASK;
-			old_page = pfn_to_page(old_addr >> PAGE_SHIFT);
+			old_page = pfn_to_page((old_addr >> PAGE_SHIFT) +
+					       IDMAP_PFN_OFFSET);
 			copy_highpage(page, old_page);
 			*old = addr | (*old & ~PAGE_MASK);
 
@@ -807,13 +820,12 @@ static int kimage_load_normal_segment(struct kimage *image,
 		struct page *page;
 		char *ptr;
 		size_t uchunk, mchunk;
-
 		page = kimage_alloc_page(image, GFP_HIGHUSER, maddr);
 		if (!page) {
 			result  = -ENOMEM;
 			goto out;
 		}
-		result = kimage_add_page(image, page_to_pfn(page)
+		result = kimage_add_page(image, (page_to_pfn(page) - IDMAP_PFN_OFFSET)
 								<< PAGE_SHIFT);
 		if (result < 0)
 			goto out;
@@ -863,7 +875,7 @@ static int kimage_load_crash_segment(struct kimage *image,
 		char *ptr;
 		size_t uchunk, mchunk;
 
-		page = pfn_to_page(maddr >> PAGE_SHIFT);
+		page = pfn_to_page(maddr >> PAGE_SHIFT) + IDMAP_PFN_OFFSET;
 		if (!page) {
 			result  = -ENOMEM;
 			goto out;
@@ -1011,6 +1023,7 @@ SYSCALL_DEFINE4(kexec_load, unsigned long, entry, unsigned long, nr_segments,
 			if (result)
 				goto out;
 		}
+		flush_cache_all();	
 		kimage_terminate(image);
 		if (flags & KEXEC_ON_CRASH)
 			crash_unmap_reserved_pages();
@@ -1115,7 +1128,7 @@ void __weak crash_free_reserved_phys_range(unsigned long begin,
 	unsigned long addr;
 
 	for (addr = begin; addr < end; addr += PAGE_SIZE)
-		free_reserved_page(pfn_to_page(addr >> PAGE_SHIFT));
+		free_reserved_page(pfn_to_page((addr >> PAGE_SHIFT) + IDMAP_PFN_OFFSET));
 }
 
 int crash_shrink_memory(unsigned long new_size)
@@ -1558,7 +1571,7 @@ void __attribute__ ((weak)) arch_crash_save_vmcoreinfo(void)
 
 unsigned long __attribute__ ((weak)) paddr_vmcoreinfo_note(void)
 {
-	return __pa((unsigned long)(char *)&vmcoreinfo_note);
+	return __pa((unsigned long)(char *)&vmcoreinfo_note) - IDMAP_ADDR_OFFSET;
 }
 
 static int __init crash_save_vmcoreinfo_init(void)
