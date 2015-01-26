@@ -28,6 +28,7 @@
 #include <linux/irqchip.h>
 #include <linux/platform_data/davinci-clock.h>
 #include <linux/reboot.h>
+#include <linux/signal.h>
 
 #include <asm/setup.h>
 #include <asm/smp_plat.h>
@@ -83,6 +84,24 @@ static bool is_coherent(struct device *dev)
 	return false;
 }
 
+static bool ignore_first = true;
+static int keystone_async_ext_abort_fault(unsigned long addr, unsigned int fsr,
+					  struct pt_regs *regs)
+{
+	/*
+	 * if first time, ignore this as this seems to be a spurious one
+	 * happening on some devices and we add this work around to handle
+	 * this first time when kernel switch to handle user space
+	 */
+	if (ignore_first) {
+		ignore_first = false;
+		return 0;
+	}
+
+	/* Subsequent ones should be handled as fault */
+	return 1;
+}
+
 static int keystone_platform_notifier(struct notifier_block *nb,
 				      unsigned long event, void *_dev)
 {
@@ -118,6 +137,13 @@ static void __init keystone_init(void)
 
 	keystone_pm_runtime_init();
 	of_platform_populate(NULL, keystone_dt_match_table, NULL, NULL);
+
+	/*
+	 * Add a one time exception handler to catch asynchronous external
+	 * abort when transitioning to use space
+	 */
+	hook_fault_code(17, keystone_async_ext_abort_fault, SIGBUS, 0,
+			"async external abort handler");
 }
 
 #define L2_INTERN_ASYNC_ERROR	BIT(30)
