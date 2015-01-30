@@ -2193,6 +2193,11 @@ static void cpsw_slave_stop(struct cpsw_slave *slave,
 	else
 		sgmii_port_regs = priv->sgmii_port34_regs;
 
+	/* disable forwarding */
+	if (slave->ale)
+		cpsw_ale_control_set(slave->ale, slave->port_num,
+				ALE_PORT_STATE, ALE_PORT_STATE_DISABLE);
+
 	keystone_sgmii_rtreset(sgmii_port_regs, slave->slave_num, true);
 
 	cpsw_port_reset(slave);
