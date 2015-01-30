@@ -2565,6 +2565,11 @@ static void cpsw2_port_config(struct cpsw2_slave *slave, int max_rx_len)
 
 static void cpsw2_slave_stop(struct cpsw2_slave *slave, struct cpsw2_priv *priv)
 {
+	/* disable forwarding */
+	if (slave->ale)
+		cpsw_ale_control_set(slave->ale, slave->port_num,
+				ALE_PORT_STATE, ALE_PORT_STATE_DISABLE);
+
 	cpsw2_port_reset(slave);
 
 	if (!slave->phy)
