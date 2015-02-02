@@ -1328,7 +1328,8 @@ static struct sk_buff *inet_gso_segment(struct sk_buff *skb,
 	skb = segs;
 	do {
 		iph = ip_hdr(skb);
-		if (!tunnel && proto == IPPROTO_UDP) {
+		if (!tunnel && ((proto == IPPROTO_UDP) ||
+				(proto == IPPROTO_ICMP))) {
 			iph->id = htons(id);
 			iph->frag_off = htons(offset >> 3);
 			if (skb->next != NULL)
@@ -1585,6 +1586,13 @@ static const struct net_protocol icmp_protocol = {
 	.netns_ok =	1,
 };
 
+static const struct net_offload icmp_offload = {
+	.callbacks = {
+		.gso_send_check = icmp4_ifo_send_check,
+		.gso_segment = icmp4_ifo_fragment,
+	},
+};
+
 static __net_init int ipv4_mib_init_net(struct net *net)
 {
 	if (snmp_mib_init((void __percpu **)net->mib.tcp_statistics,
@@ -1681,6 +1689,8 @@ static int __init ipv4_offload_init(void)
 		pr_crit("%s: Cannot add UDP protocol offload\n", __func__);
 	if (inet_add_offload(&tcp_offload, IPPROTO_TCP) < 0)
 		pr_crit("%s: Cannot add TCP protocol offlaod\n", __func__);
+	if (inet_add_offload(&icmp_offload, IPPROTO_ICMP) < 0)
+		pr_crit("%s: Cannot add ICMP protocol offload\n", __func__);
 
 	dev_add_offload(&ip_packet_offload);
 	return 0;
