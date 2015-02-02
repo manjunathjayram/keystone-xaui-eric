@@ -27,12 +27,13 @@
 struct hwqueue_instance {
 	struct list_head	 handles;
 	struct hwqueue_device	*hdev;
+	spinlock_t		 lock;
 	struct timer_list	 poll_timer;
 	wait_queue_head_t	 wait;
 	void			*priv;
-	char			 name[32];
 	atomic_t		 num_notifiers;
 	struct hwqueue_inst_ops	*ops;
+	char			 name[32];
 };
 
 struct hwqueue_device_ops {
