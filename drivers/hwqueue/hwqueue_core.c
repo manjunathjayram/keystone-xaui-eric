@@ -134,6 +134,7 @@ int hwqueue_device_register(struct hwqueue_device *hdev)
 		setup_timer(&inst->poll_timer, __hwqueue_poll,
 			    (unsigned long)inst);
 		init_waitqueue_head(&inst->wait);
+		spin_lock_init(&inst->lock);
 	}
 
 	list_add(&hdev->list, &hwqueue_devices);
@@ -492,6 +493,7 @@ int hwqueue_enable_notifier(struct hwqueue *qh)
 	struct hwqueue_instance *inst = qh->inst;
 	struct hwqueue_device *hdev = inst->hdev;
 	bool first;
+	unsigned long flags;
 
 	if (!hwqueue_is_readable(qh))
 		return -EINVAL;
@@ -499,16 +501,21 @@ int hwqueue_enable_notifier(struct hwqueue *qh)
 	if (WARN_ON(!qh->notifier_fn))
 		return -EINVAL;
 
+	/* Protect against interrupt delivery */
+	spin_lock_irqsave(&inst->lock, flags);
+
 	/* Adjust the per handle notifier count */
 	first = (atomic_inc_return(&qh->notifier_enabled) == 1);
 	if (!first)
-		return 0; /* nothing to do */
+		goto unlock; /* nothing to do */
 
 	/* Now adjust the per instance notifier count */
 	first = (atomic_inc_return(&inst->num_notifiers) == 1);
 	if (first)
 		hdev->ops->set_notify(inst, true);
 
+unlock:
+	spin_unlock_irqrestore(&inst->lock, flags);
 	return 0;
 }
 EXPORT_SYMBOL(hwqueue_enable_notifier);
@@ -524,18 +531,24 @@ int hwqueue_disable_notifier(struct hwqueue *qh)
 	struct hwqueue_instance *inst = qh->inst;
 	struct hwqueue_device *hdev = inst->hdev;
 	bool last;
+	unsigned long flags;
 
 	if (!hwqueue_is_readable(qh))
 		return -EINVAL;
 
+	/* Protect against interrupt delivery */
+	spin_lock_irqsave(&inst->lock, flags);
+
 	last = (atomic_dec_return(&qh->notifier_enabled) == 0);
 	if (!last)
-		return 0; /* nothing to do */
+		goto unlock; /* nothing to do */
 
 	last = (atomic_dec_return(&inst->num_notifiers) == 0);
 	if (last)
 		hdev->ops->set_notify(inst, false);
 
+unlock:
+	spin_unlock_irqrestore(&inst->lock, flags);
 	return 0;
 }
 EXPORT_SYMBOL(hwqueue_disable_notifier);
@@ -619,11 +632,18 @@ EXPORT_SYMBOL(__hwqueue_pop_slow);
 void hwqueue_notify(struct hwqueue_instance *inst)
 {
 	struct hwqueue *qh;
+	unsigned long flags;
+	bool enabled;
 
 	rcu_read_lock();
 
 	for_each_handle_rcu(qh, inst) {
-		if (atomic_read(&qh->notifier_enabled) <= 0)
+		/* Synchronize against enable/disable notifier */
+		spin_lock_irqsave(&inst->lock, flags);
+		enabled = atomic_read(&qh->notifier_enabled) > 0;
+		spin_unlock_irqrestore(&inst->lock, flags);
+
+		if (!enabled)
 			continue;
 		if (WARN_ON(!qh->notifier_fn))
 			continue;
