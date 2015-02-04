@@ -124,11 +124,18 @@ EXPORT_SYMBOL(xfrm6_prepare_output);
 
 int xfrm6_output_finish(struct sk_buff *skb)
 {
+	const struct ipv6hdr *iphv6;
+
 #ifdef CONFIG_NETFILTER
 	IP6CB(skb)->flags |= IP6SKB_XFRM_TRANSFORMED;
 #endif
 
-	skb->protocol = htons(ETH_P_IPV6);
+	iphv6 = ipv6_hdr(skb);
+	if (iphv6->version == IPVERSION)
+		skb->protocol = htons(ETH_P_IP);
+	else
+		skb->protocol = htons(ETH_P_IPV6);
+
 	return xfrm_output(skb);
 }
 
