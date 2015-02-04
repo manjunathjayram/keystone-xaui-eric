@@ -76,6 +76,8 @@ EXPORT_SYMBOL(xfrm4_prepare_output);
 
 int xfrm4_output_finish(struct sk_buff *skb)
 {
+	const struct iphdr *iph;
+
 #ifdef CONFIG_NETFILTER
 	if (!skb_dst(skb)->xfrm) {
 		IPCB(skb)->flags |= IPSKB_REROUTED;
@@ -85,7 +87,12 @@ int xfrm4_output_finish(struct sk_buff *skb)
 	IPCB(skb)->flags |= IPSKB_XFRM_TRANSFORMED;
 #endif
 
-	skb->protocol = htons(ETH_P_IP);
+	iph = ip_hdr(skb);
+	if (iph->version == 6)
+		skb->protocol = htons(ETH_P_IPV6);
+	else
+		skb->protocol = htons(ETH_P_IP);
+
 	return xfrm_output(skb);
 }
 
