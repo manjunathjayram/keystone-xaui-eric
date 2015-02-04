@@ -1061,6 +1061,34 @@ static const struct icmp_control icmp_pointers[NR_ICMP_TYPES + 1] = {
 	},
 };
 
+int icmp4_ifo_send_check(struct sk_buff *skb)
+{
+	return 0;
+}
+
+struct sk_buff *icmp4_ifo_fragment(struct sk_buff *skb,
+				   netdev_features_t features)
+{
+	struct icmphdr *icmph;
+	struct sk_buff *segs = ERR_PTR(-EINVAL);
+	unsigned int mss;
+
+	mss = skb_shinfo(skb)->gso_size;
+	if (unlikely(skb->len <= mss))
+		goto out;
+
+	/* Fragment the skb. IP headers of the fragments are updated in
+	* inet_gso_segment()
+	*/
+	icmph = icmp_hdr(skb);
+	skb->ip_summed = CHECKSUM_NONE;
+
+	segs = skb_segment(skb, features);
+
+out:
+	return segs;
+}
+
 static void __net_exit icmp_sk_exit(struct net *net)
 {
 	int i;
