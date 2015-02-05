@@ -1840,39 +1840,6 @@ static int keystone_rio_port_init(
 	__raw_writel(0x00109000,
 		     &(krio_priv->transport_regs->transport_sp[port].control));
 
-	/* Per-port port-write generation */
-	if (krio_priv->board_rio_cfg.pkt_forwarding) {
-		/*
-		 * Disable generation of port-write requests if using
-		 * packet forwarding
-		 */
-		__raw_writel(
-			0,
-			&(krio_priv->phy_regs->phy_sp[port].port_wr_enable));
-
-		val = __raw_readl(
-			&(krio_priv->phy_regs->phy_sp[port].all_port_wr_en));
-		__raw_writel(
-			val & ~(BIT(0)), /* PW_EN */
-			&(krio_priv->phy_regs->phy_sp[port].all_port_wr_en));
-	} else {
-		/*
-		 * Enable generation of port-write requests
-		 */
-		__raw_writel(
-			BIT(25) | BIT(26) | BIT(28),
-			&(krio_priv->phy_regs->phy_sp[port].port_wr_enable));
-
-		val = __raw_readl(
-			&(krio_priv->phy_regs->phy_sp[port].all_port_wr_en));
-		__raw_writel(
-			val | BIT(0), /* PW_EN */
-			&(krio_priv->phy_regs->phy_sp[port].all_port_wr_en));
-	}
-
-	/* Clear port-write reception capture */
-	__raw_writel(0, &(krio_priv->port_write_regs->port_wr_rx_capt[port]));
-
 	return 0;
 }
 
@@ -2053,16 +2020,47 @@ keystone_rio_config_write(struct rio_mport *mport, int index, u16 destid,
 					hopcount, offset, len, val);
 }
 
-/*------------------------------- Port-Write management --------------------------*/
+/*----------------------------- Port-Write management ------------------------*/
 
-/**
- * keystone_rio_pw_enable - enable/disable port-write interface init
- * @mport: Master port implementing the port write unit
- * @enable: 1=enable; 0=disable port-write message handling
- */
-static int keystone_rio_pwenable(struct rio_mport *mport, int enable)
+static int keystone_rio_port_write_enable(struct keystone_rio_data *krio_priv,
+					  u32 port,
+					  int enable)
 {
-	/* Enable/Disable port-write-in interrupt */
+	u32 val;
+
+	/* Clear port-write reception capture */
+	__raw_writel(0, &(krio_priv->port_write_regs->port_wr_rx_capt[port]));
+
+	if (enable) {
+		/*
+		 * Enable generation of port-write requests
+		 */
+		__raw_writel(
+			BIT(25) | BIT(26) | BIT(28),
+			&(krio_priv->phy_regs->phy_sp[port].port_wr_enable));
+
+		val = __raw_readl(
+			&(krio_priv->phy_regs->phy_sp[port].all_port_wr_en));
+
+		__raw_writel(
+			val | BIT(0), /* PW_EN */
+			&(krio_priv->phy_regs->phy_sp[port].all_port_wr_en));
+	} else {
+		/*
+		 * Disable generation of port-write requests
+		 */
+		__raw_writel(
+			0,
+			&(krio_priv->phy_regs->phy_sp[port].port_wr_enable));
+
+		val = __raw_readl(
+			&(krio_priv->phy_regs->phy_sp[port].all_port_wr_en));
+
+		__raw_writel(
+			val & ~(BIT(0)), /* PW_EN */
+			&(krio_priv->phy_regs->phy_sp[port].all_port_wr_en));
+	}
+
 	return 0;
 }
 
@@ -2163,22 +2161,39 @@ static void keystone_rio_port_write_handler(struct keystone_rio_data *krio_priv)
  */
 static int keystone_rio_port_write_init(struct keystone_rio_data *krio_priv)
 {
-	int i;
+	int port;
 
-	/* Following configurations require a disabled port write controller */
-	keystone_rio_pwenable(NULL, 0);
+	for (port = 0; port < KEYSTONE_RIO_MAX_PORT; port++) {
+		/* Disabling port write */
+		keystone_rio_port_write_enable(krio_priv, port, 0);
 
-	/* Clear port-write-in capture registers */
-	for (i = 0; i < 4; i++)
-		__raw_writel(0, &(krio_priv->port_write_regs->port_wr_rx_capt[i]));
+		/* Clear port-write-in capture registers */
+		__raw_writel(
+			0,
+			&(krio_priv->port_write_regs->port_wr_rx_capt[port]));
+	}
 
 	INIT_WORK(&krio_priv->pw_work, keystone_rio_pw_dpc);
 	spin_lock_init(&krio_priv->pw_fifo_lock);
+
 	if (kfifo_alloc(&krio_priv->pw_fifo, RIO_PW_MSG_SIZE * 32, GFP_KERNEL)) {
 		dev_err(krio_priv->dev, "FIFO allocation failed\n");
 		return -ENOMEM;
 	}
+
 	return 0;
+}
+
+/**
+ * keystone_rio_pw_enable - enable/disable port-write interface init
+ * @mport: Master port implementing the port write unit
+ * @enable: 1=enable; 0=disable port-write message handling
+ */
+static int keystone_rio_pw_enable(struct rio_mport *mport, int enable)
+{
+	return keystone_rio_port_write_enable(mport->priv,
+					      mport->index,
+					      enable);
 }
 
 /*------------------------ Main Linux driver functions -----------------------*/
@@ -2240,6 +2255,7 @@ struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 	ops->add_inb_buffer   = keystone_rio_hw_add_inb_buffer;
 	ops->get_inb_message  = keystone_rio_hw_get_inb_message;
 	ops->query_mport      = keystone_rio_query_mport;
+	ops->pwenable	      = keystone_rio_pw_enable;
 
 	mport = kzalloc(sizeof(struct rio_mport), GFP_KERNEL);
 
