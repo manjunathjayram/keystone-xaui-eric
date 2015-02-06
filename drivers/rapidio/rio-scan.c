@@ -52,8 +52,8 @@ static int rio_mport_phys_table[] = {
 
 static bool static_enum;
 module_param(static_enum, bool, 0);
-MODULE_PARM_DESC(scan, "Perform RapidIO network static enumeration "
-                       "(default = 0)");
+MODULE_PARM_DESC(static_enum, "Perform RapidIO network static enumeration "
+		 "(default = 0)");
 
 /**
  * rio_destid_alloc - Allocate next available destID for given network
