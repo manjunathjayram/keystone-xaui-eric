@@ -46,6 +46,7 @@ static int keystone_rio_dma_chan_set_state(struct keystone_rio_dma_chan *chan,
 					   enum keystone_rio_chan_state new)
 {
 	enum keystone_rio_chan_state cur;
+
 	cur = atomic_cmpxchg(&chan->state, old, new);
 
 	if (likely(cur == old))
@@ -219,7 +220,7 @@ static void keystone_rio_dma_start(struct keystone_rio_dma_chan *chan)
 					RIO_CHAN_STATE_RUNNING);
 
 	/* Perform the DIO transfer */
-	dev_dbg(chan_dev(chan), "%s: perform current DIO transfer (dess = 0x%x)\n",
+	dev_dbg(chan_dev(chan), "%s: perform current DIO transfer (desc = 0x%x)\n",
 		__func__, (u32) desc);
 
 	res = keystone_rio_lsu_start_transfer(chan->lsu,
@@ -256,6 +257,8 @@ static void keystone_rio_dma_tasklet(unsigned long data)
 	spin_lock(&chan->lock);
 
 	desc = chan->current_transfer;
+
+	dev_dbg(chan_dev(chan), "tasklet called for channel%d\n", chan_id(chan));
 
 	if (unlikely((!desc) || (keystone_rio_dma_chan_get_state(chan)
 				 != RIO_CHAN_STATE_WAITING))) {
@@ -347,13 +350,13 @@ static void keystone_rio_dma_free_chan_resources(struct dma_chan *dchan)
 	dev_dbg(chan_dev(chan), "freeing DMA Engine channel%d\n",
 		chan_id(chan));
 
-	if (keystone_rio_dma_chan_set_state(chan, RIO_CHAN_STATE_ACTIVE,
-					    RIO_CHAN_STATE_UNUSED)) {
+	if (keystone_rio_dma_chan_get_state(chan) != RIO_CHAN_STATE_ACTIVE) {
 		dev_warn(chan_dev(chan),
-			 "freeing still active DMA channel %d!!!\n",
+			 "freeing still running DMA channel %d!!!\n",
 			 chan_id(chan));
-		keystone_rio_dma_chan_force_state(chan, RIO_CHAN_STATE_UNUSED);
 	}
+
+	keystone_rio_dma_chan_force_state(chan, RIO_CHAN_STATE_UNUSED);
 
 	tasklet_disable(&chan->tasklet);
 
@@ -397,7 +400,8 @@ static void keystone_rio_dma_issue_pending(struct dma_chan *dchan)
 			keystone_rio_dma_start(chan);
 
 	} else
-		dev_dbg(chan_dev(chan),	"%s: DMA channel busy\n", __func__);
+		dev_dbg(chan_dev(chan),	"%s: DMA channel busy, state = %d\n",
+			__func__, keystone_rio_dma_chan_get_state(chan));
 }
 
 static enum dma_status keystone_rio_dma_tx_status(struct dma_chan *dchan,
@@ -420,6 +424,8 @@ static enum dma_status keystone_rio_dma_tx_status(struct dma_chan *dchan,
 	 * and start the new then return error
 	 */
 	if ((desc) && (desc->status == DMA_ERROR)) {
+
+		dev_dbg(chan_dev(chan),	"%s: DMA error\n");
 
 		keystone_rio_dma_complete_all(chan);
 
