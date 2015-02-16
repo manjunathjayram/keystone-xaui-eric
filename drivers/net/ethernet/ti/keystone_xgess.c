@@ -276,11 +276,11 @@ struct cpswx_priv {
 	struct cpswx_host_regs __iomem		*host_port_regs;
 	struct cpswx_ale_regs __iomem		*ale_reg;
 
-	void __iomem				*sgmii_port_regs;
-	void __iomem				*pcsr_port_regs;
+	void __iomem			*sgmii_port_regs;
+	void __iomem			*pcsr_port_regs;
 
-	struct cpsw_ale				*ale;
-	u32				 ale_refcnt;
+	struct cpsw_ale			*ale;
+	atomic_t			 ale_refcnt;
 
 	u32				 link[5];
 	struct device_node		*phy_node[4];
@@ -1710,11 +1710,59 @@ static void cpsw_slave_open(struct cpswx_slave *slave,
 	}
 }
 
+static int cpsw_init_ale(struct cpswx_priv *cpsw_dev,
+				struct cpswx_intf *cpsw_intf)
+{
+	struct cpsw_ale_params ale_params;
+
+	memset(&ale_params, 0, sizeof(ale_params));
+
+	ale_params.dev		= cpsw_dev->dev;
+	ale_params.ale_regs	= (void *)((u32)cpsw_dev->ale_reg);
+	ale_params.ale_ageout	= cpsw_dev->ale_ageout;
+	ale_params.ale_entries	= cpsw_dev->ale_entries;
+	ale_params.ale_ports	= cpsw_dev->ale_ports;
+
+	cpsw_dev->ale = cpsw_ale_create(&ale_params);
+	if (!cpsw_dev->ale) {
+		dev_err(cpsw_dev->dev, "error initializing ale engine\n");
+		return -ENODEV;
+	}
+
+	dev_info(cpsw_dev->dev, "Created a cpsw ale engine\n");
+	
+	cpsw_ale_start(cpsw_dev->ale);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0, ALE_BYPASS,
+			cpsw_dev->multi_if ? 1 : 0);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0, ALE_NO_PORT_VLAN, 1);
+
+	cpsw_ale_control_set(cpsw_dev->ale, cpsw_dev->host_port,
+			     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0,
+			     ALE_PORT_UNKNOWN_VLAN_MEMBER,
+			     CPSW_MASK_ALL_PORTS);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0,
+			     ALE_PORT_UNKNOWN_MCAST_FLOOD,
+			     CPSW_MASK_PHYS_PORTS);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0,
+			     ALE_PORT_UNKNOWN_REG_MCAST_FLOOD,
+			     CPSW_MASK_ALL_PORTS);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0,
+			     ALE_PORT_UNTAGGED_EGRESS,
+			     CPSW_MASK_ALL_PORTS);
+
+	return 0;
+}
+
 static void cpsw_init_host_port(struct cpswx_priv *priv,
 				struct cpswx_intf *cpsw_intf)
 {
-	int bypass_en = 1;
-
 	/* Host Tx Pri */
 	__raw_writel(HOST_TX_PRI_MAP_DEFAULT,
 		     &priv->host_port_regs->tx_pri_map);
@@ -1722,35 +1770,6 @@ static void cpsw_init_host_port(struct cpswx_priv *priv,
 	/* Max length register */
 	__raw_writel(MAX_SIZE_STREAM_BUFFER,
 		     &priv->host_port_regs->rx_maxlen);
-
-	if (priv->ale_refcnt == 1)
-		cpsw_ale_start(priv->ale);
-
-	if (!priv->multi_if)
-		bypass_en = 0;
-
-	cpsw_ale_control_set(priv->ale, 0, ALE_BYPASS, bypass_en);
-
-	cpsw_ale_control_set(priv->ale, 0, ALE_NO_PORT_VLAN, 1);
-
-	cpsw_ale_control_set(priv->ale, priv->host_port,
-			     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
-
-	cpsw_ale_control_set(priv->ale, 0,
-			     ALE_PORT_UNKNOWN_VLAN_MEMBER,
-			     CPSW_MASK_ALL_PORTS);
-
-	cpsw_ale_control_set(priv->ale, 0,
-			     ALE_PORT_UNKNOWN_MCAST_FLOOD,
-			     CPSW_MASK_PHYS_PORTS);
-
-	cpsw_ale_control_set(priv->ale, 0,
-			     ALE_PORT_UNKNOWN_REG_MCAST_FLOOD,
-			     CPSW_MASK_ALL_PORTS);
-
-	cpsw_ale_control_set(priv->ale, 0,
-			     ALE_PORT_UNTAGGED_EGRESS,
-			     CPSW_MASK_ALL_PORTS);
 }
 
 static void cpsw_slave_init(struct cpswx_slave *slave, struct cpswx_priv *priv)
@@ -1963,7 +1982,6 @@ static int cpswx_open(void *intf_mod_priv, struct net_device *ndev)
 	struct cpswx_intf *cpsw_intf = intf_mod_priv;
 	struct cpswx_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 	struct netcp_priv *netcp = netdev_priv(ndev);
-	struct cpsw_ale_params ale_params;
 	u32 xgmii_mode = 0;
 	int ret = 0;
 	u32 reg, i;
@@ -1997,23 +2015,14 @@ static int cpswx_open(void *intf_mod_priv, struct net_device *ndev)
 		cpsw_intf->tx_pipe.dma_channel,
 		cpsw_intf->tx_pipe.dma_psflags);
 
-	cpsw_dev->ale_refcnt++;
-	if (cpsw_dev->ale_refcnt == 1) {
-		memset(&ale_params, 0, sizeof(ale_params));
-
-		ale_params.dev		= cpsw_dev->dev;
-		ale_params.ale_regs	= (void *)((u32)cpsw_dev->ale_reg);
-		ale_params.ale_ageout	= cpsw_dev->ale_ageout;
-		ale_params.ale_entries	= cpsw_dev->ale_entries;
-		ale_params.ale_ports	= cpsw_dev->ale_ports;
-
-		cpsw_dev->ale = cpsw_ale_create(&ale_params);
-		if (!cpsw_dev->ale) {
-			dev_err(cpsw_dev->dev, "error initializing ale engine\n");
-			ret = -ENODEV;
+	/* initialize host and slave ports */
+	if (atomic_inc_return(&cpsw_dev->ale_refcnt) == 1) {
+		ret = cpsw_init_ale(cpsw_dev, cpsw_intf);
+		if (ret < 0) {
+			atomic_dec(&cpsw_dev->ale_refcnt);
 			goto ale_fail;
-		} else
-			dev_info(cpsw_dev->dev, "Created a cpsw ale engine\n");
+		}
+		cpsw_init_host_port(cpsw_dev, cpsw_intf);
 	}
 
 	for_each_slave(cpsw_intf, cpsw_slave_init, cpsw_dev);
@@ -2025,9 +2034,6 @@ static int cpswx_open(void *intf_mod_priv, struct net_device *ndev)
 		if (cpsw_dev->link[i] >= XGMII_LINK_MAC_PHY)
 			xgmii_mode |= (1 << i);
 	__raw_writel(xgmii_mode, &cpsw_dev->ss_regs->control);
-
-	/* initialize host and slave ports */
-	cpsw_init_host_port(cpsw_dev, cpsw_intf);
 
 	/* disable priority elevation and enable statistics on all ports */
 	__raw_writel(0, &cpsw_dev->regs->ptype);
@@ -2079,11 +2085,12 @@ static int cpswx_close(void *intf_modpriv, struct net_device *ndev)
 
 	del_timer_sync(&cpsw_intf->timer);
 
-	cpsw_dev->ale_refcnt--;
-	if (!cpsw_dev->ale_refcnt)
-		cpsw_ale_stop(cpsw_dev->ale);
-
 	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_dev);
+
+	if (atomic_dec_return(&cpsw_dev->ale_refcnt) == 0) {
+		cpsw_ale_destroy(cpsw_dev->ale);
+		cpsw_dev->ale = NULL;
+	}
 
 	netcp_unregister_txhook(netcp, CPSW_TXHOOK_ORDER, cpsw_tx_hook,
 				cpsw_intf);
@@ -2101,8 +2108,6 @@ static int cpswx_remove(struct netcp_device *netcp_device, void *inst_priv)
 	struct cpswx_intf *cpsw_intf, *tmp;
 
 	of_node_put(cpsw_dev->interfaces);
-
-	cpsw_ale_destroy(cpsw_dev->ale);
 
 	list_for_each_entry_safe(cpsw_intf, tmp, &cpsw_dev->cpsw_intf_head,
 				 cpsw_intf_list) {
