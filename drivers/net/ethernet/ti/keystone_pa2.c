@@ -2394,7 +2394,6 @@ static int pa2_close(void *intf_priv, struct net_device *ndev)
 		 */
 
 		if (pa_dev->pdsp0_tx_channel) {
-			dmaengine_pause(pa_dev->pdsp0_tx_channel);
 			dma_release_channel(pa_dev->pdsp0_tx_channel);
 			pa_dev->pdsp0_tx_channel = NULL;
 		}
