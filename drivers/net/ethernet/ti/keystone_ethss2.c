@@ -913,7 +913,6 @@ struct cpsw2_intf {
 	struct list_head	 cpsw_intf_list;
 	struct timer_list	 timer;
 	u32			 sgmii_link;
-	unsigned long		 active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
 };
 
 struct cpsw2_attribute {
@@ -2725,53 +2724,31 @@ static void cpsw2_slave_init(struct cpsw2_slave *slave, struct cpsw2_priv *priv)
 static void cpsw2_add_mcast_addr(struct cpsw2_intf *cpsw_intf, u8 *addr)
 {
 	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-	u16 vlan_id;
 
 	cpsw_ale_add_mcast(cpsw_dev->ale, addr,
 			   CPSW2_MASK_ALL_PORTS(cpsw_dev->num_slaves + 1), 0, 0,
 			   ALE_MCAST_FWD_2);
-	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID) {
-		cpsw_ale_add_mcast(cpsw_dev->ale, addr,
-				CPSW2_MASK_ALL_PORTS(cpsw_dev->num_slaves + 1),
-				ALE_VLAN, vlan_id, ALE_MCAST_FWD_2);
-	}
 }
 
 static void cpsw2_add_ucast_addr(struct cpsw2_intf *cpsw_intf, u8 *addr)
 {
 	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-	u16 vlan_id;
 
 	cpsw_ale_add_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port, 0, 0);
-
-	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID)
-		cpsw_ale_add_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port,
-				   ALE_VLAN, vlan_id);
 }
 
 static void cpsw2_del_mcast_addr(struct cpsw2_intf *cpsw_intf, u8 *addr)
 {
 	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-	u16 vlan_id;
 
 	cpsw_ale_del_mcast(cpsw_dev->ale, addr, 0, 0, 0);
-
-	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID) {
-		cpsw_ale_del_mcast(cpsw_dev->ale, addr, 0, ALE_VLAN, vlan_id);
-	}
 }
 
 static void cpsw2_del_ucast_addr(struct cpsw2_intf *cpsw_intf, u8 *addr)
 {
 	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-	u16 vlan_id;
 
 	cpsw_ale_del_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port, 0, 0);
-
-	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID) {
-		cpsw_ale_del_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port,
-				   ALE_VLAN, vlan_id);
-	}
 }
 
 static int cpsw2_add_addr(void *intf_priv, struct netcp_addr *naddr)
@@ -2822,34 +2799,6 @@ static int cpsw2_del_addr(void *intf_priv, struct netcp_addr *naddr)
 	default:
 		break;
 	}
-
-	return 0;
-}
-
-static int cpsw2_add_vid(void *intf_priv, int vid)
-{
-	struct cpsw2_intf *cpsw_intf = intf_priv;
-	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-
-	set_bit(vid, cpsw_intf->active_vlans);
-
-	cpsw_ale_add_vlan(cpsw_dev->ale, vid,
-			  CPSW2_MASK_ALL_PORTS(cpsw_dev->num_slaves + 1),
-			  CPSW2_MASK_NO_PORTS,
-			  CPSW2_MASK_ALL_PORTS(cpsw_dev->num_slaves + 1),
-			  CPSW2_MASK_PHYS_PORTS(cpsw_dev->num_slaves + 1));
-
-	return 0;
-}
-
-static int cpsw2_del_vid(void *intf_priv, int vid)
-{
-	struct cpsw2_intf *cpsw_intf = intf_priv;
-	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-
-	cpsw_ale_del_vlan(cpsw_dev->ale, vid, 0);
-
-	clear_bit(vid, cpsw_intf->active_vlans);
 
 	return 0;
 }
@@ -4101,8 +4050,6 @@ static struct netcp_module cpsw_module = {
 	.release	= cpsw2_release,
 	.add_addr	= cpsw2_add_addr,
 	.del_addr	= cpsw2_del_addr,
-	.add_vid	= cpsw2_add_vid,
-	.del_vid	= cpsw2_del_vid,
 	.ioctl		= cpsw2_ioctl,
 };
 
