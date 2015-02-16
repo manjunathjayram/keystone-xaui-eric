@@ -3146,10 +3146,12 @@ static int cpsw_close(void *intf_priv, struct net_device *ndev)
 
 	del_timer_sync(&cpsw_intf->timer);
 
-	if (atomic_dec_return(&cpsw_dev->ale_refcnt) == 0)
-		cpsw_ale_stop(cpsw_dev->ale);
-
 	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_intf);
+
+	if (atomic_dec_return(&cpsw_dev->ale_refcnt) == 0) {
+		cpsw_ale_destroy(cpsw_dev->ale);
+		cpsw_dev->ale = NULL;
+	}
 
 	if(!cpsw_dev->force_no_hwtstamp)
 		netcp_unregister_rxhook(netcp, CPSW_RXHOOK_ORDER,
@@ -3173,8 +3175,6 @@ static int cpsw_remove(struct netcp_device *netcp_device, void *inst_priv)
 	int i;
 
 	of_node_put(cpsw_dev->interfaces);
-
-	cpsw_ale_destroy(cpsw_dev->ale);
 
 	list_for_each_entry_safe(cpsw_intf, tmp, &cpsw_dev->cpsw_intf_head,
 				 cpsw_intf_list) {
