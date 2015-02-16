@@ -1752,7 +1752,7 @@ static int netcp_rx_add_vid(struct net_device *ndev, __be16 proto, u16 vid)
 	unsigned long flags;
 	int err = 0;
 
-	dev_info(netcp->dev, "adding rx vlan id: %d\n", vid);
+	dev_dbg(netcp->dev, "adding rx vlan id: %d\n", vid);
 
 	spin_lock_irqsave(&netcp->lock, flags);
 
@@ -1780,7 +1780,7 @@ static int netcp_rx_kill_vid(struct net_device *ndev, __be16 proto, u16 vid)
 	struct netcp_module *module;
 	int err = 0;
 
-	dev_info(netcp->dev, "removing rx vlan id: %d\n", vid);
+	dev_dbg(netcp->dev, "removing rx vlan id: %d\n", vid);
 
 	for_each_module(netcp, intf_modpriv) {
 		module = intf_modpriv->netcp_module;
