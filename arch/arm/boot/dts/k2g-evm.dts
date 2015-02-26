@@ -74,3 +74,14 @@
 		reg = <0x50>;
 	};
 };
+
+&mdio {
+	status = "okay";
+	ethphy0: ethernet-phy@0 {
+		reg = <0>;
+		phy-mode = "sgmii";
+		/* TODO. Check if anything needed from
+		 * Documentation/devicetree/bindings/net/micrel-ksz90x1.txt
+		 */
+	};
+};

@@ -278,7 +278,6 @@
 			clocks = <&clktimer>;
 		};
 
-
 		gpmc: gpmc@2181800 {
 			compatible = "ti,keystone-gpmc";
 			#address-cells = <2>;
@@ -292,7 +291,8 @@
 				  1 0 0x21818000 0x00000400>;
 		};
 
-		/* mdio: mdio@02090300 */
+		/include/ "k2g-netcp.dtsi"
+
 		/* kirq0: keystone_irq@26202a0 */
 
 	}; /* soc */

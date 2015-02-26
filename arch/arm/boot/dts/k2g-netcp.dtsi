@@ -3,7 +3,8 @@ qmss: qmss@2a40000 {
 	dma-coherent;
 	#address-cells = <1>;
 	#size-cells = <1>;
-	clocks = <&chipclk13>;
+	/* TODO check if this is common with NetCP clock */
+	clocks = <&clknsssys>;
 	ranges;
 	queue-range	= <0 0x80>;
 	linkram0	= <0x4020000 0x7ff>;
@@ -57,7 +58,8 @@ qmss: qmss@2a40000 {
 
 knav_dmas: knav_dmas@0 {
 	compatible = "ti,keystone-navigator-dma";
-	clocks = <&papllclk>;
+	/* TODO. Check if this is common with NetCP clock */
+	clocks = <&clknsssys>;
 	#address-cells = <1>;
 	#size-cells = <1>;
 	ranges;
@@ -83,7 +85,8 @@ netcp: netcp@4200000 {
 	#size-cells = <1>;
 	ranges;
 
-	clocks = <&papllclk>, <&clkcpgmac>, <&chipclk12>;
+	/* TODO list additional clocks here */
+	clocks = <&clknsssys>, <&chipclk13>;
 	dma-coherent;
 	/* big-endian; */
 
@@ -104,7 +107,8 @@ netcp: netcp@4200000 {
 			interfaces {
 				gbe0: interface-0 {
 					slave-port = <0>;
-					link-interface	= <4>;
+					link-interface	= <1>;
+					phy-handle	= <&ethphy0>;
 				};
 			};
 		};
@@ -121,5 +125,18 @@ netcp: netcp@4200000 {
 			tx-completion-queue = <78>;
 			efuse-mac = <1>;
 			netcp-gbe = <&gbe0>;
+		};
 	};
+};
+
+mdio: mdio@4200f00 {
+	compatible	= "ti,keystone_mdio", "ti,davinci_mdio";
+	#address-cells = <1>;
+	#size-cells = <0>;
+	reg		= <0x04200f00 0x100>;
+	status = "disabled";
+	/* TODO. Check if there is a divider before input to MDIO */
+	clocks = <&chipclk13>;
+	clock-names = "fck";
+	bus_freq	= <2500000>;
 };
