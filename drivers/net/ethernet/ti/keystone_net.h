@@ -20,6 +20,7 @@
 #include <linux/netdevice.h>
 #include <linux/keystone-dma.h>
 #include <linux/interrupt.h>
+#include <linux/u64_stats_sync.h>
 
 /* Maximum Ethernet frame size supported by Keystone switch */
 #define NETCP_MAX_FRAME_SIZE	9504
@@ -96,6 +97,17 @@ struct netcp_addr {
 	struct list_head	 node;
 };
 
+struct netcp_stats {
+	u64			rx_packets;
+	u64			rx_bytes;
+	u64			tx_packets;
+	u64			tx_bytes;
+	struct u64_stats_sync	syncp;
+	u32			rx_errors;
+	u32			rx_dropped;
+	u32			tx_dropped;
+};
+
 /* Flags for hw_capabilities */
 #define	CPSW_HAS_P0_TX_CRC_REMOVE	BIT(0)
 
@@ -123,6 +135,8 @@ struct netcp_priv {
 	struct list_head		 module_head;
 	struct list_head		 interface_list;
 	struct list_head		 addr_list;
+	/* 64-bit netcp stats */
+	struct netcp_stats		 stats;
 
 	/* PktDMA configuration data */
 	u32				 rx_queue_depths[KEYSTONE_QUEUES_PER_CHAN];

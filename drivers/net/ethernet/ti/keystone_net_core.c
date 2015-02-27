@@ -664,6 +664,7 @@ static void netcp_rx_complete(void *data)
 {
 	struct netcp_packet *p_info = data;
 	struct netcp_priv *netcp = p_info->netcp;
+	struct netcp_stats *rx_stats = &netcp->stats;
 	struct sk_buff *skb;
 	struct scatterlist *sg;
 	enum dma_status status;
@@ -729,7 +730,7 @@ static void netcp_rx_complete(void *data)
 			p_info, status, netcp_rx_state_str(netcp));
 		dev_kfree_skb(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
-		netcp->ndev->stats.rx_dropped++;
+		rx_stats->rx_dropped++;
 		return;
 	}
 
@@ -739,7 +740,7 @@ static void netcp_rx_complete(void *data)
 			 p_info, status, netcp_rx_state_str(netcp));
 		dev_kfree_skb(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
-		netcp->ndev->stats.rx_errors++;
+		rx_stats->rx_errors++;
 		return;
 	}
 
@@ -747,7 +748,7 @@ static void netcp_rx_complete(void *data)
 		dev_warn(netcp->dev, "receive: zero length packet\n");
 		dev_kfree_skb(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
-		netcp->ndev->stats.rx_errors++;
+		rx_stats->rx_errors++;
 		return;
 	}
 
@@ -779,8 +780,10 @@ static void netcp_rx_complete(void *data)
 	}
 	rcu_read_unlock();
 
-	netcp->ndev->stats.rx_packets++;
-	netcp->ndev->stats.rx_bytes += skb->len;
+	u64_stats_update_begin(&rx_stats->syncp);
+	rx_stats->rx_packets++;
+	rx_stats->rx_bytes += skb->len;
+	u64_stats_update_end(&rx_stats->syncp);
 
 	kmem_cache_free(netcp_pinfo_cache, p_info);
 
@@ -1178,6 +1181,7 @@ static void netcp_tx_notify(struct dma_chan *chan, void *arg)
 static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
+	struct netcp_stats *tx_stats = &netcp->stats;
 	struct dma_async_tx_descriptor *desc;
 	struct netcp_tx_pipe *tx_pipe;
 	struct netcp_hook_list *tx_hook;
@@ -1189,8 +1193,10 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	int poll_count;
 	int ret = 0;
 
-	ndev->stats.tx_packets++;
-	ndev->stats.tx_bytes += skb->len;
+	u64_stats_update_begin(&tx_stats->syncp);
+	tx_stats->tx_packets++;
+	tx_stats->tx_bytes += skb->len;
+	u64_stats_update_end(&tx_stats->syncp);
 
 	p_info.netcp = netcp;
 	p_info.skb = skb;
@@ -1236,7 +1242,7 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 			/* If we get here, the skb has already been dropped */
 			dev_warn(netcp->dev, "padding failed (%d), "
 				 "packet dropped\n", ret);
-			ndev->stats.tx_dropped++;
+			tx_stats->tx_dropped++;
 			return ret;
 		}
 		skb->len = NETCP_MIN_PACKET_SIZE;
@@ -1309,7 +1315,7 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 
 drop:
 	atomic_add(real_sg_ents, &tx_pipe->dma_poll_count);
-	ndev->stats.tx_dropped++;
+	tx_stats->tx_dropped++;
 	dev_kfree_skb(skb);
 	return ret;
 }
@@ -1722,6 +1728,35 @@ static int netcp_ndo_ioctl(struct net_device *ndev,
 	return (ret == 0) ? 0 : err;
 }
 
+static struct rtnl_link_stats64 *
+netcp_get_stats(struct net_device *ndev, struct rtnl_link_stats64 *stats)
+{
+	struct netcp_priv *netcp = netdev_priv(ndev);
+	struct netcp_stats *p = &netcp->stats;
+
+	u64 rxpackets, rxbytes, txpackets, txbytes;
+	unsigned int start;
+	do {
+		start = u64_stats_fetch_begin_bh(&p->syncp);
+		rxpackets	= p->rx_packets;
+		rxbytes		= p->rx_bytes;
+		txpackets	= p->tx_packets;
+		txbytes		= p->tx_bytes;
+	} while (u64_stats_fetch_retry_bh(&p->syncp, start));
+
+	stats->rx_packets = rxpackets;
+	stats->rx_bytes = rxbytes;
+	stats->tx_packets = txpackets;
+	stats->tx_bytes = txbytes;
+
+	/* The following are stored as 32 bit */
+	stats->rx_errors = p->rx_errors;
+	stats->rx_dropped = p->rx_dropped;
+	stats->tx_dropped = p->tx_dropped;
+
+	return stats;
+}
+
 static int netcp_ndo_change_mtu(struct net_device *ndev, int new_mtu)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
@@ -1911,6 +1946,7 @@ static const struct net_device_ops netcp_netdev_ops = {
 	.ndo_start_xmit		= netcp_ndo_start_xmit,
 	.ndo_set_rx_mode	= netcp_set_rx_mode,
 	.ndo_do_ioctl           = netcp_ndo_ioctl,
+	.ndo_get_stats64	= netcp_get_stats,
 	.ndo_change_mtu		= netcp_ndo_change_mtu,
 	.ndo_set_mac_address	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
