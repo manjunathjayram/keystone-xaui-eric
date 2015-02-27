@@ -137,6 +137,8 @@ int keystone_sgmii_config(void __iomem *sgmii_ofs,
 	u32 control;
 
 	switch (interface) {
+	case SGMII_LINK_MAC_PHY_MASTER:
+	case SGMII_LINK_MAC_PHY_MASTER_NO_MDIO:
 	case SGMII_LINK_MAC_MAC_AUTONEG:
 		mr_adv_ability	= 0x9801;
 		control		= 0x21;
@@ -144,6 +146,7 @@ int keystone_sgmii_config(void __iomem *sgmii_ofs,
 
 	case SGMII_LINK_MAC_PHY:
 	case SGMII_LINK_MAC_PHY_NO_MDIO:
+	case SGMII_LINK_MAC_MAC_AN_SLAVE:
 		mr_adv_ability	= 1;
 		control		= 1;
 		break;
