@@ -161,6 +161,9 @@
 #define SGMII_BASE(s) \
 	(((s) < 2) ? cpsw_dev->sgmii_port_regs : cpsw_dev->sgmii_port34_regs)
 
+#define IS_SGMII_MAC_PHY(i) \
+	(((i) == SGMII_LINK_MAC_PHY) || ((i) == SGMII_LINK_MAC_PHY_MASTER))
+
 /* CPSW SERDES */
 #define CPSW_SERDES_MAX_NUM		1
 #define CPSW_LANE_NUM_PER_SERDES	4
@@ -2223,7 +2226,7 @@ static void cpsw_slave_link(struct cpsw_slave *slave,
 	struct netcp_priv *netcp = netdev_priv(cpsw_intf->ndev);
 	int sn = slave->slave_num;
 
-	if (slave->link_interface == SGMII_LINK_MAC_PHY) {
+	if (IS_SGMII_MAC_PHY(slave->link_interface)) {
 		/* check only the bit in phy_link_state_mask
 		 * that corresponds to the slave
 		 */
@@ -2271,7 +2274,7 @@ static void cpsw_slave_open(struct cpsw_slave *slave,
 	cpsw_ale_add_mcast(priv->ale, cpsw_intf->ndev->broadcast,
 			   1 << slave_port, 0, 0, ALE_MCAST_FWD_2);
 
-	if (slave->link_interface == SGMII_LINK_MAC_PHY) {
+	if (IS_SGMII_MAC_PHY(slave->link_interface)) {
 		slave->phy = of_phy_connect(cpsw_intf->ndev,
 					    cpsw_intf->phy_node,
 					    &cpsw_adjust_link, 0,
@@ -2683,7 +2686,7 @@ static void cpsw_timer(unsigned long arg)
 	 */
 	if (!cpsw_dev->multi_if ||
 	    (cpsw_dev->multi_if &&
-	     cpsw_intf->slaves->link_interface != SGMII_LINK_MAC_PHY)) {
+	     !IS_SGMII_MAC_PHY(cpsw_intf->slaves->link_interface))) {
 		if (cpsw_intf->link_state)
 			netif_carrier_on(cpsw_intf->ndev);
 		else
