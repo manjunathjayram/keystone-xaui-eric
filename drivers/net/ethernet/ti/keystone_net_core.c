@@ -1337,7 +1337,12 @@ int netcp_txpipe_open(struct netcp_tx_pipe *tx_pipe)
 {
 	struct dma_keystone_info config;
 	dma_cap_mask_t mask;
-	int ret;
+	int ret, queue_depth;
+
+	queue_depth = tx_pipe->dma_queue_depth;
+	tx_pipe->dma_pause_threshold = (MAX_SKB_FRAGS < (queue_depth / 4)) ?
+					MAX_SKB_FRAGS : (queue_depth / 4);
+	tx_pipe->dma_resume_threshold = tx_pipe->dma_pause_threshold;
 
 	dma_cap_zero(mask);
 	dma_cap_set(DMA_SLAVE, mask);
@@ -1353,7 +1358,7 @@ int netcp_txpipe_open(struct netcp_tx_pipe *tx_pipe)
 
 	memset(&config, 0, sizeof(config));
 	config.direction = DMA_MEM_TO_DEV;
-	config.tx_queue_depth = tx_pipe->dma_queue_depth;
+	config.tx_queue_depth = queue_depth;
 	ret = dma_keystone_config(tx_pipe->dma_channel, &config);
 	if (ret) {
 		dev_err(tx_pipe->netcp_priv->dev,
@@ -1365,14 +1370,16 @@ int netcp_txpipe_open(struct netcp_tx_pipe *tx_pipe)
 	}
 
 	tx_pipe->dma_queue = dma_get_tx_queue(tx_pipe->dma_channel);
-	atomic_set(&tx_pipe->dma_poll_count, tx_pipe->dma_queue_depth);
+	atomic_set(&tx_pipe->dma_poll_count, queue_depth);
 	netcp_set_txpipe_state(tx_pipe, TX_STATE_INTERRUPT);
 	napi_enable(&tx_pipe->dma_poll_napi);
 	dma_set_notify(tx_pipe->dma_channel, netcp_tx_notify, tx_pipe);
 
 
-	dev_dbg(tx_pipe->netcp_priv->dev, "opened tx pipe %s\n",
-		tx_pipe->dma_chan_name);
+	dev_dbg(tx_pipe->netcp_priv->dev,
+		"opened tx pipe %s, depth %d, pause/resume %d/%d\n",
+		tx_pipe->dma_chan_name, queue_depth,
+		tx_pipe->dma_pause_threshold, tx_pipe->dma_resume_threshold);
 	return 0;
 }
 EXPORT_SYMBOL(netcp_txpipe_open);
@@ -1388,17 +1395,12 @@ int netcp_txpipe_init(struct netcp_tx_pipe *tx_pipe,
 	tx_pipe->dma_chan_name = chan_name;
 	tx_pipe->dma_queue_depth = queue_depth;
 
-	tx_pipe->dma_pause_threshold = (MAX_SKB_FRAGS < (queue_depth / 4)) ?
-					MAX_SKB_FRAGS : (queue_depth / 4);
-	tx_pipe->dma_resume_threshold = tx_pipe->dma_pause_threshold;
-
 	netcp_set_txpipe_state(tx_pipe, TX_STATE_INVALID);
 	netif_napi_add(netcp_priv->ndev, &tx_pipe->dma_poll_napi,
 			netcp_tx_poll, NETCP_NAPI_WEIGHT_TX);
 
-	dev_dbg(tx_pipe->netcp_priv->dev, "initialized tx pipe %s, %d/%d\n",
-		tx_pipe->dma_chan_name, tx_pipe->dma_pause_threshold,
-		tx_pipe->dma_resume_threshold);
+	dev_dbg(tx_pipe->netcp_priv->dev, "initialized tx pipe %s\n",
+		tx_pipe->dma_chan_name);
 	return 0;
 }
 EXPORT_SYMBOL(netcp_txpipe_init);

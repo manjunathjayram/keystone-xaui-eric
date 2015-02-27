@@ -41,6 +41,7 @@ struct qos_channel {
 	const char		*tx_chan_name;
 	u32			 tx_queue_depth;
 	struct netcp_tx_pipe	 tx_pipe;
+	struct kobject		 kobj;
 };
 
 struct qos_device {
@@ -48,15 +49,105 @@ struct qos_device {
 	struct device			*dev;
 	struct device_node		*node;
 	u32				 multi_if;
+	struct kobject			 kobj;
 };
 
 struct qos_intf {
+	struct qos_device		*qdev;
 	struct net_device		*ndev;
 	struct device			*dev;
+	struct kobject			 kobj;
 	int				 num_channels;
 	int				 max_channels;
 	struct qos_channel		 channels[1];
+	/* NB: channels is allocated dynamically */
 };
+
+/*
+ *  Sysfs stuff related to QoS TX Channels
+ */
+#define kobj_to_qchan(kobj) container_of(kobj, struct qos_channel, kobj)
+
+static ssize_t qos_txchan_show(struct kobject *kobj,
+			struct kobj_attribute *attr,
+			char *buf)
+{
+	struct qos_channel *qos_chan = kobj_to_qchan(kobj);
+	return snprintf(buf, PAGE_SIZE, "%s\n", qos_chan->tx_chan_name);
+}
+
+struct kobj_attribute qos_txchan_attr =
+	__ATTR(tx-channel, S_IRUGO, qos_txchan_show, NULL);
+
+
+static ssize_t qos_txdepth_show(struct kobject *kobj,
+			struct kobj_attribute *attr,
+			char *buf)
+{
+	struct qos_channel *qos_chan = kobj_to_qchan(kobj);
+	return snprintf(buf, PAGE_SIZE, "%u\n", qos_chan->tx_queue_depth);
+}
+
+static ssize_t qos_txdepth_store(struct kobject *kobj,
+			struct kobj_attribute *attr,
+			const char *buf, size_t count)
+{
+	struct qos_channel *qos_chan = kobj_to_qchan(kobj);
+	struct netcp_tx_pipe *tx_pipe = &qos_chan->tx_pipe;
+	unsigned int val;
+
+	if (kstrtouint(buf, 0, &val) < 0)
+		return -EINVAL;
+
+	qos_chan->tx_queue_depth = val;
+	tx_pipe->dma_queue_depth = val;
+
+	return count;
+}
+
+struct kobj_attribute qos_txdepth_attr =
+	__ATTR(tx_queue_depth, S_IRUGO | S_IWUSR,
+		qos_txdepth_show, qos_txdepth_store);
+
+static struct attribute *qos_txchan_attrs[] = {
+		&qos_txchan_attr.attr,
+		&qos_txdepth_attr.attr,
+		NULL
+};
+
+static struct kobj_type qos_chan_ktype = {
+	.sysfs_ops = &kobj_sysfs_ops,
+	.default_attrs = qos_txchan_attrs,
+};
+
+/* Sysfs stuff related to QoS Interfaces */
+static struct kobj_type qos_intf_ktype = {
+	.sysfs_ops = &kobj_sysfs_ops,
+};
+
+/* Sysfs stuff related to QoS Instances */
+#define	kobj_to_qdev(kobj) container_of(kobj, struct qos_device, kobj)
+static ssize_t qos_multi_if_show(struct kobject *kobj,
+			struct kobj_attribute *attr,
+			char *buf)
+{
+	struct qos_device *qos_dev = kobj_to_qdev(kobj);
+	return snprintf(buf, PAGE_SIZE, "%u\n", qos_dev->multi_if);
+}
+
+struct kobj_attribute qos_multi_if_attr =
+	__ATTR(multi-interface, S_IRUGO, qos_multi_if_show, NULL);
+
+static struct attribute *qos_inst_attrs[] = {
+		&qos_multi_if_attr.attr,
+		NULL
+};
+
+static struct kobj_type qos_inst_ktype = {
+	.sysfs_ops = &kobj_sysfs_ops,
+	.default_attrs = qos_inst_attrs,
+};
+
 
 static int qos_tx_hook(int order, void *data, struct netcp_packet *p_info)
 {
@@ -148,6 +239,19 @@ static int init_channel(struct qos_intf *qos_intf,
 	}
 	dev_dbg(qos_intf->dev, "tx_queue_depth %u\n", qchan->tx_queue_depth);
 
+	/* Create the per-channel entry and attributes */
+	ret = kobject_init_and_add(&qchan->kobj, &qos_chan_ktype,
+			kobject_get(&qos_intf->kobj), node->name);
+	if (ret) {
+		dev_err(qos_intf->dev,
+			"failed to create %s/%s/%s sysfs entry\n",
+			qos_intf->qdev->kobj.name, qos_intf->kobj.name,
+			node->name);
+		kobject_put(&qchan->kobj);
+		kobject_put(&qos_intf->kobj);
+		return ret;
+	}
+
 	return 0;
 }
 
@@ -173,6 +277,7 @@ static int qos_attach(void *inst_priv, struct net_device *ndev,
 	}
 	qos_intf->max_channels = max_channels;
 
+	qos_intf->qdev = qos_dev;
 	qos_intf->ndev = ndev;
 	qos_intf->dev = qos_dev->dev;
 
@@ -187,6 +292,17 @@ static int qos_attach(void *inst_priv, struct net_device *ndev,
 			"could not find interface %d node in device tree\n",
 			(netcp->cpsw_port - 1));
 		ret = -ENODEV;
+		goto exit;
+	}
+
+	/* Create the per-interface sysfs entry */
+	ret = kobject_init_and_add(&qos_intf->kobj, &qos_intf_ktype,
+			kobject_get(&qos_intf->qdev->kobj), node_name);
+	if (ret) {
+		dev_err(qos_intf->dev, "failed to create %s/%s sysfs entry\n",
+			qos_intf->qdev->kobj.name, node_name);
+		kobject_put(&qos_intf->kobj);
+		kobject_put(&qos_intf->qdev->kobj);
 		goto exit;
 	}
 
@@ -245,7 +361,7 @@ static int qos_probe(struct netcp_device *netcp_device,
 {
 	struct qos_device *qos_dev;
 	int ret = 0;
-	
+
 	qos_dev = devm_kzalloc(dev, sizeof(struct qos_device), GFP_KERNEL);
 	if (!qos_dev) {
 		dev_err(dev, "memory allocation failed\n");
@@ -265,6 +381,17 @@ static int qos_probe(struct netcp_device *netcp_device,
 
 	if (of_find_property(node, "multi-interface", NULL))
 		qos_dev->multi_if = 1;
+
+	/* Create the per-instance sysfs entry */
+	ret = kobject_init_and_add(&qos_dev->kobj, &qos_inst_ktype,
+		kobject_get(&dev->kobj), node->name);
+	if (ret) {
+		dev_err(dev, "failed to create %s sysfs entry\n",
+			node->name);
+		kobject_put(&qos_dev->kobj);
+		kobject_put(&dev->kobj);
+		goto exit;
+	}
 
 	return 0;
 
