@@ -309,6 +309,7 @@ struct cpswx_priv {
 	struct kobject			stats_kobj;
 	spinlock_t			hw_stats_lock;
 	struct device_node              *serdes;
+	u32				opened;
 };
 
 /* slave_port: 0-based (currently relevant only in multi_if mode)
@@ -1819,6 +1820,9 @@ static int cpswx_add_addr(void *intf_priv, struct netcp_addr *naddr)
 	struct cpswx_intf *cpsw_intf = intf_priv;
 	struct cpswx_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 
+	if (!cpsw_dev->opened)
+		return -ENXIO;
+
 	dev_dbg(cpsw_dev->dev, "xgess adding address %pM, type %d\n",
 		naddr->addr, naddr->type);
 
@@ -1844,6 +1848,9 @@ static int cpswx_del_addr(void *intf_priv, struct netcp_addr *naddr)
 {
 	struct cpswx_intf *cpsw_intf = intf_priv;
 	struct cpswx_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+
+	if (!cpsw_dev->opened)
+		return -ENXIO;
 
 	dev_dbg(cpsw_dev->dev, "xgess deleting address %pM, type %d\n",
 		naddr->addr, naddr->type);
@@ -2032,6 +2039,7 @@ static int cpswx_open(void *intf_mod_priv, struct net_device *ndev)
 				   PSTREAM_ROUTE_DMA);
 #endif
 
+	cpsw_dev->opened = 1;
 	return 0;
 
 ale_fail:
@@ -2066,6 +2074,7 @@ static int cpswx_close(void *intf_modpriv, struct net_device *ndev)
 	clk_disable_unprepare(cpsw_dev->clk);
 	clk_put(cpsw_dev->clk);
 
+	cpsw_dev->opened = 0;
 	return 0;
 }
 

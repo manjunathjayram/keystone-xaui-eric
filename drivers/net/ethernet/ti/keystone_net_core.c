@@ -1464,65 +1464,85 @@ static void netcp_addr_clear_mark(struct netcp_priv *netcp)
 		naddr->flags = 0;
 }
 
-static void netcp_addr_add_mark(struct netcp_priv *netcp, const u8 *addr,
-				enum netcp_addr_type type)
+static struct netcp_addr *
+netcp_addr_add_mark(struct netcp_priv *netcp, const u8 *addr,
+					enum netcp_addr_type type)
 {
 	struct netcp_addr *naddr;
 
 	naddr = netcp_addr_find(netcp, addr, type);
 	if (naddr) {
 		naddr->flags |= ADDR_VALID;
-		return;
+		return naddr;
 	}
 
 	naddr = netcp_addr_add(netcp, addr, type);
 	if (!WARN_ON(!naddr))
 		naddr->flags |= ADDR_NEW;
+
+	return naddr;
+}
+
+static void netcp_mod_del_addr(struct netcp_priv *netcp,
+				struct netcp_addr *naddr)
+{
+	struct netcp_intf_modpriv *priv;
+	struct netcp_module *module;
+
+	dev_dbg(netcp->dev, "deleting address %pM, type %x\n",
+		naddr->addr, naddr->type);
+	for_each_module(netcp, priv) {
+		module = priv->netcp_module;
+		if (!module->del_addr)
+			continue;
+		module->del_addr(priv->module_priv, naddr);
+	}
 }
 
 static void netcp_addr_sweep_del(struct netcp_priv *netcp)
 {
 	struct netcp_addr *naddr, *tmp;
-	struct netcp_intf_modpriv *priv;
-	struct netcp_module *module;
-	int error;
 
 	list_for_each_entry_safe(naddr, tmp, &netcp->addr_list, node) {
 		if (naddr->flags & (ADDR_VALID | ADDR_NEW))
 			continue;
-		dev_dbg(netcp->dev, "deleting address %pM, type %x\n",
-			naddr->addr, naddr->type);
-		for_each_module(netcp, priv) {
-			module = priv->netcp_module;
-			if (!module->del_addr)
-				continue;
-			error = module->del_addr(priv->module_priv,
-						 naddr);
-			WARN_ON(error);
-		}
+		netcp_mod_del_addr(netcp, naddr);
 		netcp_addr_del(naddr);
 	}
+}
+
+static int netcp_mod_add_addr(struct netcp_priv *netcp,
+				struct netcp_addr *naddr)
+{
+	struct netcp_intf_modpriv *priv;
+	struct netcp_module *module;
+	int error;
+
+	dev_dbg(netcp->dev, "adding address %pM, type %x\n",
+		naddr->addr, naddr->type);
+	for_each_module(netcp, priv) {
+		module = priv->netcp_module;
+		if (!module->add_addr)
+			continue;
+		error = module->add_addr(priv->module_priv, naddr);
+		if (error)
+			break;
+	}
+
+	if (error)
+		netcp_mod_del_addr(netcp, naddr);
+
+	return error;
 }
 
 static void netcp_addr_sweep_add(struct netcp_priv *netcp)
 {
 	struct netcp_addr *naddr, *tmp;
-	struct netcp_intf_modpriv *priv;
-	struct netcp_module *module;
-	int error;
 
 	list_for_each_entry_safe(naddr, tmp, &netcp->addr_list, node) {
 		if (!(naddr->flags & ADDR_NEW))
 			continue;
-		dev_dbg(netcp->dev, "adding address %pM, type %x\n",
-			naddr->addr, naddr->type);
-		for_each_module(netcp, priv) {
-			module = priv->netcp_module;
-			if (!module->add_addr)
-				continue;
-			error = module->add_addr(priv->module_priv, naddr);
-			WARN_ON(error);
-		}
+		netcp_mod_add_addr(netcp, naddr);
 	}
 }
 
@@ -1772,6 +1792,38 @@ static int netcp_ndo_change_mtu(struct net_device *ndev, int new_mtu)
 	return 0;
 }
 
+static int netcp_ndo_set_mac_address(struct net_device *ndev, void *p)
+{
+	struct netcp_priv *netcp = netdev_priv(ndev);
+	struct netcp_addr *naddr;
+	int ret;
+
+	ret = eth_mac_addr(ndev, p);
+	if (ret) {
+		dev_info(netcp->dev, "set mac addr %pM failed (%d).\n",
+			((struct sockaddr *)p)->sa_data, ret);
+		goto done;
+	}
+
+	naddr = netcp_addr_add_mark(netcp, ndev->dev_addr, ADDR_DEV);
+	if (!naddr) {
+		ret = -ENOMEM;
+		goto done;
+	}
+	if (naddr->flags & ADDR_VALID)
+		goto done;
+
+	ret = netcp_mod_add_addr(netcp, naddr);
+	if (ret) {
+		/* lower modules are not ready yet */
+		netcp_addr_del(naddr);
+		ret = 0;
+	}
+
+done:
+	return ret;
+}
+
 static void netcp_ndo_tx_timeout(struct net_device *ndev)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
@@ -1948,7 +2000,7 @@ static const struct net_device_ops netcp_netdev_ops = {
 	.ndo_do_ioctl           = netcp_ndo_ioctl,
 	.ndo_get_stats64	= netcp_get_stats,
 	.ndo_change_mtu		= netcp_ndo_change_mtu,
-	.ndo_set_mac_address	= eth_mac_addr,
+	.ndo_set_mac_address	= netcp_ndo_set_mac_address,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_vlan_rx_add_vid	= netcp_rx_add_vid,
 	.ndo_vlan_rx_kill_vid	= netcp_rx_kill_vid,
@@ -1999,6 +2051,8 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 				NETIF_F_IPV6_CSUM |
 				NETIF_F_SG|
 				NETIF_F_FRAGLIST;
+
+	ndev->priv_flags |= IFF_LIVE_ADDR_CHANGE;
 
 	netcp = netdev_priv(ndev);
 	spin_lock_init(&netcp->lock);

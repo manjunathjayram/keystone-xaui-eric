@@ -167,6 +167,7 @@
 #define IS_SGMII_MAC_PHY(i) \
 	(((i) == SGMII_LINK_MAC_PHY) || ((i) == SGMII_LINK_MAC_PHY_MASTER))
 
+
 /* CPSW Statistics register map size */
 #define CPSW2_STATS_REGS_SIZE			0x200
 
@@ -903,6 +904,7 @@ struct cpsw2_priv {
 	u32				num_serdes;
 	u32				serdes_lanes;
 	struct serdes			serdes;
+	u32				opened;
 };
 
 /* slave_port: 0-based (currently relevant only in multi_if mode)
@@ -2764,6 +2766,9 @@ static int cpsw2_add_addr(void *intf_priv, struct netcp_addr *naddr)
 	struct cpsw2_intf *cpsw_intf = intf_priv;
 	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 
+	if (!cpsw_dev->opened)
+		return -ENXIO;
+
 	dev_dbg(cpsw_dev->dev, "ethss adding address %pM, type %d\n",
 		naddr->addr, naddr->type);
 
@@ -2789,6 +2794,9 @@ static int cpsw2_del_addr(void *intf_priv, struct netcp_addr *naddr)
 {
 	struct cpsw2_intf *cpsw_intf = intf_priv;
 	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+
+	if (!cpsw_dev->opened)
+		return -ENXIO;
 
 	dev_dbg(cpsw_dev->dev, "ethss deleting address %pM, type %d\n",
 		naddr->addr, naddr->type);
@@ -3455,6 +3463,7 @@ static int cpsw2_open(void *intf_priv, struct net_device *ndev)
 				   PSTREAM_ROUTE_GLOBAL_DMA);
 
 	cpsw2_register_cpts(cpsw_dev);
+	cpsw_dev->opened = 1;
 	return 0;
 
 ale_fail:
@@ -3494,6 +3503,7 @@ static int cpsw2_close(void *intf_priv, struct net_device *ndev)
 	clk_put(cpsw_dev->cpgmac);
 
 	cpsw2_unregister_cpts(cpsw_dev);
+	cpsw_dev->opened = 0;
 	return 0;
 }
 
