@@ -1184,9 +1184,12 @@ static void chan_destroy_descs(struct keystone_dma_chan *chan)
 
 	for (i = 0; i < chan->num_descs; i++) {
 		desc = desc_from_index(chan, i);
-		if (desc->hwdesc)
+		if (desc->hwdesc) {
+			dev_warn(chan_dev(chan), "%s leaked descriptor %d\n",
+					chan->achan.name, i);
 			desc_dump(chan, desc, "leaked descriptor");
-		leaked = true;
+			leaked = true;
+		}
 	}
 
 	if (!leaked)

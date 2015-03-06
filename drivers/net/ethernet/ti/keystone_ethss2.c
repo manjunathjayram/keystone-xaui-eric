@@ -866,7 +866,7 @@ struct cpsw2_priv {
 	void __iomem			*sgmii_port_regs;
 
 	struct cpsw_ale			*ale;
-	u32				 ale_refcnt;
+	atomic_t			 ale_refcnt;
 
 	u32				 link[MAX_SLAVES];
 	struct device_node		*phy_node[MAX_SLAVES];
@@ -913,7 +913,6 @@ struct cpsw2_intf {
 	struct list_head	 cpsw_intf_list;
 	struct timer_list	 timer;
 	u32			 sgmii_link;
-	unsigned long		 active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
 };
 
 struct cpsw2_attribute {
@@ -2540,8 +2539,7 @@ static int cpsw2_port_reset(struct cpsw2_slave *slave)
 	/* Wait for the bit to clear */
 	for (i = 0; i < DEVICE_EMACSL_RESET_POLL_COUNT; i++) {
 		v = readl(&slave->regs->soft_reset);
-		if ((v & SOFT_RESET_MASK) !=
-		    SOFT_RESET)
+		if ((v & SOFT_RESET_MASK) != SOFT_RESET)
 			return 0;
 	}
 
@@ -2563,8 +2561,19 @@ static void cpsw2_port_config(struct cpsw2_slave *slave, int max_rx_len)
 		&slave->regs->mac_control);
 }
 
-static void cpsw2_slave_stop(struct cpsw2_slave *slave, struct cpsw2_priv *priv)
+static void cpsw2_slave_stop(struct cpsw2_slave *slave,
+			    struct cpsw2_intf *cpsw_intf)
 {
+	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+
+	/* disable forwarding */
+	if (slave->ale)
+		cpsw_ale_control_set(slave->ale, slave->port_num,
+				ALE_PORT_STATE, ALE_PORT_STATE_DISABLE);
+
+	keystone_sgmii_rtreset(SGMII2_BASE(slave->slave_num),
+				slave->slave_num, true);
+
 	cpsw2_port_reset(slave);
 
 	if (!slave->phy)
@@ -2600,6 +2609,9 @@ static void cpsw2_slave_open(struct cpsw2_slave *slave,
 				slave->link_interface);
 
 	cpsw2_port_reset(slave);
+
+	keystone_sgmii_rtreset(SGMII2_BASE(slave->slave_num),
+					slave->slave_num, false);
 
 	cpsw2_port_config(slave, cpsw_dev->rx_packet_max);
 
@@ -2642,43 +2654,62 @@ static void cpsw2_slave_open(struct cpsw2_slave *slave,
 	}
 }
 
-static void cpsw2_init_host_port(struct cpsw2_priv *priv,
-				struct cpsw2_intf *cpsw_intf)
+static int cpsw2_init_ale(struct cpsw2_priv *cpsw_dev)
 {
-	int bypass_en = 1;
+	struct cpsw_ale_params ale_params;
 
+	memset(&ale_params, 0, sizeof(ale_params));
+
+	ale_params.dev			= cpsw_dev->dev;
+	ale_params.ale_regs		= (void *)((u32)cpsw_dev->ale_reg);
+	ale_params.ale_ageout		= cpsw_dev->ale_ageout;
+	ale_params.ale_entries		= cpsw_dev->ale_entries;
+	ale_params.ale_ports		= cpsw_dev->ale_ports;
+
+	cpsw_dev->ale = cpsw_ale_create(&ale_params);
+	if (!cpsw_dev->ale) {
+		dev_err(cpsw_dev->dev,
+			"error initializing ale engine\n");
+		return -ENODEV;
+	}
+
+	dev_info(cpsw_dev->dev, "Created a cpsw ale engine\n");
+
+	cpsw_ale_start(cpsw_dev->ale);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0,
+			     ALE_BYPASS, cpsw_dev->multi_if ? 1 : 0);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0, ALE_NO_PORT_VLAN, 1);
+
+	cpsw_ale_control_set(cpsw_dev->ale, cpsw_dev->host_port,
+			     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0,
+			     ALE_PORT_UNKNOWN_VLAN_MEMBER_1R4,
+			     CPSW2_MASK_ALL_PORTS(cpsw_dev->num_slaves + 1));
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0,
+			     ALE_PORT_UNKNOWN_MCAST_FLOOD_1R4,
+			     CPSW2_MASK_PHYS_PORTS(cpsw_dev->num_slaves + 1));
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0,
+			     ALE_PORT_UNKNOWN_REG_MCAST_FLOOD_1R4,
+			     CPSW2_MASK_ALL_PORTS(cpsw_dev->num_slaves + 1));
+
+	cpsw_ale_control_set(cpsw_dev->ale, 0,
+			     ALE_PORT_UNTAGGED_EGRESS_1R4,
+			     CPSW2_MASK_ALL_PORTS(cpsw_dev->num_slaves + 1));
+
+	return 0;
+}
+
+static void cpsw2_init_host_port(struct cpsw2_priv *priv)
+{
 	/* Max length register */
 	writel(MAX_SIZE_STREAM_BUFFER,
 		     &priv->host_port_regs->rx_maxlen);
 
-	if (priv->ale_refcnt == 1)
-		cpsw_ale_start(priv->ale);
-
-	if (!priv->multi_if)
-		bypass_en = 0;
-
-	cpsw_ale_control_set(priv->ale, 0, ALE_BYPASS, bypass_en);
-
-	cpsw_ale_control_set(priv->ale, 0, ALE_NO_PORT_VLAN, 1);
-
-	cpsw_ale_control_set(priv->ale, priv->host_port,
-			     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
-
-	cpsw_ale_control_set(priv->ale, 0,
-			     ALE_PORT_UNKNOWN_VLAN_MEMBER_1R4,
-			     CPSW2_MASK_ALL_PORTS(priv->num_slaves + 1));
-
-	cpsw_ale_control_set(priv->ale, 0,
-			     ALE_PORT_UNKNOWN_MCAST_FLOOD_1R4,
-			     CPSW2_MASK_PHYS_PORTS(priv->num_slaves + 1));
-
-	cpsw_ale_control_set(priv->ale, 0,
-			     ALE_PORT_UNKNOWN_REG_MCAST_FLOOD_1R4,
-			     CPSW2_MASK_ALL_PORTS(priv->num_slaves + 1));
-
-	cpsw_ale_control_set(priv->ale, 0,
-			     ALE_PORT_UNTAGGED_EGRESS_1R4,
-			     CPSW2_MASK_ALL_PORTS(priv->num_slaves + 1));
 }
 
 static void cpsw2_slave_init(struct cpsw2_slave *slave, struct cpsw2_priv *priv)
@@ -2693,53 +2724,31 @@ static void cpsw2_slave_init(struct cpsw2_slave *slave, struct cpsw2_priv *priv)
 static void cpsw2_add_mcast_addr(struct cpsw2_intf *cpsw_intf, u8 *addr)
 {
 	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-	u16 vlan_id;
 
 	cpsw_ale_add_mcast(cpsw_dev->ale, addr,
 			   CPSW2_MASK_ALL_PORTS(cpsw_dev->num_slaves + 1), 0, 0,
 			   ALE_MCAST_FWD_2);
-	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID) {
-		cpsw_ale_add_mcast(cpsw_dev->ale, addr,
-				CPSW2_MASK_ALL_PORTS(cpsw_dev->num_slaves + 1),
-				ALE_VLAN, vlan_id, ALE_MCAST_FWD_2);
-	}
 }
 
 static void cpsw2_add_ucast_addr(struct cpsw2_intf *cpsw_intf, u8 *addr)
 {
 	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-	u16 vlan_id;
 
 	cpsw_ale_add_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port, 0, 0);
-
-	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID)
-		cpsw_ale_add_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port,
-				   ALE_VLAN, vlan_id);
 }
 
 static void cpsw2_del_mcast_addr(struct cpsw2_intf *cpsw_intf, u8 *addr)
 {
 	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-	u16 vlan_id;
 
 	cpsw_ale_del_mcast(cpsw_dev->ale, addr, 0, 0, 0);
-
-	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID) {
-		cpsw_ale_del_mcast(cpsw_dev->ale, addr, 0, ALE_VLAN, vlan_id);
-	}
 }
 
 static void cpsw2_del_ucast_addr(struct cpsw2_intf *cpsw_intf, u8 *addr)
 {
 	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-	u16 vlan_id;
 
 	cpsw_ale_del_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port, 0, 0);
-
-	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID) {
-		cpsw_ale_del_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port,
-				   ALE_VLAN, vlan_id);
-	}
 }
 
 static int cpsw2_add_addr(void *intf_priv, struct netcp_addr *naddr)
@@ -2790,34 +2799,6 @@ static int cpsw2_del_addr(void *intf_priv, struct netcp_addr *naddr)
 	default:
 		break;
 	}
-
-	return 0;
-}
-
-static int cpsw2_add_vid(void *intf_priv, int vid)
-{
-	struct cpsw2_intf *cpsw_intf = intf_priv;
-	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-
-	set_bit(vid, cpsw_intf->active_vlans);
-
-	cpsw_ale_add_vlan(cpsw_dev->ale, vid,
-			  CPSW2_MASK_ALL_PORTS(cpsw_dev->num_slaves + 1),
-			  CPSW2_MASK_NO_PORTS,
-			  CPSW2_MASK_ALL_PORTS(cpsw_dev->num_slaves + 1),
-			  CPSW2_MASK_PHYS_PORTS(cpsw_dev->num_slaves + 1));
-
-	return 0;
-}
-
-static int cpsw2_del_vid(void *intf_priv, int vid)
-{
-	struct cpsw2_intf *cpsw_intf = intf_priv;
-	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-
-	cpsw_ale_del_vlan(cpsw_dev->ale, vid, 0);
-
-	clear_bit(vid, cpsw_intf->active_vlans);
 
 	return 0;
 }
@@ -3372,7 +3353,6 @@ static int cpsw2_open(void *intf_priv, struct net_device *ndev)
 	struct cpsw2_intf *cpsw_intf = intf_priv;
 	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 	struct netcp_priv *netcp = netdev_priv(ndev);
-	struct cpsw_ale_params ale_params;
 	int ret = 0;
 	u32 reg;
 
@@ -3408,37 +3388,22 @@ static int cpsw2_open(void *intf_priv, struct net_device *ndev)
 		cpsw_intf->tx_pipe.dma_channel,
 		cpsw_intf->tx_pipe.dma_psflags);
 
-	cpsw_dev->ale_refcnt++;
-	if (cpsw_dev->ale_refcnt == 1) {
-		memset(&ale_params, 0, sizeof(ale_params));
-
-		ale_params.dev			= cpsw_dev->dev;
-		ale_params.ale_regs		= (void *)\
-						  ((u32)cpsw_dev->ale_reg);
-		ale_params.ale_ageout		= cpsw_dev->ale_ageout;
-		ale_params.ale_entries		= cpsw_dev->ale_entries;
-		ale_params.ale_ports		= cpsw_dev->ale_ports;
-
-		cpsw_dev->ale = cpsw_ale_create(&ale_params);
-		if (!cpsw_dev->ale) {
-			dev_err(cpsw_dev->dev,
-				"error initializing ale engine\n");
-			ret = -ENODEV;
+	if (atomic_inc_return(&cpsw_dev->ale_refcnt) == 1) {
+		ret = cpsw2_init_ale(cpsw_dev);
+		if (ret < 0) {
+			atomic_dec(&cpsw_dev->ale_refcnt);
 			goto ale_fail;
-		} else
-			dev_info(cpsw_dev->dev, "Created a cpsw ale engine\n");
+		}
+		cpsw2_init_host_port(cpsw_dev);
 	}
 
 	for_each_slave(cpsw_intf, cpsw2_slave_init, cpsw_dev);
 
-	for_each_slave(cpsw_intf, cpsw2_slave_stop, cpsw_dev);
+	for_each_slave(cpsw_intf, cpsw2_slave_stop, cpsw_intf);
 
 	/* Serdes init */
 	if (cpsw_dev->init_serdes_at_probe == 0)
 		cpsw2_serdes_init(cpsw_dev);
-
-	/* initialize host and slave ports */
-	cpsw2_init_host_port(cpsw_dev, cpsw_intf);
 
 	/* disable priority elevation and enable statistics on all ports */
 	writel(0, &cpsw_dev->regs->ptype);
@@ -3494,11 +3459,12 @@ static int cpsw2_close(void *intf_priv, struct net_device *ndev)
 
 	del_timer_sync(&cpsw_intf->timer);
 
-	cpsw_dev->ale_refcnt--;
-	if (!cpsw_dev->ale_refcnt)
-		cpsw_ale_stop(cpsw_dev->ale);
+	for_each_slave(cpsw_intf, cpsw2_slave_stop, cpsw_intf);
 
-	for_each_slave(cpsw_intf, cpsw2_slave_stop, cpsw_dev);
+	if (atomic_dec_return(&cpsw_dev->ale_refcnt) == 0) {
+		cpsw_ale_destroy(cpsw_dev->ale);
+		cpsw_dev->ale = NULL;
+	}
 
 	if (!cpsw_dev->force_no_hwtstamp)
 		netcp_unregister_rxhook(netcp, CPSW2_RXHOOK_ORDER,
@@ -3522,8 +3488,6 @@ static int cpsw2_remove(struct netcp_device *netcp_device, void *inst_priv)
 	int i;
 
 	of_node_put(cpsw_dev->interfaces);
-
-	cpsw_ale_destroy(cpsw_dev->ale);
 
 	list_for_each_entry_safe(cpsw_intf, tmp, &cpsw_dev->cpsw_intf_head,
 				 cpsw_intf_list) {
@@ -4052,8 +4016,6 @@ static int cpsw2_attach(void *inst_priv, struct net_device *ndev,
 	netcp_txpipe_init(&cpsw_intf->tx_pipe, netdev_priv(ndev),
 			  cpsw_intf->tx_chan_name, cpsw_intf->tx_queue_depth);
 
-	cpsw_intf->tx_pipe.dma_psflags	= netcp->cpsw_port;
-
 	SET_ETHTOOL_OPS(ndev, &keystone_ethtool_ops);
 
 	list_add(&cpsw_intf->cpsw_intf_list, &cpsw_dev->cpsw_intf_head);
@@ -4088,8 +4050,6 @@ static struct netcp_module cpsw_module = {
 	.release	= cpsw2_release,
 	.add_addr	= cpsw2_add_addr,
 	.del_addr	= cpsw2_del_addr,
-	.add_vid	= cpsw2_add_vid,
-	.del_vid	= cpsw2_del_vid,
 	.ioctl		= cpsw2_ioctl,
 };
 

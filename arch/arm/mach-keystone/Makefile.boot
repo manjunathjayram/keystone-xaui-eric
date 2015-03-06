@@ -1,1 +1,2 @@
-zreladdr-y	:= 0x80008000
+zreladdr-$(CONFIG_KEYSTONE_RECOVERY_KERNEL)	:= 0x90008000
+zreladdr-y	?= 0x80008000

@@ -45,4 +45,8 @@ extern void	icmp_err(struct sk_buff *, u32 info);
 extern int	icmp_init(void);
 extern void	icmp_out_count(struct net *net, unsigned char type);
 
+int icmp4_ifo_send_check(struct sk_buff *skb);
+struct sk_buff *icmp4_ifo_fragment(struct sk_buff *skb,
+		netdev_features_t features);
+
 #endif	/* _ICMP_H */

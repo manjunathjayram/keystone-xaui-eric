@@ -1570,14 +1570,17 @@ void cpsw_ale_start(struct cpsw_ale *ale)
 	   cpsw_ale_control_set(ale, i, ALE_PORT_STATE, ALE_PORT_STATE_DISABLE);
 
 	ale->ale_control_attr = dev_attr_ale_control;
+	sysfs_attr_init(&ale->ale_control_attr.attr);
 	ret = device_create_file(ale->params.dev, &ale->ale_control_attr);
 	WARN_ON(ret < 0);
 
 	ale->ale_table_attr = dev_attr_ale_table;
+	sysfs_attr_init(&ale->ale_table_attr.attr);
 	ret = device_create_file(ale->params.dev, &ale->ale_table_attr);
 	WARN_ON(ret < 0);
 
 	ale->ale_table_raw_attr = dev_attr_ale_table_raw;
+	sysfs_attr_init(&ale->ale_table_raw_attr.attr);
 	ret = device_create_file(ale->params.dev, &ale->ale_table_raw_attr);
 	WARN_ON(ret < 0);
 

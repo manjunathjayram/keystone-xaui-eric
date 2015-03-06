@@ -71,6 +71,12 @@
 #define MD5_BLOCK_SIZE    64
 #define AES_XCBC_DIGEST_SIZE	16
 
+/* Values for NULL algorithms */
+#define NULL_KEY_SIZE		0
+#define NULL_BLOCK_SIZE	1
+#define NULL_DIGEST_SIZE	0
+#define NULL_IV_SIZE		0
+
 /* Number of 32 bit words in EPIB  */
 #define SA_DMA_NUM_EPIB_WORDS	4
 
@@ -835,6 +841,9 @@ static void sa_conv_calg_to_salg(const char *cra_name,
 	if (!strcmp(cra_name, "authenc(hmac(sha1),cbc(aes))")) {
 		*ealg_id = SA_EALG_ID_AES_CBC;
 		*aalg_id = SA_AALG_ID_HMAC_SHA1;
+	} else if (!strcmp(cra_name, "authenc(hmac(sha1),ecb(cipher_null))")) {
+		*ealg_id = SA_EALG_ID_NULL;
+		*aalg_id = SA_AALG_ID_HMAC_SHA1;
 	} else if (!strcmp(cra_name, "authenc(hmac(sha1),cbc(des3_ede))")) {
 		*ealg_id = SA_EALG_ID_3DES_CBC;
 		*aalg_id = SA_AALG_ID_HMAC_SHA1;
@@ -869,6 +878,11 @@ static void sa_get_engine_info
 	case SA_EALG_ID_DES_CBC:
 		info->eng_id = SA_ENG_ID_EM1;
 		info->sc_size = SA_CTX_ENC_TYPE1_SZ;
+		break;
+
+	case SA_EALG_ID_NULL:
+		info->eng_id = SA_ENG_ID_NONE;
+		info->sc_size = 0;
 		break;
 
 	case SA_AALG_ID_HMAC_SHA1:
@@ -2245,7 +2259,11 @@ static int sa_init_sc(struct sa_ctx_info *ctx, const u8 *enc_key,
 	sa_swiz_128(sc_buf, sc_buf, SA_CTX_MAX_SZ);
 
 	/* Setup SWINFO */
-	first_engine = enc ? enc_eng.eng_id : auth_eng.eng_id;
+	if (ealg_id == SA_EALG_ID_NULL)
+		first_engine = auth_eng.eng_id;
+	else
+		first_engine = enc ? enc_eng.eng_id : auth_eng.eng_id;
+
 	queue_id = dma_get_rx_queue(ctx->rx_chan);
 	flow_id = dma_get_rx_flow(ctx->rx_chan);
 	/* TODO: take care of AEAD algorithms */
@@ -2962,6 +2980,20 @@ static struct sa_alg_tmpl sa_algs[] = {
 			}
 		}
 	},
+	{	.type = CRYPTO_ALG_TYPE_AEAD,
+		.alg.crypto = {
+			.cra_name = "authenc(hmac(sha1),ecb(cipher_null))",
+			.cra_driver_name =
+				"authenc-hmac-sha1-cipher_null-keystone-sa",
+			.cra_blocksize = NULL_BLOCK_SIZE,
+			.cra_aead = {
+				.geniv = "custom",
+				.ivsize = NULL_IV_SIZE,
+				.maxauthsize = SHA1_DIGEST_SIZE,
+			}
+		}
+	},
+
 #ifdef TODO
 	{	.type = CRYPTO_ALG_TYPE_AEAD,
 		.alg.crypto = {

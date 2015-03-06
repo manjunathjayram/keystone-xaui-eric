@@ -1,0 +1,1327 @@
+/*
+ * Keystone II Hawking EVM device tree file
+ *
+ * Copyright (c) 2012-13, Texas Instruments Inc
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met:
+ *
+ * * Redistributions of source code must retain the above copyright
+ *	notice, this list of conditions and the following disclaimer.
+ * * Redistributions in binary form must reproduce the above copyright
+ *	notice, this list of conditions and the following disclaimer in
+ *	the documentation and/or other materials provided with the
+ *	distribution.
+ * * Neither the name of TI nor the names of its contributors may be
+ *	used to endorse or promote products derived from this software
+ *	without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+ * IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+ * PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+ * TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/dts-v1/;
+
+/ {
+	#address-cells = <0x2>;
+	#size-cells = <0x2>;
+	model = "Texas Instruments Keystone 2 SoC";
+	interrupt-parent = <0x1>;
+	compatible = "ti,k2hk-evm", "ti,keystone";
+
+	chosen {
+		bootargs = "console=ttyS0,115200n8 earlyprintk rootwait=1 rootfstype=ubifs root=ubi0:rootfs-recovery rootflags=sync rw ubi.mtd=2,2048 elfcorehdr=0x97f00000";
+	};
+
+	aliases {
+		serial0 = "/soc/serial@02530c00";
+	};
+
+	memory {
+		device_type = "memory";
+		reg = <0x8 0x10000000 0x0 0x8000000>;
+	};
+
+	soc {
+		#address-cells = <0x1>;
+		#size-cells = <0x1>;
+		compatible = "ti,keystone", "simple-bus";
+		interrupt-parent = <0x1>;
+		ranges = <0x0 0x0 0x0 0xc0000000>;
+
+		rstctrl@23100e8 {
+			compatible = "ti,keystone-reset";
+			reg = <0x23100e8 0x4 0x2620328 0x4>;
+		};
+
+		clocks {
+			#address-cells = <0x1>;
+			#size-cells = <0x1>;
+			ranges;
+
+			mainmuxclk@2310108 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,main-pll-mux-clk";
+				clocks = <0x3 0x4>;
+				reg = <0x2310108 0x4>;
+				shift = <0x17>;
+				width = <0x1>;
+				linux,phandle = <0x5>;
+				phandle = <0x5>;
+			};
+
+			chipclk1 {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock-factor";
+				clocks = <0x5>;
+				clock-mult = <0x1>;
+				clock-div = <0x1>;
+				linux,phandle = <0x6>;
+				phandle = <0x6>;
+			};
+
+			chipclk1rstiso {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock-factor";
+				clocks = <0x5>;
+				clock-mult = <0x1>;
+				clock-div = <0x1>;
+				linux,phandle = <0x8>;
+				phandle = <0x8>;
+			};
+
+			gemtraceclk@2310120 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,pll-divider-clk";
+				clocks = <0x5>;
+				reg = <0x2310120 0x4>;
+				shift = <0x0>;
+				width = <0x8>;
+				linux,phandle = <0x39>;
+				phandle = <0x39>;
+			};
+
+			chipstmxptclk {
+				#clock-cells = <0x0>;
+				compatible = "davinci,pll-divider-clk";
+				clocks = <0x5>;
+				reg = <0x2310164 0x4>;
+				shift = <0x0>;
+				width = <0x8>;
+			};
+
+			chipclk12 {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock-factor";
+				clocks = <0x6>;
+				clock-mult = <0x1>;
+				clock-div = <0x2>;
+				linux,phandle = <0xd>;
+				phandle = <0xd>;
+			};
+
+			chipclk13 {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock-factor";
+				clocks = <0x6>;
+				clock-mult = <0x1>;
+				clock-div = <0x3>;
+				linux,phandle = <0xa>;
+				phandle = <0xa>;
+			};
+
+			paclk13 {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock-factor";
+				clocks = <0x7>;
+				clock-mult = <0x1>;
+				clock-div = <0x3>;
+				linux,phandle = <0xb>;
+				phandle = <0xb>;
+			};
+
+			chipclk14 {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock-factor";
+				clocks = <0x6>;
+				clock-mult = <0x1>;
+				clock-div = <0x4>;
+			};
+
+			chipclk16 {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock-factor";
+				clocks = <0x6>;
+				clock-mult = <0x1>;
+				clock-div = <0x6>;
+				linux,phandle = <0x9>;
+				phandle = <0x9>;
+			};
+
+			chipclk112 {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock-factor";
+				clocks = <0x6>;
+				clock-mult = <0x1>;
+				clock-div = <0xc>;
+			};
+
+			chipclk124 {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock-factor";
+				clocks = <0x6>;
+				clock-mult = <0x1>;
+				clock-div = <0x18>;
+			};
+
+			chipclk1rstiso13 {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock-factor";
+				clocks = <0x8>;
+				clock-mult = <0x1>;
+				clock-div = <0x3>;
+				linux,phandle = <0x15>;
+				phandle = <0x15>;
+			};
+
+			chipclk1rstiso14 {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock-factor";
+				clocks = <0x8>;
+				clock-mult = <0x1>;
+				clock-div = <0x4>;
+			};
+
+			chipclk1rstiso16 {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock-factor";
+				clocks = <0x8>;
+				clock-mult = <0x1>;
+				clock-div = <0x6>;
+			};
+
+			chipclk1rstiso112 {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock-factor";
+				clocks = <0x8>;
+				clock-mult = <0x1>;
+				clock-div = <0xc>;
+				linux,phandle = <0xe>;
+				phandle = <0xe>;
+			};
+
+			clkmodrst0 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0x9>;
+				clock-output-names = "modrst0";
+				status = "enabled";
+				reg = <0x2350000 0x1000>;
+				linux,phandle = <0xf>;
+				phandle = <0xf>;
+			};
+
+			clkaemifspi {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0x9>;
+				clock-output-names = "aemif-spi";
+				reg = <0x2350000 0x1000>;
+				status = "enabled";
+				lpsc = <0x3>;
+				linux,phandle = <0x10>;
+				phandle = <0x10>;
+			};
+
+			clkdebugsstrc {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "debugss-trc";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x5>;
+				pd = <0x1>;
+				linux,phandle = <0x38>;
+				phandle = <0x38>;
+			};
+
+			clktetbtrc {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "tetb-trc";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x6>;
+				pd = <0x1>;
+				linux,phandle = <0x3a>;
+				phandle = <0x3a>;
+			};
+
+			clkpa {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xb>;
+				clock-output-names = "pa";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x7>;
+				pd = <0x2>;
+				linux,phandle = <0xc>;
+				phandle = <0xc>;
+			};
+
+			clkcpgmac {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xc>;
+				clock-output-names = "cpgmac";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x8>;
+				pd = <0x2>;
+				linux,phandle = <0x31>;
+				phandle = <0x31>;
+			};
+
+			clksa {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xc>;
+				clock-output-names = "sa";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x9>;
+				pd = <0x2>;
+				linux,phandle = <0x36>;
+				phandle = <0x36>;
+			};
+
+			clkpcie {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xd>;
+				clock-output-names = "pcie";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0xa>;
+				pd = <0x3>;
+				linux,phandle = <0x1b>;
+				phandle = <0x1b>;
+			};
+
+			clksr {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xe>;
+				clock-output-names = "sr";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0xd>;
+				pd = <0x6>;
+				linux,phandle = <0x1e>;
+				phandle = <0x1e>;
+			};
+
+			clkmsmcsram {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0x6>;
+				clock-output-names = "msmcsram";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0xe>;
+				pd = <0x7>;
+			};
+
+			clkgem0 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0x6>;
+				clock-output-names = "gem0";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0xf>;
+				pd = <0x8>;
+				linux,phandle = <0x22>;
+				phandle = <0x22>;
+			};
+
+			clkddr30 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xd>;
+				clock-output-names = "ddr3-0";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x17>;
+				pd = <0x10>;
+			};
+
+			clkwdtimer0 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xf>;
+				clock-output-names = "timer0";
+				status = "enabled";
+				reg = <0x2350000 0x1000>;
+				linux,phandle = <0x1c>;
+				phandle = <0x1c>;
+			};
+
+			clkwdtimer1 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xf>;
+				clock-output-names = "timer1";
+				status = "enabled";
+				reg = <0x2350000 0x1000>;
+			};
+
+			clkwdtimer2 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xf>;
+				clock-output-names = "timer2";
+				status = "enabled";
+				reg = <0x2350000 0x1000>;
+			};
+
+			clkwdtimer3 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xf>;
+				clock-output-names = "timer3";
+				status = "enabled";
+				reg = <0x2350000 0x1000>;
+			};
+
+			clktimer15 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xf>;
+				clock-output-names = "timer15";
+				status = "enabled";
+				reg = <0x2350000 0x1000>;
+				linux,phandle = <0x1d>;
+				phandle = <0x1d>;
+			};
+
+			clkuart0 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xf>;
+				clock-output-names = "uart0";
+				status = "enabled";
+				reg = <0x2350000 0x1000>;
+				linux,phandle = <0x16>;
+				phandle = <0x16>;
+			};
+
+			clkuart1 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xf>;
+				clock-output-names = "uart1";
+				status = "enabled";
+				reg = <0x2350000 0x1000>;
+			};
+
+			clkaemif {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0x10>;
+				clock-output-names = "aemif";
+				status = "enabled";
+				reg = <0x2350000 0x1000>;
+				linux,phandle = <0x17>;
+				phandle = <0x17>;
+			};
+
+			clkusim {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xf>;
+				clock-output-names = "usim";
+				status = "enabled";
+				reg = <0x2350000 0x1000>;
+			};
+
+			clki2c {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xf>;
+				clock-output-names = "i2c";
+				status = "enabled";
+				reg = <0x2350000 0x1000>;
+				linux,phandle = <0x19>;
+				phandle = <0x19>;
+			};
+
+			clkspi {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0x10>;
+				clock-output-names = "spi";
+				status = "enabled";
+				reg = <0x2350000 0x1000>;
+				linux,phandle = <0x18>;
+				phandle = <0x18>;
+			};
+
+			clkgpio {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xf>;
+				clock-output-names = "gpio";
+				status = "enabled";
+				reg = <0x2350000 0x1000>;
+				linux,phandle = <0x1a>;
+				phandle = <0x1a>;
+			};
+
+			clkkeymgr {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xf>;
+				clock-output-names = "keymgr";
+				status = "enabled";
+				reg = <0x2350000 0x1000>;
+			};
+
+			mainpllclk@2310110 {
+				#clock-cells = <0x0>;
+				compatible = "keystone,main-pll-clk";
+				clocks = <0x4>;
+				reg = <0x2310110 0x4 0x2620350 0x4>;
+				pll_has_pllctrl;
+				pllm_lower_mask = <0x3f>;
+				pllm_upper_mask = <0x7f000>;
+				pllm_upper_shift = <0x6>;
+				plld_mask = <0x3f>;
+				fixed_postdiv = <0x2>;
+				linux,phandle = <0x3>;
+				phandle = <0x3>;
+			};
+
+			armpllclk@2620370 {
+				#clock-cells = <0x0>;
+				compatible = "keystone,pll-clk";
+				clocks = <0x11>;
+				clock-output-names = "arm-pll-clk";
+				reg = <0x2620370 0x4>;
+				pllm_upper_mask = <0x7ffc0>;
+				pllm_upper_shift = <0x6>;
+				plld_mask = <0x3f>;
+				linux,phandle = <0x37>;
+				phandle = <0x37>;
+			};
+
+			ddr3a_clk@2620360 {
+				#clock-cells = <0x0>;
+				compatible = "keystone,pll-clk";
+				clocks = <0x12>;
+				clock-output-names = "ddr3a-pll-clk";
+				reg = <0x2620360 0x4>;
+				pllm_upper_mask = <0x7ffc0>;
+				pllm_upper_shift = <0x6>;
+				plld_mask = <0x3f>;
+			};
+
+			ddr3b_clk@2620368 {
+				#clock-cells = <0x0>;
+				compatible = "keystone,pll-clk";
+				clocks = <0x13>;
+				clock-output-names = "ddr3b-pll-clk";
+				reg = <0x2620368 0x4>;
+				pllm_upper_mask = <0x7ffc0>;
+				pllm_upper_shift = <0x6>;
+				plld_mask = <0x3f>;
+			};
+
+			papllclk@2620358 {
+				#clock-cells = <0x0>;
+				compatible = "keystone,pll-clk";
+				clocks = <0x14>;
+				reg = <0x2620358 0x4>;
+				pllm_upper_mask = <0x7ffc0>;
+				pllm_upper_shift = <0x6>;
+				plld_mask = <0x3f>;
+				linux,phandle = <0x7>;
+				phandle = <0x7>;
+			};
+
+			clkusb {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0x9>;
+				clock-output-names = "usb";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x2>;
+				linux,phandle = <0x1f>;
+				phandle = <0x1f>;
+			};
+
+			clksrio {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0x15>;
+				clock-output-names = "srio";
+				base-flags = "ignore-unused";
+				status = "disabled";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0xb>;
+				pd = <0x4>;
+			};
+
+			clkhyperlink0 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xd>;
+				clock-output-names = "hyperlink-0";
+				base-flags = "ignore-unused";
+				status = "disabled";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0xc>;
+				pd = <0x5>;
+			};
+
+			clkgem1 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0x6>;
+				clock-output-names = "gem1";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x10>;
+				pd = <0x9>;
+				linux,phandle = <0x24>;
+				phandle = <0x24>;
+			};
+
+			clkgem2 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0x6>;
+				clock-output-names = "gem2";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x11>;
+				pd = <0xa>;
+				linux,phandle = <0x26>;
+				phandle = <0x26>;
+			};
+
+			clkgem3 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0x6>;
+				clock-output-names = "gem3";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x12>;
+				pd = <0xb>;
+				linux,phandle = <0x28>;
+				phandle = <0x28>;
+			};
+
+			clkgem4 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0x6>;
+				clock-output-names = "gem4";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x13>;
+				pd = <0xc>;
+				linux,phandle = <0x2a>;
+				phandle = <0x2a>;
+			};
+
+			clkgem5 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0x6>;
+				clock-output-names = "gem5";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x14>;
+				pd = <0xd>;
+				linux,phandle = <0x2c>;
+				phandle = <0x2c>;
+			};
+
+			clkgem6 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0x6>;
+				clock-output-names = "gem6";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x15>;
+				pd = <0xe>;
+				linux,phandle = <0x2e>;
+				phandle = <0x2e>;
+			};
+
+			clkgem7 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0x6>;
+				clock-output-names = "gem7";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x16>;
+				pd = <0xf>;
+				linux,phandle = <0x30>;
+				phandle = <0x30>;
+			};
+
+			clkddr31 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "ddr3-1";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x18>;
+				pd = <0x10>;
+			};
+
+			clktac {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "tac";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x19>;
+				pd = <0x11>;
+			};
+
+			clktac01 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "rac-01";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x1a>;
+				pd = <0x11>;
+			};
+
+			clktac23 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "rac-23";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x1b>;
+				pd = <0x12>;
+			};
+
+			clkfftc0 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "fftc-0";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x1c>;
+				pd = <0x13>;
+			};
+
+			clkfftc1 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "fftc-1";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x1d>;
+				pd = <0x13>;
+			};
+
+			clkfftc2 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "fftc-2";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x1e>;
+				pd = <0x14>;
+			};
+
+			clkfftc3 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "fftc-3";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x1f>;
+				pd = <0x14>;
+			};
+
+			clkfftc4 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "fftc-4";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x20>;
+				pd = <0x14>;
+			};
+
+			clkfftc5 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "fftc-5";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x21>;
+				pd = <0x14>;
+			};
+
+			clkaif {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "aif";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x22>;
+				pd = <0x15>;
+			};
+
+			clktcp3d0 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "tcp3d-0";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x23>;
+				pd = <0x16>;
+			};
+
+			clktcp3d1 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "tcp3d-1";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x24>;
+				pd = <0x16>;
+			};
+
+			clktcp3d2 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "tcp3d-2";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x25>;
+				pd = <0x17>;
+			};
+
+			clktcp3d3 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "tcp3d-3";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x26>;
+				pd = <0x17>;
+			};
+
+			clkvcp0 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "vcp-0";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x27>;
+				pd = <0x18>;
+			};
+
+			clkvcp1 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "vcp-1";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x28>;
+				pd = <0x18>;
+			};
+
+			clkvcp2 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "vcp-2";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x29>;
+				pd = <0x18>;
+			};
+
+			clkvcp3 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "vcp-3";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x2a>;
+				pd = <0x18>;
+			};
+
+			clkvcp4 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "vcp-4";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x2b>;
+				pd = <0x19>;
+			};
+
+			clkvcp5 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "vcp-5";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x2c>;
+				pd = <0x19>;
+			};
+
+			clkvcp6 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "vcp-6";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x2d>;
+				pd = <0x19>;
+			};
+
+			clkvcp7 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "vcp-7";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x2e>;
+				pd = <0x19>;
+			};
+
+			clkbcp {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "bcp";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x2f>;
+				pd = <0x1a>;
+			};
+
+			clkdxb {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "dxb";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x30>;
+				pd = <0x1b>;
+			};
+
+			clkhyperlink1 {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xd>;
+				clock-output-names = "hyperlink-1";
+				base-flags = "ignore-unused";
+				status = "disabled";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x31>;
+				pd = <0x1c>;
+			};
+
+			clkxge {
+				#clock-cells = <0x0>;
+				compatible = "davinci,psc-clk";
+				clocks = <0xa>;
+				clock-output-names = "xge";
+				base-flags = "ignore-unused";
+				reg = <0x2350000 0x1000>;
+				lpsc = <0x32>;
+				pd = <0x1d>;
+				linux,phandle = <0x33>;
+				phandle = <0x33>;
+			};
+
+			refclkmain {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock";
+				clock-frequency = <0x7530000>;
+				clock-output-names = "refclk-main";
+				linux,phandle = <0x4>;
+				phandle = <0x4>;
+			};
+
+			refclkarm {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock";
+				clock-frequency = <0x7735940>;
+				clock-output-names = "refclk-arm";
+				linux,phandle = <0x11>;
+				phandle = <0x11>;
+			};
+
+			refclkpass {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock";
+				clock-frequency = <0x7530000>;
+				clock-output-names = "refclk-pass";
+				linux,phandle = <0x14>;
+				phandle = <0x14>;
+			};
+
+			refclkddr3a {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock";
+				clock-frequency = <0x5f5e100>;
+				clock-output-names = "refclk-ddr3a";
+				linux,phandle = <0x12>;
+				phandle = <0x12>;
+			};
+
+			refclkddr3b {
+				#clock-cells = <0x0>;
+				compatible = "fixed-clock";
+				clock-frequency = <0x5f5e100>;
+				clock-output-names = "refclk-ddr3b";
+				linux,phandle = <0x13>;
+				phandle = <0x13>;
+			};
+		};
+
+		interrupt-controller@02560000 {
+			compatible = "arm,cortex-a15-gic";
+			#interrupt-cells = <0x3>;
+			#size-cells = <0x0>;
+			#address-cells = <0x1>;
+			interrupt-controller;
+			reg = <0x2561000 0x1000 0x2562000 0x2000>;
+			linux,phandle = <0x1>;
+			phandle = <0x1>;
+		};
+
+		ipcirq0@26202bc {
+			compatible = "ti,keystone-ipc-irq";
+			reg = <0x26202a0 0x4 0x2620260 0x4>;
+			interrupts = <0x0 0x4 0x101>;
+			interrupt-controller;
+			#interrupt-cells = <0x2>;
+			linux,phandle = <0x20>;
+			phandle = <0x20>;
+		};
+
+		timer {
+			compatible = "arm,armv7-timer";
+			interrupts = <0x1 0xd 0xf08 0x1 0xe 0xf08>;
+		};
+
+		serial@02530c00 {
+			compatible = "ns16550a";
+			current-speed = <0x1c200>;
+			reg-shift = <0x2>;
+			reg-io-width = <0x4>;
+			reg = <0x2530c00 0x100>;
+			clocks = <0x16>;
+			interrupts = <0x0 0x115 0xf01>;
+		};
+
+		serial@02531000 {
+			compatible = "ns16550a";
+			current-speed = <0x1c200>;
+			reg-shift = <0x2>;
+			reg-io-width = <0x4>;
+			reg = <0x2531000 0x100>;
+			clocks = <0x16>;
+			interrupts = <0x0 0x118 0xf01>;
+		};
+
+		aemif@30000000 {
+			compatible = "ti,davinci-aemif";
+			#address-cells = <0x2>;
+			#size-cells = <0x1>;
+			reg = <0x21000a00 0x100>;
+			ranges = <0x2 0x0 0x30000000 0x8000000 0x3 0x0 0x34000000 0x4000000 0x4 0x0 0x38000000 0x4000000 0x5 0x0 0x3c000000 0x4000000 0x6 0x0 0x21000a00 0x100>;
+			clocks = <0x17>;
+			clock-names = "aemif";
+
+			cs2@30000000 {
+				compatible = "ti,davinci-cs";
+				#address-cells = <0x1>;
+				#size-cells = <0x1>;
+				ti,davinci-cs-ta = <0xc>;
+				ti,davinci-cs-rhold = <0x6>;
+				ti,davinci-cs-rstrobe = <0x17>;
+				ti,davinci-cs-rsetup = <0x9>;
+				ti,davinci-cs-whold = <0x8>;
+				ti,davinci-cs-wstrobe = <0x17>;
+				ti,davinci-cs-wsetup = <0x8>;
+			};
+
+			nand@2,0 {
+				compatible = "ti,davinci-nand";
+				reg = <0x2 0x0 0x8000000 0x6 0x0 0x100>;
+				#address-cells = <0x1>;
+				#size-cells = <0x1>;
+				ti,davinci-chipselect = <0x0>;
+				ti,davinci-mask-ale = <0x2000>;
+				ti,davinci-mask-cle = <0x4000>;
+				ti,davinci-mask-chipsel = <0x0>;
+				ti,davinci-ecc-mode = "hw";
+				ti,davinci-ecc-bits = <0x4>;
+				ti,davinci-nand-use-bbt;
+				ti,davinci-no-subpage-write;
+				clocks = <0x17>;
+				clock-names = "aemif";
+
+				partition@0 {
+					label = "u-boot";
+					reg = <0x0 0x100000>;
+					read-only;
+				};
+
+				partition@100000 {
+					label = "params";
+					reg = <0x100000 0x80000>;
+					read-only;
+				};
+
+				partition@180000 {
+					label = "ubifs";
+					reg = <0x180000 0x1fe80000>;
+				};
+			};
+		};
+
+		spi@21000400 {
+			#address-cells = <0x1>;
+			#size-cells = <0x0>;
+			compatible = "ti,davinci-spi-v1";
+			reg = <0x21000400 0x200>;
+			ti,davinci-spi-num-cs = <0x4>;
+			ti,davinci-spi-intr-line = <0x0>;
+			interrupts = <0x0 0x124 0xf01>;
+			clocks = <0x18>;
+
+			n25q128@0 {
+				#address-cells = <0x1>;
+				#size-cells = <0x1>;
+				compatible = "st,n25q128", "st,m25p";
+				spi-max-frequency = <0x1c9c380>;
+				reg = <0x0>;
+
+				partition@0 {
+					label = "u-boot-spl";
+					reg = <0x0 0x80000>;
+					read-only;
+				};
+
+				partition@1 {
+					label = "test";
+					reg = <0x80000 0xf80000>;
+				};
+			};
+
+			spi@1 {
+				#address-cells = <0x1>;
+				#size-cells = <0x1>;
+				compatible = "rohm,dh2228fv";
+				spi-max-frequency = <0x1c9c380>;
+				reg = <0x3>;
+			};
+		};
+
+		spi@21000600 {
+			#address-cells = <0x1>;
+			#size-cells = <0x0>;
+			compatible = "ti,davinci-spi-v1";
+			reg = <0x21000600 0x200>;
+			ti,davinci-spi-num-cs = <0x4>;
+			ti,davinci-spi-intr-line = <0x0>;
+			interrupts = <0x0 0x128 0xf01>;
+			clocks = <0x18>;
+		};
+
+		spi@21000800 {
+			#address-cells = <0x1>;
+			#size-cells = <0x0>;
+			compatible = "ti,davinci-spi-v1";
+			reg = <0x21000800 0x200>;
+			ti,davinci-spi-num-cs = <0x4>;
+			ti,davinci-spi-intr-line = <0x0>;
+			interrupts = <0x0 0x12c 0xf01>;
+			clocks = <0x18>;
+		};
+
+		i2c0@2530000 {
+			compatible = "ti,davinci-i2c";
+			reg = <0x2530000 0x400>;
+			clock-frequency = <0x186a0>;
+			clocks = <0x19>;
+			interrupts = <0x0 0x11b 0xf01>;
+			#address-cells = <0x1>;
+			#size-cells = <0x0>;
+
+			dtt@50 {
+				compatible = "at,24c1024";
+				reg = <0x50>;
+			};
+		};
+
+		i2c1@2530400 {
+			compatible = "ti,davinci-i2c";
+			reg = <0x2530400 0x400>;
+			clock-frequency = <0x186a0>;
+			clocks = <0x19>;
+			interrupts = <0x0 0x11e 0xf01>;
+			#address-cells = <0x1>;
+			#size-cells = <0x0>;
+		};
+
+		i2c2@2530800 {
+			compatible = "ti,davinci-i2c";
+			reg = <0x2530800 0x400>;
+			clock-frequency = <0x186a0>;
+			clocks = <0x19>;
+			interrupts = <0x0 0x121 0xf01>;
+			#address-cells = <0x1>;
+			#size-cells = <0x0>;
+
+			pca@20 {
+				compatible = "nxp,pca9555";
+				status = "disabled";
+				reg = <0x20>;
+			};
+		};
+
+		mpax {
+			compatible = "ti,uio-module-drv";
+			mem = <0xbc00000 0xa00>;
+			label = "mpax";
+		};
+
+		edma3 {
+			compatible = "ti,uio-module-drv";
+			mem = <0x2700000 0xc0000>;
+			label = "edma3";
+		};
+
+		secmgr {
+			compatible = "ti,uio-module-drv";
+			mem = <0x2500100 0x4>;
+			label = "secmgr";
+		};
+
+		wdt@22f0080 {
+			compatible = "ti,davinci-wdt";
+			reg = <0x22f0080 0x80>;
+			clocks = <0x1c>;
+			clock-names = "watchdog";
+		};
+
+		timer@22f0000 {
+			compatible = "ti,keystone-timer";
+			reg = <0x22f0000 0x80>;
+			interrupts = <0x0 0x6e 0xf01>;
+			clocks = <0x1d>;
+		};
+
+		srss@2330000 {
+			compatible = "ti,keystone-srss";
+			reg = <0x2330000 0x800>;
+			clocks = <0x1e>;
+			clock-names = "srssclock";
+		};
+
+		sysctrl {
+			compatible = "ti,keystone-sys";
+			reg = <0x21010000 0x200>;
+			interrupts = <0x0 0x18 0xf01 0x0 0x1c0 0xf01>;
+		};
+
+		ssusb3_phy {
+			compatible = "usb-nop-xceiv";
+		};
+
+		dwc@2680000 {
+			compatible = "ti,keystone-dwc3";
+			#address-cells = <0x1>;
+			#size-cells = <0x1>;
+			reg = <0x2690000 0x70000 0x2680000 0x10000 0x2620738 0x20>;
+			interrupts = <0x0 0x189 0xf01>;
+			clocks = <0x1f>;
+			clock-names = "usb";
+			interrupt-controller;
+			#interrupt-cells = <0x2>;
+		};
+
+		debugss {
+			compatible = "ti,keystone-debugss";
+			clocks = <0x3 0x37 0x38 0x39 0x3a>;
+			clock-names = "mainpllclock", "armpllclock", "debugssclock", "gemtraceclock", "tetbclock";
+		};
+
+		pmu {
+			compatible = "arm,cortex-a15-pmu";
+			interrupts = <0x0 0x14 0xf01 0x0 0x15 0xf01 0x0 0x16 0xf01 0x0 0x17 0xf01>;
+		};
+	};
+
+	cpus {
+		#address-cells = <0x1>;
+		#size-cells = <0x0>;
+		interrupt-parent = <0x1>;
+
+		cpu@0 {
+			compatible = "arm,cortex-a15";
+			device_type = "cpu";
+			reg = <0x0>;
+			clocks = <0x37>;
+		};
+	};
+};

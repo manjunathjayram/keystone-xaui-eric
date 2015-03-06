@@ -565,7 +565,6 @@ struct cpsw_intf {
 	struct list_head	 cpsw_intf_list;
 	struct timer_list	 timer;
 	u32			 sgmii_link;
-	unsigned long		 active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
 };
 
 static struct cpsw_priv *global_priv;		/* FIXME: REMOVE THIS!! */
@@ -2193,6 +2192,11 @@ static void cpsw_slave_stop(struct cpsw_slave *slave,
 	else
 		sgmii_port_regs = priv->sgmii_port34_regs;
 
+	/* disable forwarding */
+	if (slave->ale)
+		cpsw_ale_control_set(slave->ale, slave->port_num,
+				ALE_PORT_STATE, ALE_PORT_STATE_DISABLE);
+
 	keystone_sgmii_rtreset(sgmii_port_regs, slave->slave_num, true);
 
 	cpsw_port_reset(slave);
@@ -2358,51 +2362,30 @@ static void cpsw_slave_init(struct cpsw_slave *slave, struct cpsw_priv *priv)
 static void cpsw_add_mcast_addr(struct cpsw_intf *cpsw_intf, u8 *addr)
 {
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-	u16 vlan_id;
 
 	cpsw_ale_add_mcast(cpsw_dev->ale, addr, CPSW_MASK_ALL_PORTS, 0, 0,
 			   ALE_MCAST_FWD_2);
-	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID) {
-		cpsw_ale_add_mcast(cpsw_dev->ale, addr, CPSW_MASK_ALL_PORTS,
-				   ALE_VLAN, vlan_id, ALE_MCAST_FWD_2);
-	}
 }
 
 static void cpsw_add_ucast_addr(struct cpsw_intf *cpsw_intf, u8 *addr)
 {
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-	u16 vlan_id;
 
 	cpsw_ale_add_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port, 0, 0);
-
-	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID)
-		cpsw_ale_add_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port,
-				   ALE_VLAN, vlan_id);
 }
 
 static void cpsw_del_mcast_addr(struct cpsw_intf *cpsw_intf, u8 *addr)
 {
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-	u16 vlan_id;
 
 	cpsw_ale_del_mcast(cpsw_dev->ale, addr, 0, 0, 0);
-
-	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID) {
-		cpsw_ale_del_mcast(cpsw_dev->ale, addr, 0, ALE_VLAN, vlan_id);
-	}
 }
 
 static void cpsw_del_ucast_addr(struct cpsw_intf *cpsw_intf, u8 *addr)
 {
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-	u16 vlan_id;
 
 	cpsw_ale_del_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port, 0, 0);
-
-	for_each_set_bit(vlan_id, cpsw_intf->active_vlans, VLAN_N_VID) {
-		cpsw_ale_del_ucast(cpsw_dev->ale, addr, cpsw_dev->host_port,
-				   ALE_VLAN, vlan_id);
-	}
 }
 
 int cpsw_add_addr(void *intf_priv, struct netcp_addr *naddr)
@@ -2453,32 +2436,6 @@ int cpsw_del_addr(void *intf_priv, struct netcp_addr *naddr)
 	default:
 		break;
 	}
-
-	return 0;
-}
-
-int cpsw_add_vid(void *intf_priv, int vid)
-{
-	struct cpsw_intf *cpsw_intf = intf_priv;
-	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-
-	set_bit(vid, cpsw_intf->active_vlans);
-
-	cpsw_ale_add_vlan(cpsw_dev->ale, vid, CPSW_MASK_ALL_PORTS,
-			  CPSW_MASK_NO_PORTS,
-			  CPSW_MASK_ALL_PORTS, CPSW_MASK_PHYS_PORTS);
-
-	return 0;
-}
-
-int cpsw_del_vid(void *intf_priv, int vid)
-{
-	struct cpsw_intf *cpsw_intf = intf_priv;
-	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-
-	cpsw_ale_del_vlan(cpsw_dev->ale, vid, 0);
-
-	clear_bit(vid, cpsw_intf->active_vlans);
 
 	return 0;
 }
@@ -3141,10 +3098,12 @@ static int cpsw_close(void *intf_priv, struct net_device *ndev)
 
 	del_timer_sync(&cpsw_intf->timer);
 
-	if (atomic_dec_return(&cpsw_dev->ale_refcnt) == 0)
-		cpsw_ale_stop(cpsw_dev->ale);
-
 	for_each_slave(cpsw_intf, cpsw_slave_stop, cpsw_intf);
+
+	if (atomic_dec_return(&cpsw_dev->ale_refcnt) == 0) {
+		cpsw_ale_destroy(cpsw_dev->ale);
+		cpsw_dev->ale = NULL;
+	}
 
 	if(!cpsw_dev->force_no_hwtstamp)
 		netcp_unregister_rxhook(netcp, CPSW_RXHOOK_ORDER,
@@ -3168,8 +3127,6 @@ static int cpsw_remove(struct netcp_device *netcp_device, void *inst_priv)
 	int i;
 
 	of_node_put(cpsw_dev->interfaces);
-
-	cpsw_ale_destroy(cpsw_dev->ale);
 
 	list_for_each_entry_safe(cpsw_intf, tmp, &cpsw_dev->cpsw_intf_head,
 				 cpsw_intf_list) {
@@ -3725,8 +3682,6 @@ static struct netcp_module cpsw_module = {
 	.release	= cpsw_release,
 	.add_addr	= cpsw_add_addr,
 	.del_addr	= cpsw_del_addr,
-	.add_vid	= cpsw_add_vid,
-	.del_vid	= cpsw_del_vid,
 	.ioctl		= cpsw_ioctl,
 };
 
