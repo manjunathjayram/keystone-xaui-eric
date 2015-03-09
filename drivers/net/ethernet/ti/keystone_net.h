@@ -131,7 +131,7 @@ struct netcp_priv {
 	spinlock_t			 lock;
 	int				 rx_packet_max;
 	const char			*rx_chan_name;
-	u32				 link_state;
+	u32				 phy_link_state_mask;
 	struct list_head		 module_head;
 	struct list_head		 interface_list;
 	struct list_head		 addr_list;
