@@ -63,6 +63,9 @@
 #define MACSL_RX_ENABLE_CSF			BIT(23)
 #define MACSL_RX_ENABLE_EXT_CTL			BIT(18)
 #define MACSL_ENABLE				BIT(5)
+#define MACSL_DEFAULT_CONFIG			(MACSL_ENABLE |\
+						 MACSL_RX_ENABLE_EXT_CTL |\
+						 MACSL_RX_ENABLE_CSF)
 #define GMACSL_RET_WARN_RESET_INCOMPLETE	-2
 
 #define CPSW_NUM_PORTS		                5
@@ -154,9 +157,12 @@
 
 #define MAX_SLAVES			4
 
-/* s: 0-based slave_port */
+/* s: 0-based slave_num */
 #define SGMII_BASE(s) \
 	(((s) < 2) ? cpsw_dev->sgmii_port_regs : cpsw_dev->sgmii_port34_regs)
+
+#define IS_SGMII_MAC_PHY(i) \
+	(((i) == SGMII_LINK_MAC_PHY) || ((i) == SGMII_LINK_MAC_PHY_MASTER))
 
 /* CPSW SERDES */
 #define CPSW_SERDES_MAX_NUM		1
@@ -169,6 +175,9 @@ struct cpts_port_ts_ctl {
 	u8	ts_mcast_type;
 };
 
+/* slave_num: 0-based
+ *  port_num: 1-based
+ */
 struct cpsw_slave {
 	struct cpsw_slave_regs __iomem	*regs;
 	struct cpsw_sliver_regs __iomem	*sliver;
@@ -547,8 +556,11 @@ struct cpsw_priv {
 	u32				num_serdes;
 	u32				serdes_lanes;
 	struct serdes			serdes;
+	u32				opened;
 };
 
+/* slave_port: 0-based (currently relevant only in multi_if mode)
+*/
 struct cpsw_intf {
 	struct net_device	*ndev;
 	struct device		*dev;
@@ -564,7 +576,7 @@ struct cpsw_intf {
 	u32			 multi_if;
 	struct list_head	 cpsw_intf_list;
 	struct timer_list	 timer;
-	u32			 sgmii_link;
+	u32			 link_state;
 };
 
 static struct cpsw_priv *global_priv;		/* FIXME: REMOVE THIS!! */
@@ -2101,8 +2113,7 @@ static void _cpsw_adjust_link(struct cpsw_slave *slave, bool *link)
 
 	if (phy->link) {
 		mac_control = slave->mac_control;
-		mac_control |= MACSL_ENABLE | MACSL_RX_ENABLE_EXT_CTL |
-				MACSL_RX_ENABLE_CSF;
+		mac_control |= MACSL_DEFAULT_CONFIG;
 		/* enable forwarding */
 		cpsw_ale_control_set(slave->ale, slave_port,
 				     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
@@ -2137,9 +2148,9 @@ static void cpsw_adjust_link(struct net_device *n_dev, void *context)
 	_cpsw_adjust_link(slave, &link);
 
 	if (link)
-		netcp->link_state |= BIT(slave->slave_num);
+		netcp->phy_link_state_mask |= BIT(slave->slave_num);
 	else
-		netcp->link_state &= ~BIT(slave->slave_num);
+		netcp->phy_link_state_mask &= ~BIT(slave->slave_num);
 }
 
 /*
@@ -2174,11 +2185,12 @@ static void cpsw_port_config(struct cpsw_slave *slave, int max_rx_len)
 	if (max_rx_len > MAX_SIZE_STREAM_BUFFER)
 		max_rx_len = MAX_SIZE_STREAM_BUFFER;
 
+	slave->mac_control = MACSL_DEFAULT_CONFIG;
+
 	__raw_writel(max_rx_len, &slave->sliver->rx_maxlen);
 
 	__iowmb();
-	__raw_writel(MACSL_ENABLE | MACSL_RX_ENABLE_EXT_CTL |
-		     MACSL_RX_ENABLE_CSF, &slave->sliver->mac_control);
+	__raw_writel(slave->mac_control, &slave->sliver->mac_control);
 }
 
 static void cpsw_slave_stop(struct cpsw_slave *slave,
@@ -2213,12 +2225,14 @@ static void cpsw_slave_link(struct cpsw_slave *slave,
 			    struct cpsw_intf *cpsw_intf)
 {
 	struct netcp_priv *netcp = netdev_priv(cpsw_intf->ndev);
+	int sn = slave->slave_num;
 
-	if (slave->link_interface == SGMII_LINK_MAC_PHY) {
-		if (netcp->link_state)
-			cpsw_intf->sgmii_link |= BIT(slave->slave_num);
-		else
-			cpsw_intf->sgmii_link &= ~BIT(slave->slave_num);
+	if (IS_SGMII_MAC_PHY(slave->link_interface)) {
+		/* check only the bit in phy_link_state_mask
+		 * that corresponds to the slave
+		 */
+		if (!(netcp->phy_link_state_mask & BIT(sn)))
+			cpsw_intf->link_state &= ~BIT(sn);
 	}
 }
 
@@ -2247,9 +2261,6 @@ static void cpsw_slave_open(struct cpsw_slave *slave,
 
 	cpsw_set_slave_mac(slave, cpsw_intf);
 
-	slave->mac_control = MACSL_ENABLE | MACSL_RX_ENABLE_EXT_CTL |
-				MACSL_RX_ENABLE_CSF;
-
 	/* this slave port here is 1 based */
 	slave_port = cpsw_get_slave_port(priv, slave->slave_num);
 
@@ -2264,7 +2275,7 @@ static void cpsw_slave_open(struct cpsw_slave *slave,
 	cpsw_ale_add_mcast(priv->ale, cpsw_intf->ndev->broadcast,
 			   1 << slave_port, 0, 0, ALE_MCAST_FWD_2);
 
-	if (slave->link_interface == SGMII_LINK_MAC_PHY) {
+	if (IS_SGMII_MAC_PHY(slave->link_interface)) {
 		slave->phy = of_phy_connect(cpsw_intf->ndev,
 					    cpsw_intf->phy_node,
 					    &cpsw_adjust_link, 0,
@@ -2393,6 +2404,9 @@ int cpsw_add_addr(void *intf_priv, struct netcp_addr *naddr)
 	struct cpsw_intf *cpsw_intf = intf_priv;
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 
+	if (!cpsw_dev->opened)
+		return -ENXIO;
+
 	dev_dbg(cpsw_dev->dev, "ethss adding address %pM, type %d\n",
 		naddr->addr, naddr->type);
 
@@ -2418,6 +2432,9 @@ int cpsw_del_addr(void *intf_priv, struct netcp_addr *naddr)
 {
 	struct cpsw_intf *cpsw_intf = intf_priv;
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+
+	if (!cpsw_dev->opened)
+		return -ENXIO;
 
 	dev_dbg(cpsw_dev->dev, "ethss deleting address %pM, type %d\n",
 		naddr->addr, naddr->type);
@@ -2639,10 +2656,10 @@ static void cpsw_timer(unsigned long arg)
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 	u32 sp = cpsw_intf->slave_port;
 	u32 ns = cpsw_intf->num_slaves;
-	u32 sgmii_link;
+	u32 link_state;
 
 	if (cpsw_dev->multi_if)
-		sgmii_link = keystone_sgmii_get_port_link(SGMII_BASE(sp), sp);
+		link_state = keystone_sgmii_get_port_link(SGMII_BASE(sp), sp);
 	else {
 		/* Single interface mode. Link is up if any one slave
 		 * port is up.  It assumes slave port always starts from
@@ -2650,28 +2667,36 @@ static void cpsw_timer(unsigned long arg)
 		 */
 
 		/* slave port 2, 3 status */
-		sgmii_link = keystone_sgmii_link_status(SGMII_BASE(2),
+		link_state = keystone_sgmii_link_status(SGMII_BASE(2),
 						   max_t(u32, ns, 2) - 2);
 
-		sgmii_link <<= 2;
+		link_state <<= 2;
 
 		/* slave port 0, 1 status */
-		sgmii_link |= keystone_sgmii_link_status(SGMII_BASE(0),
+		link_state |= keystone_sgmii_link_status(SGMII_BASE(0),
 						   min_t(u32, ns, 2));
 	}
 
-	cpsw_intf->sgmii_link = sgmii_link;
+	cpsw_intf->link_state = link_state;
 
+	/* if MAC-to-PHY, check phy link status also
+	 * to conclude the intf link's status
+	 */
 	for_each_slave(cpsw_intf, cpsw_slave_link, cpsw_intf);
 
-	/* FIXME: Don't aggregate link statuses in multi-interface case */
-	if (cpsw_intf->sgmii_link) {
-		/* link ON */
-		if (!netif_carrier_ok(cpsw_intf->ndev))
+	/* Is this the right logic?
+	 *  multi_if & MAC_PHY: phy state machine already reported carrier
+	 *  multi_if & !MAC_PHY: report carrier
+	 * !multi_if: any one slave up means intf is up, reporting carrier
+	 *            here corrects what phy state machine (if it exists)
+	 *            might have reported.
+	 */
+	if (!cpsw_dev->multi_if ||
+	    (cpsw_dev->multi_if &&
+	     !IS_SGMII_MAC_PHY(cpsw_intf->slaves->link_interface))) {
+		if (cpsw_intf->link_state)
 			netif_carrier_on(cpsw_intf->ndev);
-	} else {
-		/* link OFF */
-		if (netif_carrier_ok(cpsw_intf->ndev))
+		else
 			netif_carrier_off(cpsw_intf->ndev);
 	}
 
@@ -3078,6 +3103,7 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 				   PSTREAM_ROUTE_DMA);
 
 	cpsw_register_cpts(cpsw_dev);
+	cpsw_dev->opened = 1;
 	return 0;
 
 ale_fail:
@@ -3117,6 +3143,7 @@ static int cpsw_close(void *intf_priv, struct net_device *ndev)
 	clk_put(cpsw_dev->cpgmac);
 
 	cpsw_unregister_cpts(cpsw_dev);
+	cpsw_dev->opened = 0;
 	return 0;
 }
 

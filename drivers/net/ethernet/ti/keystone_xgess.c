@@ -69,6 +69,11 @@
 		(MACSL_XGMII_ENABLE | MACSL_XGIG_MODE) : \
 		MACSL_GMII_ENABLE)
 
+#define MACSL_DEFAULT_CONFIG(s) \
+		(MACSL_SIG_ENABLE((s)) | \
+		 MACSL_RX_ENABLE_EXT_CTL | \
+		 MACSL_RX_ENABLE_CSF)
+
 #define CPSW_NUM_PORTS		                3
 #define CPSW_CTL_P0_ENABLE			BIT(2)
 #define CPSW_CTL_VLAN_AWARE			BIT(1)
@@ -85,6 +90,9 @@
 #define HOST_TX_PRI_MAP_DEFAULT			0x00000000
 #define MAX_SIZE_STREAM_BUFFER		        9504
 
+/* slave_num: 0-based
+ *  port_num: 1-based
+ */
 struct cpswx_slave {
 	struct cpswx_slave_regs __iomem		*regs;
 	struct cpswx_sliver_regs __iomem	*sliver;
@@ -301,8 +309,11 @@ struct cpswx_priv {
 	struct kobject			stats_kobj;
 	spinlock_t			hw_stats_lock;
 	struct device_node              *serdes;
+	u32				opened;
 };
 
+/* slave_port: 0-based (currently relevant only in multi_if mode)
+*/
 struct cpswx_intf {
 	struct net_device	*ndev;
 	struct device		*dev;
@@ -318,7 +329,7 @@ struct cpswx_intf {
 	u32			 multi_if;
 	struct list_head	 cpsw_intf_list;
 	struct timer_list	 timer;
-	u32			 sgmii_link;
+	u32			 link_state;
 };
 
 /*
@@ -1524,9 +1535,7 @@ static void _cpsw_adjust_link(struct cpswx_slave *slave, bool *link)
 
 	if (phy->link) {
 		mac_control = slave->mac_control;
-		mac_control |= MACSL_SIG_ENABLE(slave) |
-				MACSL_RX_ENABLE_EXT_CTL |
-				MACSL_RX_ENABLE_CSF;
+		mac_control |= MACSL_DEFAULT_CONFIG(slave);
 		/* enable forwarding */
 		cpsw_ale_control_set(slave->ale, slave_port,
 				     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
@@ -1561,9 +1570,9 @@ static void cpsw_adjust_link(struct net_device *n_dev, void *context)
 	_cpsw_adjust_link(slave, &link);
 
 	if (link)
-		netcp->link_state |= BIT(slave->slave_num);
+		netcp->phy_link_state_mask |= BIT(slave->slave_num);
 	else
-		netcp->link_state &= ~BIT(slave->slave_num);
+		netcp->phy_link_state_mask &= ~BIT(slave->slave_num);
 }
 
 /*
@@ -1595,17 +1604,15 @@ static int cpsw_port_reset(struct cpswx_slave *slave)
  */
 static void cpsw_port_config(struct cpswx_slave *slave, int max_rx_len)
 {
-	u32 mac_control;
-
 	if (max_rx_len > MAX_SIZE_STREAM_BUFFER)
 		max_rx_len = MAX_SIZE_STREAM_BUFFER;
 
+	slave->mac_control = MACSL_DEFAULT_CONFIG(slave);
+
 	__raw_writel(max_rx_len, &slave->sliver->rx_maxlen);
 
-	mac_control = (MACSL_SIG_ENABLE(slave) |
-			MACSL_RX_ENABLE_EXT_CTL |
-			MACSL_RX_ENABLE_CSF);
-	__raw_writel(mac_control, &slave->sliver->mac_control);
+	__iowmb();
+	__raw_writel(slave->mac_control, &slave->sliver->mac_control);
 }
 
 static void cpsw_slave_stop(struct cpswx_slave *slave, struct cpswx_priv *priv)
@@ -1624,15 +1631,17 @@ static void cpsw_slave_link(struct cpswx_slave *slave,
 			    struct cpswx_intf *cpsw_intf)
 {
 	struct netcp_priv *netcp = netdev_priv(cpsw_intf->ndev);
+	int sn = slave->slave_num;
 
 	if ((slave->link_interface == SGMII_LINK_MAC_PHY) ||
 		(slave->link_interface == XGMII_LINK_MAC_PHY)) {
-		if (netcp->link_state)
-			cpsw_intf->sgmii_link |= BIT(slave->slave_num);
-		else
-			cpsw_intf->sgmii_link &= ~BIT(slave->slave_num);
+		/* check only the bit in phy_link_state_mask
+		 * that corresponds to the slave
+		 */
+		if (!(netcp->phy_link_state_mask & BIT(sn)))
+			cpsw_intf->link_state &= ~BIT(sn);
 	} else if (slave->link_interface == XGMII_LINK_MAC_MAC_FORCED)
-		cpsw_intf->sgmii_link |= BIT(slave->slave_num);
+		cpsw_intf->link_state |= BIT(slave->slave_num);
 }
 
 static void cpsw_slave_open(struct cpswx_slave *slave,
@@ -1660,9 +1669,6 @@ static void cpsw_slave_open(struct cpswx_slave *slave,
 	cpsw_port_config(slave, priv->rx_packet_max);
 
 	cpsw_set_slave_mac(slave, cpsw_intf);
-
-	slave->mac_control = MACSL_SIG_ENABLE(slave) | MACSL_RX_ENABLE_EXT_CTL |
-				MACSL_RX_ENABLE_CSF;
 
 	slave_port = cpsw_get_slave_port(priv, slave->slave_num);
 
@@ -1814,6 +1820,9 @@ static int cpswx_add_addr(void *intf_priv, struct netcp_addr *naddr)
 	struct cpswx_intf *cpsw_intf = intf_priv;
 	struct cpswx_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 
+	if (!cpsw_dev->opened)
+		return -ENXIO;
+
 	dev_dbg(cpsw_dev->dev, "xgess adding address %pM, type %d\n",
 		naddr->addr, naddr->type);
 
@@ -1839,6 +1848,9 @@ static int cpswx_del_addr(void *intf_priv, struct netcp_addr *naddr)
 {
 	struct cpswx_intf *cpsw_intf = intf_priv;
 	struct cpswx_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+
+	if (!cpsw_dev->opened)
+		return -ENXIO;
 
 	dev_dbg(cpsw_dev->dev, "xgess deleting address %pM, type %d\n",
 		naddr->addr, naddr->type);
@@ -1884,34 +1896,44 @@ static void cpswx_timer(unsigned long arg)
 	struct cpswx_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 
 	/*
-	 * if the slave's link_interface is not XGMII, sgmii_link bit
+	 * if the slave's link_interface is not XGMII, link_state bit
 	 * will not be set
 	 */
 	if (cpsw_dev->multi_if)
-		cpsw_intf->sgmii_link =
+		cpsw_intf->link_state =
 			keystone_sgmii_get_port_link(cpsw_dev->sgmii_port_regs,
 						     cpsw_intf->slave_port);
 	else
-		cpsw_intf->sgmii_link =
+		cpsw_intf->link_state =
 			keystone_sgmii_link_status(cpsw_dev->sgmii_port_regs,
 						   cpsw_intf->num_slaves);
 
+	/* if MAC-to-PHY, check phy link status also
+	 * to conclude the intf link's status
+	 */
 	for_each_slave(cpsw_intf, cpsw_slave_link, cpsw_intf);
 
-	/* FIXME: Don't aggregate link statuses in multi-interface case */
-	if (cpsw_intf->sgmii_link) {
-		/* link ON */
-		if (!netif_carrier_ok(cpsw_intf->ndev))
+	/* Is this the right logic?
+	 *  multi_if & MAC_PHY: phy state machine already reported carrier
+	 *  multi_if & !MAC_PHY: report carrier
+	 * !multi_if: any one slave up means intf is up, reporting carrier
+	 *            here corrects what phy state machine (if it exists)
+	 *            might have reported.
+	 */
+	if (!cpsw_dev->multi_if ||
+	    (cpsw_dev->multi_if &&
+	     (cpsw_intf->slaves->link_interface != SGMII_LINK_MAC_PHY) &&
+	     (cpsw_intf->slaves->link_interface != XGMII_LINK_MAC_PHY))) {
+		if (cpsw_intf->link_state)
 			netif_carrier_on(cpsw_intf->ndev);
-	} else {
-		/* link OFF */
-		if (netif_carrier_ok(cpsw_intf->ndev))
+		else
 			netif_carrier_off(cpsw_intf->ndev);
 	}
 
-	spin_lock_bh(&cpsw_dev->hw_stats_lock);
+	/* A timer runs as a BH, no need to block them */
+	spin_lock(&cpsw_dev->hw_stats_lock);
 	cpswx_update_stats(cpsw_dev, NULL);
-	spin_unlock_bh(&cpsw_dev->hw_stats_lock);
+	spin_unlock(&cpsw_dev->hw_stats_lock);
 
 	cpsw_intf->timer.expires = jiffies + (HZ/10);
 	add_timer(&cpsw_intf->timer);
@@ -2017,6 +2039,7 @@ static int cpswx_open(void *intf_mod_priv, struct net_device *ndev)
 				   PSTREAM_ROUTE_DMA);
 #endif
 
+	cpsw_dev->opened = 1;
 	return 0;
 
 ale_fail:
@@ -2051,6 +2074,7 @@ static int cpswx_close(void *intf_modpriv, struct net_device *ndev)
 	clk_disable_unprepare(cpsw_dev->clk);
 	clk_put(cpsw_dev->clk);
 
+	cpsw_dev->opened = 0;
 	return 0;
 }
 

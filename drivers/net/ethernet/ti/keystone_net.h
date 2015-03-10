@@ -34,6 +34,9 @@
 #define SGMII_LINK_MAC_MAC_FORCED	2
 #define SGMII_LINK_MAC_FIBER		3
 #define SGMII_LINK_MAC_PHY_NO_MDIO	4
+#define SGMII_LINK_MAC_PHY_MASTER	5
+#define SGMII_LINK_MAC_PHY_MASTER_NO_MDIO	6
+#define SGMII_LINK_MAC_MAC_AN_SLAVE	7
 #define XGMII_LINK_MAC_PHY		10
 #define XGMII_LINK_MAC_MAC_FORCED	11
 
@@ -131,7 +134,7 @@ struct netcp_priv {
 	spinlock_t			 lock;
 	int				 rx_packet_max;
 	const char			*rx_chan_name;
-	u32				 link_state;
+	u32				 phy_link_state_mask;
 	struct list_head		 module_head;
 	struct list_head		 interface_list;
 	struct list_head		 addr_list;
