@@ -55,6 +55,7 @@
 #include <asm/unwind.h>
 #include <asm/memblock.h>
 #include <asm/virt.h>
+#include <asm/runtime-patch.h>
 
 #include "atags.h"
 
@@ -71,6 +72,7 @@ static int __init fpe_setup(char *line)
 __setup("fpe=", fpe_setup);
 #endif
 
+extern void early_paging_init(struct machine_desc *, struct proc_info_list *);
 extern void paging_init(struct machine_desc *desc);
 extern void sanity_check_meminfo(void);
 extern void reboot_setup(char *str);
@@ -142,6 +144,18 @@ static union { char c[4]; unsigned long l; } endian_test __initdata = { { 'l', '
 #define ENDIANNESS ((char)endian_test.l)
 
 DEFINE_PER_CPU(struct cpuinfo_arm, cpu_data);
+
+#ifdef CONFIG_ARM_PATCH_PHYS_VIRT
+
+/*
+ * These are initialized in head.S code prior to BSS getting cleared out.
+ * The initializers here prevent these from landing in the BSS section.
+ */
+unsigned long __pv_offset = 0xdeadbeef;
+phys_addr_t   __pv_phys_offset = 0xdeadbeef;
+EXPORT_SYMBOL(__pv_phys_offset);
+EXPORT_SYMBOL(__pv_offset);
+#endif
 
 /*
  * Standard memory resources
@@ -806,6 +820,8 @@ void __init setup_arch(char **cmdline_p)
 	parse_early_param();
 
 	sort(&meminfo.bank, meminfo.nr_banks, sizeof(meminfo.bank[0]), meminfo_cmp, NULL);
+
+	early_paging_init(mdesc, lookup_processor_type(read_cpuid_id()));
 	sanity_check_meminfo();
 	arm_memblock_init(&meminfo, mdesc);
 
@@ -844,6 +860,8 @@ void __init setup_arch(char **cmdline_p)
 
 	if (mdesc->init_early)
 		mdesc->init_early();
+
+	runtime_patch_kernel();
 }
 
 

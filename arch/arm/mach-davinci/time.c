@@ -18,6 +18,7 @@
 #include <linux/clk.h>
 #include <linux/err.h>
 #include <linux/platform_device.h>
+#include <linux/platform_data/davinci-clock.h>
 
 #include <asm/sched_clock.h>
 #include <asm/mach/irq.h>
@@ -26,8 +27,6 @@
 #include <mach/cputype.h>
 #include <mach/hardware.h>
 #include <mach/time.h>
-
-#include "clock.h"
 
 static struct clock_event_device clockevent_davinci;
 static unsigned int davinci_clock_tick_rate;
@@ -347,6 +346,17 @@ void __init davinci_timer_init(void)
 		"%s: can't register clocksource!\n";
 	int i;
 
+#ifndef CONFIG_OF
+	if (davinci_soc_info.cpu_clks)	{
+		davinci_common_clk_init(davinci_soc_info.cpu_clks,
+				davinci_soc_info.dev_clk_lookups,
+				davinci_soc_info.psc_bases_num,
+				davinci_soc_info.psc_bases);
+	}
+#else
+	davinci_of_clk_init();
+	davinci_add_clkdev(davinci_soc_info.cpu_clks);
+#endif
 	clockevent_id = soc_info->timer_info->clockevent_id;
 	clocksource_id = soc_info->timer_info->clocksource_id;
 

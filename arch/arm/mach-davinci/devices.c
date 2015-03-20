@@ -24,7 +24,6 @@
 #include <mach/time.h>
 
 #include "davinci.h"
-#include "clock.h"
 
 #define DAVINCI_I2C_BASE	     0x01C21000
 #define DAVINCI_ATA_BASE	     0x01C66000

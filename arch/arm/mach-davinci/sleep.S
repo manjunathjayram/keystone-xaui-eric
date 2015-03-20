@@ -24,7 +24,7 @@
 #include <mach/psc.h>
 #include <mach/ddr2.h>
 
-#include "clock.h"
+#include <mach/pll.h>
 
 /* Arbitrary, hardware currently does not update PHYRDY correctly */
 #define PHYRDY_CYCLES		0x1000
@@ -183,6 +183,7 @@ ENDPROC(davinci_cpu_suspend)
  * 	r1: contains virtual base for DDR2 Power and Sleep controller (PSC)
  * 	r2: contains PSC number for DDR2
  */
+
 ENTRY(davinci_ddr_psc_config)
 	/* Set next state in mdctl for DDR2 */
 	mov	r6, #MDCTL

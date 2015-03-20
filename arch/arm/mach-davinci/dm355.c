@@ -13,8 +13,13 @@
 #include <linux/serial_8250.h>
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
-
 #include <linux/spi/spi.h>
+#include <linux/clkdev.h>
+#include <linux/clk-provider.h>
+#include <linux/platform_data/clk-davinci-pll.h>
+#include <linux/platform_data/clk-davinci-psc.h>
+#include <linux/platform_data/davinci-clock.h>
+#include <mach/pll.h>
 
 #include <asm/mach/map.h>
 
@@ -30,9 +35,13 @@
 #include <mach/gpio-davinci.h>
 
 #include "davinci.h"
-#include "clock.h"
 #include "mux.h"
 #include "asp.h"
+
+#define PLLM		0x110
+#define PREDIV          0x114
+#define POSTDIV         0x128
+#define PLLM_PLLM_MASK  0xff
 
 #define DM355_UART2_BASE	(IO_PHYS + 0x206000)
 #define DM355_OSD_BASE		(IO_PHYS + 0x70200)
@@ -43,343 +52,330 @@
  */
 #define DM355_REF_FREQ		24000000	/* 24 or 36 MHz */
 
-static struct pll_data pll1_data = {
-	.num       = 1,
-	.phys_base = DAVINCI_PLL1_BASE,
-	.flags     = PLL_HAS_PREDIV | PLL_HAS_POSTDIV,
+static struct clk_davinci_pll_data pll1_data = {
+	.phy_pllm	= DAVINCI_PLL1_BASE + PLLM,
+	.phy_prediv	= DAVINCI_PLL1_BASE + PREDIV,
+	.phy_postdiv	= DAVINCI_PLL1_BASE + POSTDIV,
+	.pllm_mask	= PLLM_PLLM_MASK,
+	.prediv_mask	= PLLDIV_RATIO_MASK,
+	.postdiv_mask	= PLLDIV_RATIO_MASK,
+	.num		= 1,
+	.pll_flags	= CLK_DAVINCI_PLL_HAS_PREDIV |
+				 CLK_DAVINCI_PLL_HAS_POSTDIV,
+	.fixed_prediv	= 8,
 };
 
-static struct pll_data pll2_data = {
-	.num       = 2,
-	.phys_base = DAVINCI_PLL2_BASE,
-	.flags     = PLL_HAS_PREDIV,
-};
-
-static struct clk ref_clk = {
-	.name = "ref_clk",
+static struct clk_fixed_rate_data clkin_data = {
 	/* FIXME -- crystal rate is board-specific */
-	.rate = DM355_REF_FREQ,
+	.rate		= DM355_REF_FREQ,
+	.flags		= CLK_IS_ROOT,
 };
 
-static struct clk pll1_clk = {
-	.name = "pll1",
-	.parent = &ref_clk,
-	.flags = CLK_PLL,
-	.pll_data = &pll1_data,
+static struct davinci_clk ref_clk_clkin = {
+	.name		= "clkin",
+	.type		=  DAVINCI_FIXED_RATE_CLK,
+	.clk_data	=  {
+		.data	= &clkin_data,
+	},
 };
 
-static struct clk pll1_aux_clk = {
-	.name = "pll1_aux_clk",
-	.parent = &pll1_clk,
-	.flags = CLK_PLL | PRE_PLL,
+static struct clk_fixed_rate_data oscin_data = {
+	/* FIXME -- crystal rate is board-specific */
+	.rate		= DM355_REF_FREQ,
+	.flags		= CLK_IS_ROOT,
 };
 
-static struct clk pll1_sysclk1 = {
-	.name = "pll1_sysclk1",
-	.parent = &pll1_clk,
-	.flags = CLK_PLL,
-	.div_reg = PLLDIV1,
+static struct davinci_clk ref_clk_oscin = {
+	.name		= "oscin",
+	.type		=  DAVINCI_FIXED_RATE_CLK,
+	.clk_data	=  {
+		.data	= &oscin_data,
+	},
 };
 
-static struct clk pll1_sysclk2 = {
-	.name = "pll1_sysclk2",
-	.parent = &pll1_clk,
-	.flags = CLK_PLL,
-	.div_reg = PLLDIV2,
+static const char *ref_clk_mux_parents[] = {"clkin", "oscin"};
+
+static struct clk_mux_data ref_clk_mux_data = {
+	.shift		= PLLCTL_CLKMODE_SHIFT,
+	.width		= PLLCTL_CLKMODE_WIDTH,
+	.num_parents	= ARRAY_SIZE(ref_clk_mux_parents),
+	.parents	= ref_clk_mux_parents,
+	.phys_base	= DAVINCI_PLL1_BASE + PLLCTL,
 };
 
-static struct clk pll1_sysclk3 = {
-	.name = "pll1_sysclk3",
-	.parent = &pll1_clk,
-	.flags = CLK_PLL,
-	.div_reg = PLLDIV3,
+static struct davinci_clk ref_clk_mux = {
+	.name		= "ref_clk_mux",
+	.parent		= &ref_clk_clkin,
+	.type		= DAVINCI_MUX_CLK,
+	.clk_data	=  {
+		.data	= &ref_clk_mux_data,
+	}
 };
 
-static struct clk pll1_sysclk4 = {
-	.name = "pll1_sysclk4",
-	.parent = &pll1_clk,
-	.flags = CLK_PLL,
-	.div_reg = PLLDIV4,
+static struct davinci_clk pll1_clk = {
+	.name		= "pll1",
+	.parent		= &ref_clk_mux,
+	.type		= DAVINCI_MAIN_PLL_CLK,
+	.clk_data = {
+		.data	= &pll1_data,
+	},
 };
 
-static struct clk pll1_sysclkbp = {
-	.name = "pll1_sysclkbp",
-	.parent = &pll1_clk,
-	.flags = CLK_PLL | PRE_PLL,
-	.div_reg = BPDIV
+static const char *pll1_plldiv_clk_mux_parents[] = {
+						"ref_clk_mux", "pll1"};
+
+static struct clk_mux_data pll1_plldiv_clk_mux_data = {
+	.shift		= PLLCTL_PLLEN_SHIFT,
+	.width		= PLLCTL_PLLEN_WIDTH,
+	.num_parents	= ARRAY_SIZE(pll1_plldiv_clk_mux_parents),
+	.parents	= pll1_plldiv_clk_mux_parents,
+	.phys_base	= DAVINCI_PLL1_BASE + PLLCTL,
 };
 
-static struct clk vpss_dac_clk = {
-	.name = "vpss_dac",
-	.parent = &pll1_sysclk3,
-	.lpsc = DM355_LPSC_VPSS_DAC,
+static struct davinci_clk pll1_plldiv_clk_mux = {
+	.name		= "pll1_plldiv_clk_mux",
+	.parent		= &pll1_clk,
+	.type		= DAVINCI_MUX_CLK,
+	.clk_data	= {
+		.data	= &pll1_plldiv_clk_mux_data,
+	},
 };
 
-static struct clk vpss_master_clk = {
-	.name = "vpss_master",
-	.parent = &pll1_sysclk4,
-	.lpsc = DAVINCI_LPSC_VPSSMSTR,
-	.flags = CLK_PSC,
+#define define_pll1_div_clk(__pll, __div, __name)		\
+	static struct clk_divider_data pll1_div_data##__div = {	\
+		.div_reg	= DAVINCI_PLL1_BASE + PLLDIV##__div,	\
+		.width		= 5,				\
+	};							\
+								\
+	static struct davinci_clk __name = {			\
+		.name		= #__name,			\
+		.parent		= &__pll,			\
+		.type		= DAVINCI_PRG_DIV_CLK,		\
+		.clk_data	= {				\
+			.data	=  &pll1_div_data##__div,	\
+		},						\
+	}
+
+define_pll1_div_clk(pll1_plldiv_clk_mux, 1, pll1_sysclk1);
+define_pll1_div_clk(pll1_plldiv_clk_mux, 2, pll1_sysclk2);
+define_pll1_div_clk(pll1_plldiv_clk_mux, 3, pll1_sysclk3);
+define_pll1_div_clk(pll1_plldiv_clk_mux, 4, pll1_sysclk4);
+
+static struct clk_fixed_factor_data fixed_clk_data = {
+	.mult		= 1,
+	.div		= 1,
 };
 
-static struct clk vpss_slave_clk = {
-	.name = "vpss_slave",
-	.parent = &pll1_sysclk4,
-	.lpsc = DAVINCI_LPSC_VPSSSLV,
+static struct davinci_clk pll1_aux_clk = {
+	.name			= "pll1_aux_clk",
+	.parent			= &ref_clk_mux,
+	.type			= DAVINCI_FIXED_FACTOR_CLK,
+	.clk_data		= {
+		.fixed_factor	=  &fixed_clk_data,
+	},
 };
 
-static struct clk clkout1_clk = {
-	.name = "clkout1",
-	.parent = &pll1_aux_clk,
-	/* NOTE:  clkout1 can be externally gated by muxing GPIO-18 */
+static struct clk_divider_data pll1_sysclkbp_data = {
+	.div_reg	= BPDIV,
 };
 
-static struct clk clkout2_clk = {
-	.name = "clkout2",
-	.parent = &pll1_sysclkbp,
+static struct davinci_clk pll1_sysclkbp = {
+	.name		= "pll1_sysclkbp",
+	.parent		= &ref_clk_mux,
+	.type		= DAVINCI_PRG_DIV_CLK,
+	.clk_data	= {
+		.data	= &pll1_sysclkbp_data,
+	},
 };
 
-static struct clk pll2_clk = {
-	.name = "pll2",
-	.parent = &ref_clk,
-	.flags = CLK_PLL,
-	.pll_data = &pll2_data,
+#define __lpsc_clk(cname, _parent, mod, flgs, _flgs, dom)	\
+	static struct clk_davinci_psc_data clk_psc_data##cname = {	\
+		.domain	= DAVINCI_GPSC_##dom,			\
+		.lpsc	= DAVINCI_LPSC_##mod,			\
+		.flags	= flgs,					\
+	};							\
+								\
+	static struct davinci_clk clk_##cname = {		\
+		.name		= #cname,			\
+		.parent		= &_parent,			\
+		.flags		= _flgs,			\
+		.type		= DAVINCI_PSC_CLK,		\
+		.clk_data	= {				\
+			.data	= &clk_psc_data##cname		\
+		},						\
+	}
+
+#define lpsc_clk_enabled(cname, parent, mod)		\
+	__lpsc_clk(cname, parent, mod, 0, ALWAYS_ENABLED, ARMDOMAIN)
+
+#define lpsc_clk(cname, flgs, parent, mod, dom)		\
+	__lpsc_clk(cname, parent, mod, flgs, 0, dom)
+
+#define __dm355_lpsc_clk(cname, _parent, mod, flgs, _flgs, dom)	\
+	static struct clk_davinci_psc_data clk_psc_data##cname = {	\
+		.domain	= DAVINCI_GPSC_##dom,			\
+		.lpsc	= DM355_LPSC_##mod,			\
+		.flags	= flgs,					\
+	};							\
+								\
+	static struct davinci_clk clk_##cname = {		\
+		.name		= #cname,			\
+		.parent		= &_parent,			\
+		.flags		= _flgs,			\
+		.type		= DAVINCI_PSC_CLK,		\
+		.clk_data	= {				\
+			.data	= &clk_psc_data##cname		\
+		},						\
+	}
+
+#define dm355_lpsc_clk(cname, flgs, parent, mod, dom)		\
+	__dm355_lpsc_clk(cname, parent, mod, flgs, 0, dom)
+
+dm355_lpsc_clk(vpss_dac, 0, pll1_sysclk3, VPSS_DAC, ARMDOMAIN);
+lpsc_clk(vpss_master, 0, pll1_sysclk4, VPSSMSTR, ARMDOMAIN);
+lpsc_clk(vpss_slave, 0, pll1_sysclk4, VPSSSLV, ARMDOMAIN);
+lpsc_clk_enabled(arm, pll1_sysclk1, ARM);
+lpsc_clk(mjcp, 0, pll1_sysclk1, IMCOP, ARMDOMAIN);
+lpsc_clk(uart0, 0, ref_clk_mux, UART0, ARMDOMAIN);
+lpsc_clk(uart1, 0, ref_clk_mux, UART1, ARMDOMAIN);
+lpsc_clk(uart2, 0, pll1_sysclk2, UART2, ARMDOMAIN);
+lpsc_clk(i2c, 0, ref_clk_mux, I2C, ARMDOMAIN);
+lpsc_clk(asp0, 0, pll1_sysclk2, McBSP, ARMDOMAIN);
+dm355_lpsc_clk(asp1, 0, pll1_sysclk2, McBSP1, ARMDOMAIN);
+lpsc_clk(mmcsd0, 0, pll1_sysclk2, MMC_SD, ARMDOMAIN);
+dm355_lpsc_clk(mmcsd1, 0, pll1_sysclk2, MMC_SD1, ARMDOMAIN);
+lpsc_clk(spi0, 0, pll1_sysclk2, SPI, ARMDOMAIN);
+dm355_lpsc_clk(spi1, 0, pll1_sysclk2, SPI1, ARMDOMAIN);
+dm355_lpsc_clk(spi2, 0, pll1_sysclk2, SPI2, ARMDOMAIN);
+lpsc_clk(gpio, 0, pll1_sysclk2, GPIO, ARMDOMAIN);
+lpsc_clk(aemif, 0, pll1_sysclk2, AEMIF, ARMDOMAIN);
+lpsc_clk(pwm0, 0, ref_clk_mux, PWM0, ARMDOMAIN);
+lpsc_clk(pwm1, 0, ref_clk_mux, PWM1, ARMDOMAIN);
+lpsc_clk(pwm2, 0, ref_clk_mux, PWM2, ARMDOMAIN);
+dm355_lpsc_clk(pwm3, 0, ref_clk_mux, PWM3, ARMDOMAIN);
+lpsc_clk(timer0, 0, ref_clk_mux, TIMER0, ARMDOMAIN);
+lpsc_clk(timer1, 0, ref_clk_mux, TIMER1, ARMDOMAIN);
+/* REVISIT: why can't this be disabled? */
+lpsc_clk(timer2, CLK_IGNORE_UNUSED, ref_clk_mux, TIMER2, ARMDOMAIN);
+dm355_lpsc_clk(timer3, 0, ref_clk_mux, TIMER3, ARMDOMAIN);
+dm355_lpsc_clk(rto, 0, ref_clk_mux, RTO, ARMDOMAIN);
+lpsc_clk(usb, 0, pll1_sysclk2, USB, ARMDOMAIN);
+
+static struct clk_davinci_pll_data pll2_data = {
+	.phy_pllm	= DAVINCI_PLL2_BASE + PLLM,
+	.phy_prediv	= DAVINCI_PLL2_BASE + PREDIV,
+	.phy_postdiv	= DAVINCI_PLL2_BASE + POSTDIV,
+	.pllm_mask	= PLLM_PLLM_MASK,
+	.prediv_mask	= PLLDIV_RATIO_MASK,
+	.postdiv_mask	= PLLDIV_RATIO_MASK,
+	.num = 2,
+	.pll_flags	= CLK_DAVINCI_PLL_HAS_PREDIV,
 };
 
-static struct clk pll2_sysclk1 = {
-	.name = "pll2_sysclk1",
-	.parent = &pll2_clk,
-	.flags = CLK_PLL,
-	.div_reg = PLLDIV1,
+static struct davinci_clk pll2_clk = {
+	.name		= "pll2",
+	.parent		= &ref_clk_mux,
+	.type		= DAVINCI_MAIN_PLL_CLK,
+	.clk_data	= {
+		.data	= &pll2_data,
+	},
 };
 
-static struct clk pll2_sysclkbp = {
-	.name = "pll2_sysclkbp",
-	.parent = &pll2_clk,
-	.flags = CLK_PLL | PRE_PLL,
-	.div_reg = BPDIV
+#define define_pll2_div_clk(__pll, __div, __name)	\
+	static struct clk_divider_data pll2_div_data##__div = {	\
+		.div_reg	= DAVINCI_PLL2_BASE + PLLDIV##__div,	\
+		.width		= 5,				\
+	};							\
+								\
+	static struct davinci_clk __name = {			\
+		.name		= #__name,			\
+		.parent		= &__pll,			\
+		.type		= DAVINCI_PRG_DIV_CLK,		\
+		.clk_data	= {				\
+			.data	=  &pll2_div_data##__div,	\
+		},						\
+	}
+
+static const char *pll2_plldiv_clk_mux_parents[] = {
+						"ref_clk_mux", "pll2"};
+
+static struct clk_mux_data pll2_plldiv_clk_mux_data = {
+	.shift		= PLLCTL_PLLEN_SHIFT,
+	.width		= PLLCTL_PLLEN_WIDTH,
+	.num_parents	= ARRAY_SIZE(pll2_plldiv_clk_mux_parents),
+	.parents	= pll2_plldiv_clk_mux_parents,
+	.phys_base	= DAVINCI_PLL2_BASE + PLLCTL,
 };
 
-static struct clk clkout3_clk = {
-	.name = "clkout3",
-	.parent = &pll2_sysclkbp,
-	/* NOTE:  clkout3 can be externally gated by muxing GPIO-16 */
+static struct davinci_clk pll2_plldiv_clk_mux = {
+	.name		= "pll2_plldiv_clk_mux",
+	.parent		= &pll2_clk,
+	.type		= DAVINCI_MUX_CLK,
+	.clk_data	= {
+		.data	= &pll2_plldiv_clk_mux_data,
+	},
 };
 
-static struct clk arm_clk = {
-	.name = "arm_clk",
-	.parent = &pll1_sysclk1,
-	.lpsc = DAVINCI_LPSC_ARM,
-	.flags = ALWAYS_ENABLED,
+define_pll2_div_clk(pll2_plldiv_clk_mux, 1, pll2_sysclk1);
+
+static struct clk_divider_data pll2_sysclkbp_data = {
+	.div_reg	= DAVINCI_PLL2_BASE + BPDIV,
+	.width		= 5,
 };
 
-/*
- * NOT LISTED below, and not touched by Linux
- *   - in SyncReset state by default
- *	.lpsc = DAVINCI_LPSC_TPCC,
- *	.lpsc = DAVINCI_LPSC_TPTC0,
- *	.lpsc = DAVINCI_LPSC_TPTC1,
- *	.lpsc = DAVINCI_LPSC_DDR_EMIF, .parent = &sysclk2_clk,
- *	.lpsc = DAVINCI_LPSC_MEMSTICK,
- *   - in Enabled state by default
- *	.lpsc = DAVINCI_LPSC_SYSTEM_SUBSYS,
- *	.lpsc = DAVINCI_LPSC_SCR2,	// "bus"
- *	.lpsc = DAVINCI_LPSC_SCR3,	// "bus"
- *	.lpsc = DAVINCI_LPSC_SCR4,	// "bus"
- *	.lpsc = DAVINCI_LPSC_CROSSBAR,	// "emulation"
- *	.lpsc = DAVINCI_LPSC_CFG27,	// "test"
- *	.lpsc = DAVINCI_LPSC_CFG3,	// "test"
- *	.lpsc = DAVINCI_LPSC_CFG5,	// "test"
- */
-
-static struct clk mjcp_clk = {
-	.name = "mjcp",
-	.parent = &pll1_sysclk1,
-	.lpsc = DAVINCI_LPSC_IMCOP,
+static struct davinci_clk pll2_sysclkbp = {
+	.name		= "pll2_sysclkbp",
+	.parent		= &ref_clk_mux,
+	.type		= DAVINCI_PRG_DIV_CLK,
+	.clk_data	= {
+		.data	= &pll2_sysclkbp_data,
+	},
 };
 
-static struct clk uart0_clk = {
-	.name = "uart0",
-	.parent = &pll1_aux_clk,
-	.lpsc = DAVINCI_LPSC_UART0,
-};
-
-static struct clk uart1_clk = {
-	.name = "uart1",
-	.parent = &pll1_aux_clk,
-	.lpsc = DAVINCI_LPSC_UART1,
-};
-
-static struct clk uart2_clk = {
-	.name = "uart2",
-	.parent = &pll1_sysclk2,
-	.lpsc = DAVINCI_LPSC_UART2,
-};
-
-static struct clk i2c_clk = {
-	.name = "i2c",
-	.parent = &pll1_aux_clk,
-	.lpsc = DAVINCI_LPSC_I2C,
-};
-
-static struct clk asp0_clk = {
-	.name = "asp0",
-	.parent = &pll1_sysclk2,
-	.lpsc = DAVINCI_LPSC_McBSP,
-};
-
-static struct clk asp1_clk = {
-	.name = "asp1",
-	.parent = &pll1_sysclk2,
-	.lpsc = DM355_LPSC_McBSP1,
-};
-
-static struct clk mmcsd0_clk = {
-	.name = "mmcsd0",
-	.parent = &pll1_sysclk2,
-	.lpsc = DAVINCI_LPSC_MMC_SD,
-};
-
-static struct clk mmcsd1_clk = {
-	.name = "mmcsd1",
-	.parent = &pll1_sysclk2,
-	.lpsc = DM355_LPSC_MMC_SD1,
-};
-
-static struct clk spi0_clk = {
-	.name = "spi0",
-	.parent = &pll1_sysclk2,
-	.lpsc = DAVINCI_LPSC_SPI,
-};
-
-static struct clk spi1_clk = {
-	.name = "spi1",
-	.parent = &pll1_sysclk2,
-	.lpsc = DM355_LPSC_SPI1,
-};
-
-static struct clk spi2_clk = {
-	.name = "spi2",
-	.parent = &pll1_sysclk2,
-	.lpsc = DM355_LPSC_SPI2,
-};
-
-static struct clk gpio_clk = {
-	.name = "gpio",
-	.parent = &pll1_sysclk2,
-	.lpsc = DAVINCI_LPSC_GPIO,
-};
-
-static struct clk aemif_clk = {
-	.name = "aemif",
-	.parent = &pll1_sysclk2,
-	.lpsc = DAVINCI_LPSC_AEMIF,
-};
-
-static struct clk pwm0_clk = {
-	.name = "pwm0",
-	.parent = &pll1_aux_clk,
-	.lpsc = DAVINCI_LPSC_PWM0,
-};
-
-static struct clk pwm1_clk = {
-	.name = "pwm1",
-	.parent = &pll1_aux_clk,
-	.lpsc = DAVINCI_LPSC_PWM1,
-};
-
-static struct clk pwm2_clk = {
-	.name = "pwm2",
-	.parent = &pll1_aux_clk,
-	.lpsc = DAVINCI_LPSC_PWM2,
-};
-
-static struct clk pwm3_clk = {
-	.name = "pwm3",
-	.parent = &pll1_aux_clk,
-	.lpsc = DM355_LPSC_PWM3,
-};
-
-static struct clk timer0_clk = {
-	.name = "timer0",
-	.parent = &pll1_aux_clk,
-	.lpsc = DAVINCI_LPSC_TIMER0,
-};
-
-static struct clk timer1_clk = {
-	.name = "timer1",
-	.parent = &pll1_aux_clk,
-	.lpsc = DAVINCI_LPSC_TIMER1,
-};
-
-static struct clk timer2_clk = {
-	.name = "timer2",
-	.parent = &pll1_aux_clk,
-	.lpsc = DAVINCI_LPSC_TIMER2,
-	.usecount = 1,              /* REVISIT: why can't this be disabled? */
-};
-
-static struct clk timer3_clk = {
-	.name = "timer3",
-	.parent = &pll1_aux_clk,
-	.lpsc = DM355_LPSC_TIMER3,
-};
-
-static struct clk rto_clk = {
-	.name = "rto",
-	.parent = &pll1_aux_clk,
-	.lpsc = DM355_LPSC_RTO,
-};
-
-static struct clk usb_clk = {
-	.name = "usb",
-	.parent = &pll1_sysclk2,
-	.lpsc = DAVINCI_LPSC_USB,
-};
-
-static struct clk_lookup dm355_clks[] = {
-	CLK(NULL, "ref", &ref_clk),
+static struct davinci_clk_lookup dm355_clks[] = {
+	CLK(NULL, "clkin", &ref_clk_clkin),
+	CLK(NULL, "oscin", &ref_clk_oscin),
+	CLK(NULL, "ref_clk_mux", &ref_clk_mux),
 	CLK(NULL, "pll1", &pll1_clk),
+	CLK(NULL, "pll1_plldiv_clk_mux", &pll1_plldiv_clk_mux),
 	CLK(NULL, "pll1_sysclk1", &pll1_sysclk1),
 	CLK(NULL, "pll1_sysclk2", &pll1_sysclk2),
 	CLK(NULL, "pll1_sysclk3", &pll1_sysclk3),
 	CLK(NULL, "pll1_sysclk4", &pll1_sysclk4),
 	CLK(NULL, "pll1_aux", &pll1_aux_clk),
 	CLK(NULL, "pll1_sysclkbp", &pll1_sysclkbp),
-	CLK(NULL, "vpss_dac", &vpss_dac_clk),
-	CLK("vpss", "master", &vpss_master_clk),
-	CLK("vpss", "slave", &vpss_slave_clk),
-	CLK(NULL, "clkout1", &clkout1_clk),
-	CLK(NULL, "clkout2", &clkout2_clk),
+	CLK(NULL, "vpss_dac", &clk_vpss_dac),
+	CLK(NULL, "vpss_master", &clk_vpss_master),
+	CLK(NULL, "vpss_slave", &clk_vpss_slave),
 	CLK(NULL, "pll2", &pll2_clk),
+	CLK(NULL, "pll2_plldiv_clk_mux", &pll2_plldiv_clk_mux),
 	CLK(NULL, "pll2_sysclk1", &pll2_sysclk1),
 	CLK(NULL, "pll2_sysclkbp", &pll2_sysclkbp),
-	CLK(NULL, "clkout3", &clkout3_clk),
-	CLK(NULL, "arm", &arm_clk),
-	CLK(NULL, "mjcp", &mjcp_clk),
-	CLK(NULL, "uart0", &uart0_clk),
-	CLK(NULL, "uart1", &uart1_clk),
-	CLK(NULL, "uart2", &uart2_clk),
-	CLK("i2c_davinci.1", NULL, &i2c_clk),
-	CLK("davinci-mcbsp.0", NULL, &asp0_clk),
-	CLK("davinci-mcbsp.1", NULL, &asp1_clk),
-	CLK("dm6441-mmc.0", NULL, &mmcsd0_clk),
-	CLK("dm6441-mmc.1", NULL, &mmcsd1_clk),
-	CLK("spi_davinci.0", NULL, &spi0_clk),
-	CLK("spi_davinci.1", NULL, &spi1_clk),
-	CLK("spi_davinci.2", NULL, &spi2_clk),
-	CLK(NULL, "gpio", &gpio_clk),
-	CLK(NULL, "aemif", &aemif_clk),
-	CLK(NULL, "pwm0", &pwm0_clk),
-	CLK(NULL, "pwm1", &pwm1_clk),
-	CLK(NULL, "pwm2", &pwm2_clk),
-	CLK(NULL, "pwm3", &pwm3_clk),
-	CLK(NULL, "timer0", &timer0_clk),
-	CLK(NULL, "timer1", &timer1_clk),
-	CLK("watchdog", NULL, &timer2_clk),
-	CLK(NULL, "timer3", &timer3_clk),
-	CLK(NULL, "rto", &rto_clk),
-	CLK(NULL, "usb", &usb_clk),
+	CLK(NULL, "arm", &clk_arm),
+	CLK(NULL, "mjcp", &clk_mjcp),
+	CLK(NULL, "uart0", &clk_uart0),
+	CLK(NULL, "uart1", &clk_uart1),
+	CLK(NULL, "uart2", &clk_uart2),
+	CLK("i2c_davinci.1", NULL, &clk_i2c),
+	CLK("davinci-mcbsp.0", NULL, &clk_asp0),
+	CLK("davinci-mcbsp.1", NULL, &clk_asp1),
+	CLK("davinci_mmc.0", NULL, &clk_mmcsd0),
+	CLK("davinci_mmc.1", NULL, &clk_mmcsd1),
+	CLK("spi_davinci.0", NULL, &clk_spi0),
+	CLK("spi_davinci.1", NULL, &clk_spi1),
+	CLK("spi_davinci.2", NULL, &clk_spi2),
+	CLK(NULL, "gpio", &clk_gpio),
+	CLK(NULL, "aemif", &clk_aemif),
+	CLK(NULL, "pwm0", &clk_pwm0),
+	CLK(NULL, "pwm1", &clk_pwm1),
+	CLK(NULL, "pwm2", &clk_pwm2),
+	CLK(NULL, "pwm3", &clk_pwm3),
+	CLK(NULL, "timer0", &clk_timer0),
+	CLK(NULL, "timer1", &clk_timer1),
+	CLK("watchdog", NULL, &clk_timer2),
+	CLK(NULL, "timer3", &clk_timer3),
+	CLK(NULL, "rto", &clk_rto),
+	CLK(NULL, "usb", &clk_usb),
 	CLK(NULL, NULL, NULL),
 };
 
@@ -960,6 +956,30 @@ static struct platform_device dm355_serial_device = {
 	},
 };
 
+static struct clk_lookup vpss_master_lookups[] = {
+	{ .dev_id = "dm355_ccdc", .con_id = "master", },
+};
+
+static struct clk_lookup vpss_slave_lookups[] = {
+	{ .dev_id = "dm355_ccdc", .con_id = "slave", },
+};
+
+static struct davinci_dev_lookup dev_clk_lookups[] = {
+	{
+		.con_id		= "vpss_master",
+		.num_devs	= ARRAY_SIZE(vpss_master_lookups),
+		.lookups	= vpss_master_lookups,
+	},
+	{
+		.con_id		= "vpss_slave",
+		.num_devs	= ARRAY_SIZE(vpss_slave_lookups),
+		.lookups	= vpss_slave_lookups,
+	},
+	{
+		.con_id		= NULL,
+	},
+};
+
 static struct davinci_soc_info davinci_soc_info_dm355 = {
 	.io_desc		= dm355_io_desc,
 	.io_desc_num		= ARRAY_SIZE(dm355_io_desc),
@@ -967,6 +987,7 @@ static struct davinci_soc_info davinci_soc_info_dm355 = {
 	.ids			= dm355_ids,
 	.ids_num		= ARRAY_SIZE(dm355_ids),
 	.cpu_clks		= dm355_clks,
+	.dev_clk_lookups	= dev_clk_lookups,
 	.psc_bases		= dm355_psc_bases,
 	.psc_bases_num		= ARRAY_SIZE(dm355_psc_bases),
 	.pinmux_base		= DAVINCI_SYSTEM_MODULE_BASE,
