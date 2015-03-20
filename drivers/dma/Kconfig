@@ -312,6 +312,26 @@ config MMP_PDMA
 	help
 	  Support the MMP PDMA engine for PXA and MMP platfrom.
 
+config KEYSTONE_DMA
+	bool "TI Keystone platform Packet DMA support"
+	depends on TI_KEYSTONE
+	default y if TI_KEYSTONE
+	select DMA_ENGINE
+	help
+	  Enable support for the Packet DMA engine on Texas Instruments'
+	  Keystone family of devices.
+
+config KEYSTONE_UDMA
+	tristate "Zero Copy User Mode DMA client"
+	depends on KEYSTONE_DMA
+	default y if KEYSTONE_DMA
+	select VIRTIO
+	select VIRTIO_RING
+	select CMA
+	help
+	  Simple user mode DMA client with zero copy semantics.  Say N unless
+	  you really know what you're doing.
+
 config DMA_ENGINE
 	bool
 
