@@ -664,6 +664,7 @@ static void netcp_rx_complete(void *data)
 {
 	struct netcp_packet *p_info = data;
 	struct netcp_priv *netcp = p_info->netcp;
+	struct netcp_stats *rx_stats = &netcp->stats;
 	struct sk_buff *skb;
 	struct scatterlist *sg;
 	enum dma_status status;
@@ -729,7 +730,7 @@ static void netcp_rx_complete(void *data)
 			p_info, status, netcp_rx_state_str(netcp));
 		dev_kfree_skb(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
-		netcp->ndev->stats.rx_dropped++;
+		rx_stats->rx_dropped++;
 		return;
 	}
 
@@ -739,7 +740,7 @@ static void netcp_rx_complete(void *data)
 			 p_info, status, netcp_rx_state_str(netcp));
 		dev_kfree_skb(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
-		netcp->ndev->stats.rx_errors++;
+		rx_stats->rx_errors++;
 		return;
 	}
 
@@ -747,7 +748,7 @@ static void netcp_rx_complete(void *data)
 		dev_warn(netcp->dev, "receive: zero length packet\n");
 		dev_kfree_skb(skb);
 		kmem_cache_free(netcp_pinfo_cache, p_info);
-		netcp->ndev->stats.rx_errors++;
+		rx_stats->rx_errors++;
 		return;
 	}
 
@@ -779,8 +780,10 @@ static void netcp_rx_complete(void *data)
 	}
 	rcu_read_unlock();
 
-	netcp->ndev->stats.rx_packets++;
-	netcp->ndev->stats.rx_bytes += skb->len;
+	u64_stats_update_begin(&rx_stats->syncp);
+	rx_stats->rx_packets++;
+	rx_stats->rx_bytes += skb->len;
+	u64_stats_update_end(&rx_stats->syncp);
 
 	kmem_cache_free(netcp_pinfo_cache, p_info);
 
@@ -1178,6 +1181,7 @@ static void netcp_tx_notify(struct dma_chan *chan, void *arg)
 static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
+	struct netcp_stats *tx_stats = &netcp->stats;
 	struct dma_async_tx_descriptor *desc;
 	struct netcp_tx_pipe *tx_pipe;
 	struct netcp_hook_list *tx_hook;
@@ -1189,8 +1193,10 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	int poll_count;
 	int ret = 0;
 
-	ndev->stats.tx_packets++;
-	ndev->stats.tx_bytes += skb->len;
+	u64_stats_update_begin(&tx_stats->syncp);
+	tx_stats->tx_packets++;
+	tx_stats->tx_bytes += skb->len;
+	u64_stats_update_end(&tx_stats->syncp);
 
 	p_info.netcp = netcp;
 	p_info.skb = skb;
@@ -1236,7 +1242,7 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 			/* If we get here, the skb has already been dropped */
 			dev_warn(netcp->dev, "padding failed (%d), "
 				 "packet dropped\n", ret);
-			ndev->stats.tx_dropped++;
+			tx_stats->tx_dropped++;
 			return ret;
 		}
 		skb->len = NETCP_MIN_PACKET_SIZE;
@@ -1309,7 +1315,7 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 
 drop:
 	atomic_add(real_sg_ents, &tx_pipe->dma_poll_count);
-	ndev->stats.tx_dropped++;
+	tx_stats->tx_dropped++;
 	dev_kfree_skb(skb);
 	return ret;
 }
@@ -1337,7 +1343,12 @@ int netcp_txpipe_open(struct netcp_tx_pipe *tx_pipe)
 {
 	struct dma_keystone_info config;
 	dma_cap_mask_t mask;
-	int ret;
+	int ret, queue_depth;
+
+	queue_depth = tx_pipe->dma_queue_depth;
+	tx_pipe->dma_pause_threshold = (MAX_SKB_FRAGS < (queue_depth / 4)) ?
+					MAX_SKB_FRAGS : (queue_depth / 4);
+	tx_pipe->dma_resume_threshold = tx_pipe->dma_pause_threshold;
 
 	dma_cap_zero(mask);
 	dma_cap_set(DMA_SLAVE, mask);
@@ -1353,7 +1364,7 @@ int netcp_txpipe_open(struct netcp_tx_pipe *tx_pipe)
 
 	memset(&config, 0, sizeof(config));
 	config.direction = DMA_MEM_TO_DEV;
-	config.tx_queue_depth = tx_pipe->dma_queue_depth;
+	config.tx_queue_depth = queue_depth;
 	ret = dma_keystone_config(tx_pipe->dma_channel, &config);
 	if (ret) {
 		dev_err(tx_pipe->netcp_priv->dev,
@@ -1365,14 +1376,16 @@ int netcp_txpipe_open(struct netcp_tx_pipe *tx_pipe)
 	}
 
 	tx_pipe->dma_queue = dma_get_tx_queue(tx_pipe->dma_channel);
-	atomic_set(&tx_pipe->dma_poll_count, tx_pipe->dma_queue_depth);
+	atomic_set(&tx_pipe->dma_poll_count, queue_depth);
 	netcp_set_txpipe_state(tx_pipe, TX_STATE_INTERRUPT);
 	napi_enable(&tx_pipe->dma_poll_napi);
 	dma_set_notify(tx_pipe->dma_channel, netcp_tx_notify, tx_pipe);
 
 
-	dev_dbg(tx_pipe->netcp_priv->dev, "opened tx pipe %s\n",
-		tx_pipe->dma_chan_name);
+	dev_dbg(tx_pipe->netcp_priv->dev,
+		"opened tx pipe %s, depth %d, pause/resume %d/%d\n",
+		tx_pipe->dma_chan_name, queue_depth,
+		tx_pipe->dma_pause_threshold, tx_pipe->dma_resume_threshold);
 	return 0;
 }
 EXPORT_SYMBOL(netcp_txpipe_open);
@@ -1388,17 +1401,12 @@ int netcp_txpipe_init(struct netcp_tx_pipe *tx_pipe,
 	tx_pipe->dma_chan_name = chan_name;
 	tx_pipe->dma_queue_depth = queue_depth;
 
-	tx_pipe->dma_pause_threshold = (MAX_SKB_FRAGS < (queue_depth / 4)) ?
-					MAX_SKB_FRAGS : (queue_depth / 4);
-	tx_pipe->dma_resume_threshold = tx_pipe->dma_pause_threshold;
-
 	netcp_set_txpipe_state(tx_pipe, TX_STATE_INVALID);
 	netif_napi_add(netcp_priv->ndev, &tx_pipe->dma_poll_napi,
 			netcp_tx_poll, NETCP_NAPI_WEIGHT_TX);
 
-	dev_dbg(tx_pipe->netcp_priv->dev, "initialized tx pipe %s, %d/%d\n",
-		tx_pipe->dma_chan_name, tx_pipe->dma_pause_threshold,
-		tx_pipe->dma_resume_threshold);
+	dev_dbg(tx_pipe->netcp_priv->dev, "initialized tx pipe %s\n",
+		tx_pipe->dma_chan_name);
 	return 0;
 }
 EXPORT_SYMBOL(netcp_txpipe_init);
@@ -1456,65 +1464,85 @@ static void netcp_addr_clear_mark(struct netcp_priv *netcp)
 		naddr->flags = 0;
 }
 
-static void netcp_addr_add_mark(struct netcp_priv *netcp, const u8 *addr,
-				enum netcp_addr_type type)
+static struct netcp_addr *
+netcp_addr_add_mark(struct netcp_priv *netcp, const u8 *addr,
+					enum netcp_addr_type type)
 {
 	struct netcp_addr *naddr;
 
 	naddr = netcp_addr_find(netcp, addr, type);
 	if (naddr) {
 		naddr->flags |= ADDR_VALID;
-		return;
+		return naddr;
 	}
 
 	naddr = netcp_addr_add(netcp, addr, type);
 	if (!WARN_ON(!naddr))
 		naddr->flags |= ADDR_NEW;
+
+	return naddr;
+}
+
+static void netcp_mod_del_addr(struct netcp_priv *netcp,
+				struct netcp_addr *naddr)
+{
+	struct netcp_intf_modpriv *priv;
+	struct netcp_module *module;
+
+	dev_dbg(netcp->dev, "deleting address %pM, type %x\n",
+		naddr->addr, naddr->type);
+	for_each_module(netcp, priv) {
+		module = priv->netcp_module;
+		if (!module->del_addr)
+			continue;
+		module->del_addr(priv->module_priv, naddr);
+	}
 }
 
 static void netcp_addr_sweep_del(struct netcp_priv *netcp)
 {
 	struct netcp_addr *naddr, *tmp;
-	struct netcp_intf_modpriv *priv;
-	struct netcp_module *module;
-	int error;
 
 	list_for_each_entry_safe(naddr, tmp, &netcp->addr_list, node) {
 		if (naddr->flags & (ADDR_VALID | ADDR_NEW))
 			continue;
-		dev_dbg(netcp->dev, "deleting address %pM, type %x\n",
-			naddr->addr, naddr->type);
-		for_each_module(netcp, priv) {
-			module = priv->netcp_module;
-			if (!module->del_addr)
-				continue;
-			error = module->del_addr(priv->module_priv,
-						 naddr);
-			WARN_ON(error);
-		}
+		netcp_mod_del_addr(netcp, naddr);
 		netcp_addr_del(naddr);
 	}
+}
+
+static int netcp_mod_add_addr(struct netcp_priv *netcp,
+				struct netcp_addr *naddr)
+{
+	struct netcp_intf_modpriv *priv;
+	struct netcp_module *module;
+	int error;
+
+	dev_dbg(netcp->dev, "adding address %pM, type %x\n",
+		naddr->addr, naddr->type);
+	for_each_module(netcp, priv) {
+		module = priv->netcp_module;
+		if (!module->add_addr)
+			continue;
+		error = module->add_addr(priv->module_priv, naddr);
+		if (error)
+			break;
+	}
+
+	if (error)
+		netcp_mod_del_addr(netcp, naddr);
+
+	return error;
 }
 
 static void netcp_addr_sweep_add(struct netcp_priv *netcp)
 {
 	struct netcp_addr *naddr, *tmp;
-	struct netcp_intf_modpriv *priv;
-	struct netcp_module *module;
-	int error;
 
 	list_for_each_entry_safe(naddr, tmp, &netcp->addr_list, node) {
 		if (!(naddr->flags & ADDR_NEW))
 			continue;
-		dev_dbg(netcp->dev, "adding address %pM, type %x\n",
-			naddr->addr, naddr->type);
-		for_each_module(netcp, priv) {
-			module = priv->netcp_module;
-			if (!module->add_addr)
-				continue;
-			error = module->add_addr(priv->module_priv, naddr);
-			WARN_ON(error);
-		}
+		netcp_mod_add_addr(netcp, naddr);
 	}
 }
 
@@ -1720,6 +1748,35 @@ static int netcp_ndo_ioctl(struct net_device *ndev,
 	return (ret == 0) ? 0 : err;
 }
 
+static struct rtnl_link_stats64 *
+netcp_get_stats(struct net_device *ndev, struct rtnl_link_stats64 *stats)
+{
+	struct netcp_priv *netcp = netdev_priv(ndev);
+	struct netcp_stats *p = &netcp->stats;
+
+	u64 rxpackets, rxbytes, txpackets, txbytes;
+	unsigned int start;
+	do {
+		start = u64_stats_fetch_begin_bh(&p->syncp);
+		rxpackets	= p->rx_packets;
+		rxbytes		= p->rx_bytes;
+		txpackets	= p->tx_packets;
+		txbytes		= p->tx_bytes;
+	} while (u64_stats_fetch_retry_bh(&p->syncp, start));
+
+	stats->rx_packets = rxpackets;
+	stats->rx_bytes = rxbytes;
+	stats->tx_packets = txpackets;
+	stats->tx_bytes = txbytes;
+
+	/* The following are stored as 32 bit */
+	stats->rx_errors = p->rx_errors;
+	stats->rx_dropped = p->rx_dropped;
+	stats->tx_dropped = p->tx_dropped;
+
+	return stats;
+}
+
 static int netcp_ndo_change_mtu(struct net_device *ndev, int new_mtu)
 {
 	struct netcp_priv *netcp = netdev_priv(ndev);
@@ -1733,6 +1790,38 @@ static int netcp_ndo_change_mtu(struct net_device *ndev, int new_mtu)
 
 	ndev->mtu = new_mtu;
 	return 0;
+}
+
+static int netcp_ndo_set_mac_address(struct net_device *ndev, void *p)
+{
+	struct netcp_priv *netcp = netdev_priv(ndev);
+	struct netcp_addr *naddr;
+	int ret;
+
+	ret = eth_mac_addr(ndev, p);
+	if (ret) {
+		dev_info(netcp->dev, "set mac addr %pM failed (%d).\n",
+			((struct sockaddr *)p)->sa_data, ret);
+		goto done;
+	}
+
+	naddr = netcp_addr_add_mark(netcp, ndev->dev_addr, ADDR_DEV);
+	if (!naddr) {
+		ret = -ENOMEM;
+		goto done;
+	}
+	if (naddr->flags & ADDR_VALID)
+		goto done;
+
+	ret = netcp_mod_add_addr(netcp, naddr);
+	if (ret) {
+		/* lower modules are not ready yet */
+		netcp_addr_del(naddr);
+		ret = 0;
+	}
+
+done:
+	return ret;
 }
 
 static void netcp_ndo_tx_timeout(struct net_device *ndev)
@@ -1909,8 +1998,9 @@ static const struct net_device_ops netcp_netdev_ops = {
 	.ndo_start_xmit		= netcp_ndo_start_xmit,
 	.ndo_set_rx_mode	= netcp_set_rx_mode,
 	.ndo_do_ioctl           = netcp_ndo_ioctl,
+	.ndo_get_stats64	= netcp_get_stats,
 	.ndo_change_mtu		= netcp_ndo_change_mtu,
-	.ndo_set_mac_address	= eth_mac_addr,
+	.ndo_set_mac_address	= netcp_ndo_set_mac_address,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_vlan_rx_add_vid	= netcp_rx_add_vid,
 	.ndo_vlan_rx_kill_vid	= netcp_rx_kill_vid,
@@ -1961,6 +2051,8 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 				NETIF_F_IPV6_CSUM |
 				NETIF_F_SG|
 				NETIF_F_FRAGLIST;
+
+	ndev->priv_flags |= IFF_LIVE_ADDR_CHANGE;
 
 	netcp = netdev_priv(ndev);
 	spin_lock_init(&netcp->lock);
