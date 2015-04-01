@@ -1246,8 +1246,9 @@ static void chan_destroy(struct dma_chan *achan)
 {
 	struct keystone_dma_chan *chan = from_achan(achan);
 	struct keystone_dma_device *dma = chan->dma;
-	enum keystone_chan_state state;
+	enum keystone_chan_state state, prev_state;
 
+	prev_state = chan_get_state(chan);
 	do {
 		state = chan_get_state(chan);
 		if (state == CHAN_STATE_CLOSED)
@@ -1256,9 +1257,11 @@ static void chan_destroy(struct dma_chan *achan)
 
 	chan_vdbg(chan, "destroying channel\n");
 
-	chan_stop(chan);
-	chan_destroy_descs(chan);
-	chan_destroy_queues(chan);
+	if (prev_state != CHAN_STATE_OPENING) {
+		chan_stop(chan);
+		chan_destroy_descs(chan);
+		chan_destroy_queues(chan);
+	}
 
 	atomic_dec_return(&dma->in_use);
 	keystone_dma_hw_destroy(dma);
