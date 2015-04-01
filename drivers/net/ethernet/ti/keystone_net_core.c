@@ -1610,6 +1610,7 @@ static int netcp_ndo_open(struct net_device *ndev)
 	if (IS_ERR_OR_NULL(netcp->rx_channel)) {
 		dev_err(netcp->dev, "Failed to open DMA channel \"%s\": %ld\n",
 				name, PTR_ERR(netcp->rx_channel));
+		netcp->rx_channel = NULL;
 		goto fail;
 	}
 
