@@ -780,10 +780,10 @@ static void netcp_rx_complete(void *data)
 	}
 	rcu_read_unlock();
 
-	u64_stats_update_begin(&rx_stats->syncp);
+	u64_stats_update_begin(&rx_stats->syncp_rx);
 	rx_stats->rx_packets++;
 	rx_stats->rx_bytes += skb->len;
-	u64_stats_update_end(&rx_stats->syncp);
+	u64_stats_update_end(&rx_stats->syncp_rx);
 
 	kmem_cache_free(netcp_pinfo_cache, p_info);
 
@@ -1193,10 +1193,10 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	int poll_count;
 	int ret = 0;
 
-	u64_stats_update_begin(&tx_stats->syncp);
+	u64_stats_update_begin(&tx_stats->syncp_tx);
 	tx_stats->tx_packets++;
 	tx_stats->tx_bytes += skb->len;
-	u64_stats_update_end(&tx_stats->syncp);
+	u64_stats_update_end(&tx_stats->syncp_tx);
 
 	p_info.netcp = netcp;
 	p_info.skb = skb;
@@ -1757,12 +1757,16 @@ netcp_get_stats(struct net_device *ndev, struct rtnl_link_stats64 *stats)
 	u64 rxpackets, rxbytes, txpackets, txbytes;
 	unsigned int start;
 	do {
-		start = u64_stats_fetch_begin_bh(&p->syncp);
+		start = u64_stats_fetch_begin_bh(&p->syncp_rx);
 		rxpackets	= p->rx_packets;
 		rxbytes		= p->rx_bytes;
+	} while (u64_stats_fetch_retry_bh(&p->syncp_rx, start));
+
+	do {
+		start = u64_stats_fetch_begin_bh(&p->syncp_tx);
 		txpackets	= p->tx_packets;
 		txbytes		= p->tx_bytes;
-	} while (u64_stats_fetch_retry_bh(&p->syncp, start));
+	} while (u64_stats_fetch_retry_bh(&p->syncp_tx, start));
 
 	stats->rx_packets = rxpackets;
 	stats->rx_bytes = rxbytes;

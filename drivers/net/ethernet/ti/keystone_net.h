@@ -101,13 +101,15 @@ struct netcp_addr {
 };
 
 struct netcp_stats {
+	struct u64_stats_sync	syncp_rx ____cacheline_aligned_in_smp;
 	u64			rx_packets;
 	u64			rx_bytes;
-	u64			tx_packets;
-	u64			tx_bytes;
-	struct u64_stats_sync	syncp;
 	u32			rx_errors;
 	u32			rx_dropped;
+
+	struct u64_stats_sync	syncp_tx ____cacheline_aligned_in_smp;
+	u64			tx_packets;
+	u64			tx_bytes;
 	u32			tx_dropped;
 };
 
