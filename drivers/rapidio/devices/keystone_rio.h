@@ -932,10 +932,6 @@ struct keystone_rio_fabric_regs {
 extern int rio_basic_attach(void);
 
 /* Message Passing management functions */
-extern void keystone_rio_close_tx_mbox(int mbox,
-				       struct keystone_rio_data *krio_priv);
-extern void keystone_rio_close_rx_mbox(int mbox,
-				       struct keystone_rio_data *krio_priv);
 extern int keystone_rio_open_outb_mbox(struct rio_mport *mport,
 				       void *dev_id,
 				       int mbox,

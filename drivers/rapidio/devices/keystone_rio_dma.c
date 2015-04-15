@@ -204,15 +204,16 @@ keystone_rio_dma_next_work(struct keystone_rio_dma_chan *chan)
 static void keystone_rio_dma_start(struct keystone_rio_dma_chan *chan)
 {
 	struct keystone_rio_dma_desc *desc;
+	unsigned long flags;
 	int res;
 
-	spin_lock_bh(&chan->lock);
+	spin_lock_irqsave(&chan->lock, flags);
 
 	desc = chan->current_transfer;
 
 	if (unlikely((!desc) || (keystone_rio_dma_chan_get_state(chan)
 				 != RIO_CHAN_STATE_ACTIVE))) {
-		spin_unlock_bh(&chan->lock);
+		spin_unlock_irqrestore(&chan->lock, flags);
 		return;
 	}
 
@@ -236,7 +237,7 @@ static void keystone_rio_dma_start(struct keystone_rio_dma_chan *chan)
 					      chan->krio);
 	if (res) {
 		desc->status = DMA_ERROR;
-		spin_unlock_bh(&chan->lock);
+		spin_unlock_irqrestore(&chan->lock, flags);
 		dev_err(chan_dev(chan), "DIO: transfer error %d\n", res);
 		return;
 	}
@@ -244,7 +245,7 @@ static void keystone_rio_dma_start(struct keystone_rio_dma_chan *chan)
 	keystone_rio_dma_chan_set_state(chan, RIO_CHAN_STATE_RUNNING,
 					RIO_CHAN_STATE_WAITING);
 
-	spin_unlock_bh(&chan->lock);
+	spin_unlock_irqrestore(&chan->lock, flags);
 }
 
 static void keystone_rio_dma_tasklet(unsigned long data)
@@ -460,9 +461,10 @@ static dma_cookie_t keystone_rio_dma_tx_submit(
 {
 	struct keystone_rio_dma_desc *desc = desc_from_adesc(adesc);
 	struct keystone_rio_dma_chan *chan = from_dma_chan(adesc->chan);
+	unsigned long flags;
 	dma_cookie_t cookie;
 
-	spin_lock_bh(&chan->lock);
+	spin_lock_irqsave(&chan->lock, flags);
 
 	/* Increment the DMA cookie */
 	cookie = adesc->chan->cookie;
@@ -479,13 +481,13 @@ static dma_cookie_t keystone_rio_dma_tx_submit(
 			chan->current_transfer =
 				keystone_rio_dma_first_active(chan);
 		}
-		spin_unlock_bh(&chan->lock);
+		spin_unlock_irqrestore(&chan->lock, flags);
 
 		/* Initiate the transfer */
 		keystone_rio_dma_start(chan);
 	} else {
 		list_add_tail(&desc->node, &chan->queue);
-		spin_unlock_bh(&chan->lock);
+		spin_unlock_irqrestore(&chan->lock, flags);
 	}
 
 	return cookie;

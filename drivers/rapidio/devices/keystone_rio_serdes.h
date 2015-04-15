@@ -122,4 +122,8 @@ extern int keystone_rio_serdes_register(
 	struct keystone_serdes_data *serdes,
 	struct keystone_serdes_config *serdes_config);
 
+extern void keystone_rio_serdes_unregister(
+	struct device *dev,
+	struct keystone_serdes_data *serdes);
+
 #endif /* KEYSTONE_RIO_SERDES_H */

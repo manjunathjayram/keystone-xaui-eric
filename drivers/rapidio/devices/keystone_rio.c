@@ -1357,6 +1357,9 @@ static void keystone_rio_reset_dpc(struct work_struct *work)
 	u32 ports;
 	u32 port;
 
+	if (krio_priv->started == 0)
+		return;
+
 	ports_rst = __raw_readl(
 		&krio_priv->evt_mgmt_regs->evt_mgmt_rst_port_stat);
 
@@ -1632,6 +1635,9 @@ static void keystone_rio_pe_dpc(struct work_struct *work)
 	struct keystone_rio_data *krio_priv = container_of(
 		to_delayed_work(work), struct keystone_rio_data, pe_work);
 	u32 port;
+
+	if (krio_priv->started == 0)
+		return;
 
 	dev_dbg(krio_priv->dev,
 		"ER errors on ports: 0x%x\n",
@@ -2071,6 +2077,9 @@ static void keystone_rio_pw_dpc(struct work_struct *work)
 	unsigned long flags;
 	u32 msg_buffer[RIO_PW_MSG_SIZE / sizeof(u32)];
 
+	if (krio_priv->started == 0)
+		return;
+
 	/*
 	 * Process port-write messages
 	 */
@@ -2233,11 +2242,19 @@ static int keystone_rio_query_mport(struct rio_mport *mport,
 	return 0;
 }
 
+static void keystone_rio_mport_release(struct device *dev)
+{
+	struct rio_mport *mport = to_rio_mport(dev);
+
+	dev_dbg(dev, "%s %s id=%d\n", __func__, mport->name, mport->id);
+}
+
 struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 					      struct keystone_rio_data *krio_priv)
 {
 	struct rio_ops   *ops;
 	struct rio_mport *mport;
+	int res;
 
 	ops = kzalloc(sizeof(struct rio_ops), GFP_KERNEL);
 
@@ -2259,14 +2276,22 @@ struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 
 	mport = kzalloc(sizeof(struct rio_mport), GFP_KERNEL);
 
+	/* Initialize the mport structure */
+	res = rio_mport_initialize(mport);
+	if (res) {
+		kfree(mport);
+		return NULL;
+	}
+
 	/*
 	 * Set the SRIO port physical Id into the index field,
-	 * the id field will be set by rio_register_mport() to
+	 * the id field has been set by rio_mport_initialize() to
 	 * the logical Id
 	 */
 	mport->index = port_id;
 	mport->priv  = krio_priv;
-	mport->dev.parent = krio_priv->dev;
+	mport->dev.parent  = krio_priv->dev;
+	mport->dev.release = keystone_rio_mport_release;
 	INIT_LIST_HEAD(&mport->dbells);
 
 	/*
@@ -2305,7 +2330,11 @@ struct rio_mport *keystone_rio_register_mport(u32 port_id, u32 size,
 	/*
 	 * Register the new mport
 	 */
-	rio_register_mport(mport);
+	res = rio_register_mport(mport);
+	if (res) {
+		kfree(mport);
+		return NULL;
+	}
 
 	krio_priv->mport[port_id] = mport;
 
@@ -3290,6 +3319,7 @@ static void keystone_rio_shutdown_controller(
 
 	dev_dbg(krio_priv->dev, "shutdown controller\n");
 
+	/* Unregister interrupt handlers */
 	keystone_rio_interrupt_release(krio_priv);
 
 	/* Shutdown associated SerDes */
@@ -3312,15 +3342,9 @@ static void keystone_rio_shutdown_controller(
 static void keystone_rio_shutdown(struct platform_device *pdev)
 {
 	struct keystone_rio_data *krio_priv = platform_get_drvdata(pdev);
-	int i;
 
 	if (krio_priv->started)
 		keystone_rio_shutdown_controller(krio_priv);
-
-	for (i = 0; i < KEYSTONE_RIO_MAX_MBOX; i++) {
-		keystone_rio_close_tx_mbox(i, krio_priv);
-		keystone_rio_close_rx_mbox(i, krio_priv);
-	}
 
 	/* Wait current DMA transfers to finish */
 	mdelay(10);
@@ -3331,15 +3355,12 @@ static void keystone_rio_shutdown(struct platform_device *pdev)
 	}
 }
 
-static int __exit keystone_rio_remove(struct platform_device *pdev)
+static int keystone_rio_remove(struct platform_device *pdev)
 {
 	struct keystone_rio_data *krio_priv = platform_get_drvdata(pdev);
 	u32 ports = krio_priv->board_rio_cfg.ports;
 
-	/* Shutdown the hw controller */
-	keystone_rio_shutdown(pdev);
-
-	/* Retrieve all registered mports */
+	/* Notify devices attached to all registered mports */
 	while (ports) {
 		struct rio_mport *mport;
 		u32 port = __ffs(ports);
@@ -3347,20 +3368,44 @@ static int __exit keystone_rio_remove(struct platform_device *pdev)
 
 		mport = krio_priv->mport[port];
 
-#ifdef CONFIG_RAPIDIO_DMA_ENGINE
 		if (mport) {
-			keystone_rio_lsu_dma_free_channel(mport);
-			keystone_rio_dma_unregister(mport);
+			/* Remove devices attached to this port */
+			rio_mport_remove_childs(mport);
 		}
-#endif
-
-		/* We should also unregister the mport from the RIO framework */
-		krio_priv->mport[port] = NULL;
 	}
 
-	keystone_rio_sysfs_remove(&pdev->dev);
+	/* Shutdown the hw controller */
+	keystone_rio_shutdown(pdev);
 
+	/* Retrieve all registered mports */
+	ports = krio_priv->board_rio_cfg.ports;
+	while (ports) {
+		struct rio_mport *mport;
+		u32 port = __ffs(ports);
+		ports &= ~BIT(port);
+
+		mport = krio_priv->mport[port];
+
+		if (mport) {
+#ifdef CONFIG_RAPIDIO_DMA_ENGINE
+			keystone_rio_lsu_dma_free_channel(mport);
+			keystone_rio_dma_unregister(mport);
+#endif
+			/* Unregister the mport from the RIO framework */
+			rio_unregister_mport(mport);
+		}
+	}
+
+	/* Remove io mapping */
+	iounmap(krio_priv->jtagid_reg);
+	iounmap(krio_priv->serdes_regs);
+	iounmap(krio_priv->regs);
+
+	/* Unregister sysfs and free mport private structures */
+	keystone_rio_serdes_unregister(&pdev->dev, &krio_priv->serdes);
+	keystone_rio_sysfs_remove(&pdev->dev);
 	platform_set_drvdata(pdev, NULL);
+	kfree(krio_priv);
 
 	return 0;
 }
@@ -3379,7 +3424,7 @@ static struct platform_driver keystone_rio_driver  = {
 		.of_match_table	= of_match,
 	},
 	.probe	= keystone_rio_probe,
-	.remove = __exit_p(keystone_rio_remove),
+	.remove = keystone_rio_remove,
 	.shutdown = keystone_rio_shutdown,
 };
 
