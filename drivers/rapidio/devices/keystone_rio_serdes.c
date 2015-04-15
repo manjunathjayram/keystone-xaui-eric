@@ -2364,8 +2364,9 @@ static int keystone_rio_serdes_sysfs_create(
 				   "rx");
 	if (res) {
 		dev_err(dev, "unable create sysfs serdes/rx files\n");
-		kobject_put(&dev->kobj);
 		kobject_put(serdes->serdes_kobj);
+		kobject_del(serdes->serdes_kobj);
+		kobject_put(&dev->kobj);
 		return res;
 	}
 
@@ -2383,12 +2384,26 @@ static int keystone_rio_serdes_sysfs_create(
 				   "tx");
 	if (res) {
 		dev_err(dev, "unable create sysfs serdes/tx files\n");
-		kobject_put(&dev->kobj);
+		kobject_del(&serdes->serdes_rx_kobj);
 		kobject_put(serdes->serdes_kobj);
+		kobject_del(serdes->serdes_kobj);
+		kobject_put(&dev->kobj);
 		return res;
 	}
 
 	return 0;
+}
+
+static void keystone_rio_serdes_sysfs_remove(
+	struct device *dev,
+	struct keystone_serdes_data *serdes)
+{
+	kobject_del(&serdes->serdes_tx_kobj);
+	kobject_put(serdes->serdes_kobj);
+	kobject_del(&serdes->serdes_rx_kobj);
+	kobject_put(serdes->serdes_kobj);
+	kobject_del(serdes->serdes_kobj);
+	kobject_put(&dev->kobj);
 }
 
 /*---------------------------------------------------------------------------*/
@@ -2430,4 +2445,10 @@ int keystone_rio_serdes_register(u16 serdes_type,
 
 error:
 	return res;
+}
+
+void keystone_rio_serdes_unregister(struct device *dev,
+				    struct keystone_serdes_data *serdes)
+{
+	keystone_rio_serdes_sysfs_remove(dev, serdes);
 }

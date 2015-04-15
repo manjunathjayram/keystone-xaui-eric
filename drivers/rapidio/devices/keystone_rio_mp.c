@@ -438,10 +438,20 @@ int keystone_rio_open_inb_mbox(struct rio_mport *mport,
 	return res;
 }
 
-void keystone_rio_close_rx_mbox(int mbox,
-				struct keystone_rio_data *krio_priv)
+/**
+ * keystone_rio_close_inb_mbox - Shutdown KeyStone inbound mailbox
+ * @mport: Master port implementing the inbound message unit
+ * @mbox: Mailbox to close
+ *
+ * Disables the outbound message unit, stop queues and free all resources
+ */
+void keystone_rio_close_inb_mbox(struct rio_mport *mport, int mbox)
 {
+	struct keystone_rio_data *krio_priv = mport->priv;
 	struct keystone_rio_mbox_info *rx_mbox = &krio_priv->rx_mbox[mbox];
+
+	dev_dbg(krio_priv->dev, "close inb mbox: mport = 0x%x, mbox = %d\n",
+		(u32) mport, mbox);
 
 	if (mbox >= KEYSTONE_RIO_MAX_MBOX)
 		return;
@@ -458,23 +468,6 @@ void keystone_rio_close_rx_mbox(int mbox,
 	keystone_rio_free_rxu_map(rx_mbox->rxu_map_id[1], krio_priv);
 
 	keystone_rio_mp_inb_exit(mbox, krio_priv);
-}
-
-/**
- * keystone_rio_close_inb_mbox - Shutdown KeyStone inbound mailbox
- * @mport: Master port implementing the inbound message unit
- * @mbox: Mailbox to close
- *
- * Disables the outbound message unit, stop queues and free all resources
- */
-void keystone_rio_close_inb_mbox(struct rio_mport *mport, int mbox)
-{
-	struct keystone_rio_data *krio_priv = mport->priv;
-
-	dev_dbg(krio_priv->dev, "close inb mbox: mport = 0x%x, mbox = %d\n",
-		(u32) mport, mbox);
-
-	keystone_rio_close_rx_mbox(mbox, krio_priv);
 }
 
 /**
@@ -717,10 +710,20 @@ int keystone_rio_open_outb_mbox(struct rio_mport *mport,
 	return 0;
 }
 
-void keystone_rio_close_tx_mbox(int mbox,
-				struct keystone_rio_data *krio_priv)
+/**
+ * keystone_rio_close_outb_mbox - Shutdown KeyStone outbound mailbox
+ * @mport: Master port implementing the outbound message unit
+ * @mbox: Mailbox to close
+ *
+ * Disables the outbound message unit, stop queues and free all resources
+ */
+void keystone_rio_close_outb_mbox(struct rio_mport *mport, int mbox)
 {
+	struct keystone_rio_data *krio_priv = mport->priv;
 	struct keystone_rio_mbox_info *tx_mbox = &(krio_priv->tx_mbox[mbox]);
+
+	dev_dbg(krio_priv->dev, "close outb mbox: mport = 0x%x, mbox = %d\n",
+		(u32) mport, mbox);
 
 	if (mbox >= KEYSTONE_RIO_MAX_MBOX)
 		return;
@@ -733,23 +736,6 @@ void keystone_rio_close_tx_mbox(int mbox,
 	tx_mbox->port = NULL;
 
 	keystone_rio_mp_outb_exit(krio_priv, mbox);
-}
-
-/**
- * keystone_rio_close_outb_mbox - Shutdown KeyStone outbound mailbox
- * @mport: Master port implementing the outbound message unit
- * @mbox: Mailbox to close
- *
- * Disables the outbound message unit, stop queues and free all resources
- */
-void keystone_rio_close_outb_mbox(struct rio_mport *mport, int mbox)
-{
-	struct keystone_rio_data *krio_priv = mport->priv;
-
-	dev_dbg(krio_priv->dev, "close outb mbox: mport = 0x%x, mbox = %d\n",
-		(u32) mport, mbox);
-
-	keystone_rio_close_tx_mbox(mbox, krio_priv);
 }
 
 static void keystone_rio_tx_complete(void *data)
@@ -841,7 +827,7 @@ int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 	int ret = 0;
 	void *send_buffer = NULL;
 
-	if (unlikely(krio_priv->tx_mbox[mbox].port != mport))
+	if (unlikely((krio_priv->tx_mbox[mbox].port != mport) || (!rdev)))
 		return -EINVAL;
 
 	/*
@@ -902,7 +888,7 @@ int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 			keystone_rio_mbox_to_strmid(mbox, krio_priv) << 16;
 	}
 
-	if (rdev->net->hport->sys_size)
+	if ((rdev->net) && (rdev->net->hport->sys_size))
 		p_info->psdata[1] |= KEYSTONE_RIO_DESC_FLAG_TT_16; /* tt */
 
 	dev_dbg(krio_priv->dev,
