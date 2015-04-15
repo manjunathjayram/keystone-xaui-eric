@@ -56,11 +56,11 @@
 static unsigned long minors[N_RIO_MINORS / BITS_PER_LONG];
 static unsigned long init_done = 0;
 
-static LIST_HEAD(device_list);
 static DEFINE_MUTEX(device_list_lock);
 static spinlock_t       dbell_i_lock;
 static spinlock_t       dbell_list_lock;
 static struct list_head dbell_list;
+static struct list_head rio_dev_list;
 
 struct dbell_cell {
 	struct list_head   node;
@@ -74,6 +74,12 @@ struct rio_dev_private {
 	u16                    write_mode;
 	u64                    base_offset;
 	struct rio_mport_attr  attr;
+};
+
+struct rio_dev_cell {
+	struct list_head	list;
+	struct rio_mport       *mport;
+	struct device          *dev;
 };
 
 /* DMA transfer timeout in msec */
@@ -658,9 +664,13 @@ static int rio_dev_open(struct inode *inode, struct file *filp)
 {
 	struct rio_dev_private *rio_dev;
 	struct rio_mport *mport;
-	struct rio_dev *rdev;
+	struct rio_dev *rdev = NULL;
+	struct rio_dev *__rdev;
 
-	rdev = rio_get_devt(inode->i_rdev, NULL);
+	/* Workaround to get the last registered rdev in case of hotplug */
+	while ((__rdev = rio_get_devt(inode->i_rdev, rdev)) != NULL)
+	       rdev = __rdev;
+
 	if (rdev == NULL)
 		return -ENXIO;
 
@@ -759,7 +769,7 @@ static struct class rio_dev_class = {
 static int rio_dev_add(struct device *dev, struct subsys_interface *sif)
 {
 	struct rio_dev *rdev = to_rio_dev(dev);
-	struct rio_mport *port = rdev->net->hport;
+	struct rio_mport *mport = rdev->net->hport;
 	int status;
 	unsigned long minor;
 
@@ -775,18 +785,35 @@ static int rio_dev_add(struct device *dev, struct subsys_interface *sif)
 	minor = find_first_zero_bit(minors, N_RIO_MINORS);
 
 	if (minor < N_RIO_MINORS) {
-		struct device *dev;
-		rdev->dev.devt = MKDEV(RIO_DEV_MAJOR, minor);
-		dev = device_create(&rio_dev_class,
-				    &rdev->dev,
-				    rdev->dev.devt,
-				    rdev,
-				    "%s%d.%d",
-				    RIO_DEV_NAME,
-				    port->index,
-				    rdev->destid);
+		struct device *__dev;
+		struct rio_dev_cell *rio_dev;
 
-		status = IS_ERR(dev) ? PTR_ERR(dev) : 0;
+		rdev->dev.devt = MKDEV(RIO_DEV_MAJOR, minor);
+		__dev = device_create(&rio_dev_class,
+				      dev,
+				      dev->devt,
+				      rdev,
+				      "%s%d.%d",
+				      RIO_DEV_NAME,
+				      mport->index,
+				      rdev->destid);
+
+		status = IS_ERR(dev) ? PTR_ERR(__dev) : 0;
+		if (status) {
+			pr_debug(DRV_PREFIX "%s: cannot create device!\n", __func__);
+			goto out;
+		}
+
+		rio_dev = kmalloc(sizeof(struct rio_dev_cell), GFP_KERNEL);
+		if (rio_dev == NULL) {
+			pr_debug(DRV_PREFIX "%s: cannot allocate device!\n", __func__);
+			status = -ENOMEM;
+			goto out;
+		}
+
+		rio_dev->mport = mport;
+		rio_dev->dev   = &rdev->dev;
+		list_add_tail(&rio_dev->list, &rio_dev_list);
 	} else {
 		pr_debug(DRV_PREFIX "%s: no minor number available!\n", __func__);
 		status = -ENODEV;
@@ -794,7 +821,7 @@ static int rio_dev_add(struct device *dev, struct subsys_interface *sif)
 
 	if (status == 0)
 		set_bit(minor, minors);
-
+out:
 	mutex_unlock(&device_list_lock);
 
 	return status;
@@ -803,12 +830,62 @@ static int rio_dev_add(struct device *dev, struct subsys_interface *sif)
 static int rio_dev_remove(struct device *dev, struct subsys_interface *sif)
 {
 	struct rio_dev *rdev = to_rio_dev(dev);
+
+	pr_debug(DRV_PREFIX "%s: removing dev 0x%x\n",
+		 __func__, (unsigned int) dev);
+
 	mutex_lock(&device_list_lock);
 	device_destroy(&rio_dev_class, rdev->dev.devt);
 	clear_bit(MINOR(rdev->dev.devt), minors);
 	mutex_unlock(&device_list_lock);
 
 	return 0;
+}
+
+/*
+ * riocm_add_mport - add new local mport device into channel management core
+ * @dev: device object associated with mport
+ * @class_intf: class interface
+ */
+static int rio_dev_add_mport(struct device *dev,
+			     struct class_interface *class_intf)
+{
+	struct rio_mport *mport = to_rio_mport(dev);
+
+	pr_debug(DRV_PREFIX "%s: adding mport 0x%x dev 0x%x\n",
+		 __func__, (unsigned int) mport, (unsigned int) dev);
+
+	return 0;
+}
+
+/*
+ * riocm_remove_mport - remove local mport device from channel management core
+ * @dev: device object associated with mport
+ * @class_intf: class interface
+ */
+static void rio_dev_remove_mport(struct device *dev,
+				 struct class_interface *class_intf)
+{
+	struct rio_dev_cell *rio_cell, *temp;
+
+	pr_debug(DRV_PREFIX "%s: removing mport dev 0x%x\n",
+		 __func__, (unsigned int) dev);
+
+	/* Retrieve all registered rio devices */
+	mutex_lock(&device_list_lock);
+	list_for_each_entry_safe(rio_cell, temp, &rio_dev_list, list) {
+		struct rio_dev *rdev = to_rio_dev(rio_cell->dev);
+		struct rio_mport *mport = rdev->net->hport;
+
+		if (rio_cell->mport == mport) {
+
+			list_del(&rio_cell->list);
+
+			device_destroy(&rio_dev_class, rdev->dev.devt);
+			clear_bit(MINOR(rdev->dev.devt), minors);
+		}
+	}
+	mutex_unlock(&device_list_lock);
 }
 
 static struct subsys_interface rio_dev_interface = {
@@ -818,6 +895,15 @@ static struct subsys_interface rio_dev_interface = {
 	.remove_dev	= rio_dev_remove,
 };
 
+/*
+ * rio_mport_interface handles addition/removal local mport devices
+ */
+static struct class_interface rio_mport_interface __refdata = {
+	.class = &rio_mport_class,
+	.add_dev = rio_dev_add_mport,
+	.remove_dev = rio_dev_remove_mport,
+};
+
 static int __init rio_dev_init(void)
 {
 	int status;
@@ -825,6 +911,15 @@ static int __init rio_dev_init(void)
 	spin_lock_init(&dbell_i_lock);
 	spin_lock_init(&dbell_list_lock);
 	INIT_LIST_HEAD(&dbell_list);
+	INIT_LIST_HEAD(&rio_dev_list);
+
+	/*
+	 * Register as rapidio_port class interface to get notifications about
+	 * mport additions and removals.
+	 */
+	status = class_interface_register(&rio_mport_interface);
+	if (status)
+		return status;
 
 	/*
 	 * Claim our 256 reserved device numbers.  Then register a class
@@ -833,12 +928,15 @@ static int __init rio_dev_init(void)
 	 */
 	BUILD_BUG_ON(N_RIO_MINORS > 256);
 	status = register_chrdev(RIO_DEV_MAJOR, RIO_DEV_NAME, &rio_dev_fops);
-	if (status < 0)
+	if (status < 0) {
+		class_interface_unregister(&rio_mport_interface);
 		return status;
+	}
 
 	status = class_register(&rio_dev_class);
 	if (status < 0) {
 		unregister_chrdev(RIO_DEV_MAJOR, RIO_DEV_NAME);
+		class_interface_unregister(&rio_mport_interface);
 		return status;
 	}
 
@@ -846,6 +944,7 @@ static int __init rio_dev_init(void)
 	if (status) {
 		class_unregister(&rio_dev_class);
 		unregister_chrdev(RIO_DEV_MAJOR, RIO_DEV_NAME);
+		class_interface_unregister(&rio_mport_interface);
 		return status;
 	}
 
