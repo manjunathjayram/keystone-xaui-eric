@@ -1528,6 +1528,10 @@ static int qnode_output_rate_store_child(struct ktree_node *child, void *arg)
 	int idx = qnode->sched_port_idx;
 	int val;
 
+	/* If the port has been collapsed into the parent, don't set it */
+	if (idx == parent->sched_port_idx)
+		return 0;
+
 	val = parent->output_rate;
 	val = (val + info->ticks_per_sec - 1) / info->ticks_per_sec;
 	if (val != 0)
