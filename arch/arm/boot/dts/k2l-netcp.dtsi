@@ -126,10 +126,12 @@ netcp: netcp@26200000 {
 				gbe0: interface-0 {
 					slave-port = <0>;
 					link-interface	= <4>;
+					phy-handle      = <&ethphy0>;
 				};
 				gbe1: interface-1 {
 					slave-port = <1>;
 					link-interface	= <4>;
+					phy-handle      = <&ethphy1>;
 				};
 			};
 		};
