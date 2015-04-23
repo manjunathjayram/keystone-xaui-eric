@@ -79,7 +79,7 @@
 	status = "okay";
 	ethphy0: ethernet-phy@0 {
 		reg = <0>;
-		phy-mode = "sgmii";
+		phy-mode = "rgmii-id";
 		/* TODO. Check if anything needed from
 		 * Documentation/devicetree/bindings/net/micrel-ksz90x1.txt
 		 */
