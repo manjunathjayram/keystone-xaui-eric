@@ -57,7 +57,6 @@ struct qos_intf {
 	struct net_device		*ndev;
 	struct device			*dev;
 	struct kobject			 kobj;
-	int				 num_channels;
 	int				 max_channels;
 	struct qos_channel		 channels[1];
 	/* NB: channels is allocated dynamically */
@@ -153,18 +152,19 @@ static int qos_tx_hook(int order, void *data, struct netcp_packet *p_info)
 {
 	struct qos_intf *qos_intf = data;
 	struct sk_buff *skb = p_info->skb;
+	u16 queue_mapping = skb_get_queue_mapping(skb);
 
 	dev_dbg(qos_intf->dev,
 		"priority: %u, queue_mapping: %04x\n",
-		skb->priority, skb_get_queue_mapping(skb));
+		skb->priority, queue_mapping);
 
-	if (skb->queue_mapping < qos_intf->num_channels)
-		p_info->tx_pipe =
-			&qos_intf->channels[skb->queue_mapping].tx_pipe;
+	if ((queue_mapping < qos_intf->max_channels) &&
+	    qos_intf->channels[queue_mapping].tx_chan_name)
+		p_info->tx_pipe = &qos_intf->channels[queue_mapping].tx_pipe;
 	else {
 		dev_warn(qos_intf->dev,
-			"queue mapping (%d) >= num chans (%d) QoS bypassed\n",
-			 skb_get_queue_mapping(skb), qos_intf->num_channels);
+			 "queue mapping %hu invalid, QoS bypassed\n",
+			 queue_mapping);
 	}
 
 	return 0;
@@ -180,10 +180,11 @@ static int qos_close(void *intf_priv, struct net_device *ndev)
 	netcp_unregister_txhook(netcp_priv, QOS_TXHOOK_ORDER, qos_tx_hook,
 				qos_intf);
 
-	for (i = 0; i < qos_intf->num_channels; ++i) {
+	for (i = 0; i < qos_intf->max_channels; ++i) {
 		struct qos_channel *qchan = &qos_intf->channels[i];
 
-		netcp_txpipe_close(&qchan->tx_pipe);
+		if (qchan->tx_chan_name)
+			netcp_txpipe_close(&qchan->tx_pipe);
 	}
 
 	return 0;
@@ -197,12 +198,14 @@ static int qos_open(void *intf_priv, struct net_device *ndev)
 	int i;
 
 	/* Open the QoS input queues */
-	for (i = 0; i < qos_intf->num_channels; ++i) {
+	for (i = 0; i < qos_intf->max_channels; ++i) {
 		struct qos_channel *qchan = &qos_intf->channels[i];
 
-		ret = netcp_txpipe_open(&qchan->tx_pipe);
-		if (ret)
-			goto fail;
+		if (qchan->tx_chan_name) {
+			ret = netcp_txpipe_open(&qchan->tx_pipe);
+			if (ret)
+				goto fail;
+		}
 	}
 
 	netcp_register_txhook(netcp_priv, QOS_TXHOOK_ORDER, qos_tx_hook,
@@ -221,6 +224,13 @@ static int init_channel(struct qos_intf *qos_intf,
 {
 	struct qos_channel *qchan = &qos_intf->channels[index];
 	int ret;
+
+	if (qchan->tx_chan_name) {
+		dev_err(qos_intf->dev,
+			"duplicate QoS queue mapping %s\n",
+			node->full_name);
+		return -EEXIST;
+	}
 
 	ret = of_property_read_string(node, "tx-channel", &qchan->tx_chan_name);
 	if (ret < 0) {
@@ -306,28 +316,41 @@ static int qos_attach(void *inst_priv, struct net_device *ndev,
 		goto exit;
 	}
 
-	qos_intf->num_channels = 0;
 	for_each_child_of_node(interface, channel) {
-		if (qos_intf->num_channels >= max_channels) {
+		int matches, length;
+		unsigned int queue_mapping;
+
+		matches = sscanf(channel->name, "chan-%u%n",
+				 &queue_mapping, &length);
+		if ((matches != 1) || (length != strlen(channel->name)))
 			dev_err(qos_intf->dev,
-				"too many QoS input channels defined\n");
-			break;
+				"node \"%s\" name illegal (not \"/chan-N\")\n",
+				channel->full_name);
+		else if (queue_mapping >= max_channels)
+			dev_err(qos_intf->dev,
+				"node \"%s\" mapping too large (%u > %d)\n",
+				channel->full_name, queue_mapping,
+				max_channels);
+		else {
+			dev_dbg(qos_intf->dev, "mapping \"%s\" as %u\n",
+				 channel->full_name, queue_mapping);
+			init_channel(qos_intf, queue_mapping, channel);
 		}
-		init_channel(qos_intf, qos_intf->num_channels, channel);
-		++qos_intf->num_channels;
 	}
 
 	of_node_put(interface);
 
 	/* Initialize the QoS input queues */
-	for (i = 0; i < qos_intf->num_channels; ++i) {
+	for (i = 0; i < qos_intf->max_channels; ++i) {
 		struct qos_channel *qchan = &qos_intf->channels[i];
 
-		netcp_txpipe_init(&qchan->tx_pipe, netdev_priv(ndev),
-				  qchan->tx_chan_name,
-				  qchan->tx_queue_depth);
+		if (qchan->tx_chan_name) {
+			netcp_txpipe_init(&qchan->tx_pipe, netdev_priv(ndev),
+					  qchan->tx_chan_name,
+					  qchan->tx_queue_depth);
 
-		qchan->tx_pipe.dma_psflags = netcp->cpsw_port;
+			qchan->tx_pipe.dma_psflags = netcp->cpsw_port;
+		}
 	}
 
 	return 0;
