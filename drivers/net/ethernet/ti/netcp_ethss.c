@@ -136,12 +136,6 @@
 #define GBENU_STATS0_MODULE			0
 #define GBENU_STATS1_MODULE			1
 #define GBENU_STATS2_MODULE			2
-#define GBENU_STATS3_MODULE			3
-#define GBENU_STATS4_MODULE			4
-#define GBENU_STATS5_MODULE			5
-#define GBENU_STATS6_MODULE			6
-#define GBENU_STATS7_MODULE			7
-#define GBENU_STATS8_MODULE			8
 
 #define XGBE_STATS0_MODULE			0
 #define XGBE_STATS1_MODULE			1
@@ -389,43 +383,42 @@ struct gbenu_emac_regs {
 	u32	tx_gap;
 };
 
-/* Some hw stat regs are applicable to slave port only.
-   This is handled by gbenu_et_stats struct.  Also some
-   are for SS version NU and some are for 2U.
+/* Some hw stat regs are applicable to slave
+   port only.  This is handled by gbenu_et_stats struct
 */
 struct gbenu_hw_stats {
 	u32	rx_good_frames;
 	u32	rx_broadcast_frames;
 	u32	rx_multicast_frames;
-	u32	rx_pause_frames;		/* slave */
+	u32	rx_pause_frames;
 	u32	rx_crc_errors;
-	u32	rx_align_code_errors;		/* slave */
+	u32	rx_align_code_errors;
 	u32	rx_oversized_frames;
-	u32	rx_jabber_frames;		/* slave */
+	u32	rx_jabber_frames;
 	u32	rx_undersized_frames;
-	u32	rx_fragments;			/* slave */
+	u32	rx_fragments;
 	u32	ale_drop;
 	u32	ale_overrun_drop;
 	u32	rx_bytes;
 	u32	tx_good_frames;
 	u32	tx_broadcast_frames;
 	u32	tx_multicast_frames;
-	u32	tx_pause_frames;		/* slave */
-	u32	tx_deferred_frames;		/* slave */
-	u32	tx_collision_frames;		/* slave */
-	u32	tx_single_coll_frames;		/* slave */
-	u32	tx_mult_coll_frames;		/* slave */
-	u32	tx_excessive_collisions;	/* slave */
-	u32	tx_late_collisions;		/* slave */
-	u32	rx_ipg_error;			/* slave 10G only */
-	u32	tx_carrier_sense_errors;	/* slave */
+	u32	tx_pause_frames;
+	u32	tx_deferred_frames;
+	u32	tx_collision_frames;
+	u32	tx_single_coll_frames;
+	u32	tx_mult_coll_frames;
+	u32	tx_excessive_collisions;
+	u32	tx_late_collisions;
+	u32	rx_ipg_error;	/* Rx inter packet Gap error, 10G only */
+	u32	tx_carrier_sense_errors;
 	u32	tx_bytes;
-	u32	tx_64B_frames;
-	u32	tx_65_to_127B_frames;
-	u32	tx_128_to_255B_frames;
-	u32	tx_256_to_511B_frames;
-	u32	tx_512_to_1023B_frames;
-	u32	tx_1024B_frames;
+	u32	tx_64byte_frames;
+	u32	tx_65_to_127byte_frames;
+	u32	tx_128_to_255byte_frames;
+	u32	tx_256_to_511byte_frames;
+	u32	tx_512_to_1023byte_frames;
+	u32	tx_1024byte_frames;
 	u32	net_bytes;
 	u32	rx_bottom_fifo_drop;
 	u32	rx_port_mask_drop;
@@ -440,44 +433,9 @@ struct gbenu_hw_stats {
 	u32	ale_unknown_mcast_bytes;
 	u32	ale_unknown_bcast;
 	u32	ale_unknown_bcast_bytes;
-	u32	ale_pol_match;
-	u32	ale_pol_match_red;		/* NU */
-	u32	ale_pol_match_yellow;		/* NU */
-	u32	__rsvd_1[44];
+	u32	__rsvd_1[47];
 	u32	tx_mem_protect_err;
-	/* following NU only */
-	u32	tx_pri0;
-	u32	tx_pri1;
-	u32	tx_pri2;
-	u32	tx_pri3;
-	u32	tx_pri4;
-	u32	tx_pri5;
-	u32	tx_pri6;
-	u32	tx_pri7;
-	u32	tx_pri0_bcnt;
-	u32	tx_pri1_bcnt;
-	u32	tx_pri2_bcnt;
-	u32	tx_pri3_bcnt;
-	u32	tx_pri4_bcnt;
-	u32	tx_pri5_bcnt;
-	u32	tx_pri6_bcnt;
-	u32	tx_pri7_bcnt;
-	u32	tx_pri0_drop;
-	u32	tx_pri1_drop;
-	u32	tx_pri2_drop;
-	u32	tx_pri3_drop;
-	u32	tx_pri4_drop;
-	u32	tx_pri5_drop;
-	u32	tx_pri6_drop;
-	u32	tx_pri7_drop;
-	u32	tx_pri0_drop_bcnt;
-	u32	tx_pri1_drop_bcnt;
-	u32	tx_pri2_drop_bcnt;
-	u32	tx_pri3_drop_bcnt;
-	u32	tx_pri4_drop_bcnt;
-	u32	tx_pri5_drop_bcnt;
-	u32	tx_pri6_drop_bcnt;
-	u32	tx_pri7_drop_bcnt;
+	/* TODO: NU: more to add */
 };
 
 #define GBENU_NUM_HW_STAT_ENTRIES (sizeof(struct gbenu_hw_stats)/sizeof(u32))
@@ -862,110 +820,151 @@ static const struct netcp_ethtool_stat gbe13_et_stats[] = {
 	{GBE_STATSD_INFO(rx_dma_overruns)},
 };
 
-#define GBENU_STATS_INFO(mod, mod_num, field)			\
-		mod#field, mod_num,				\
-		FIELD_SIZEOF(struct gbenu_hw_stats, field), 	\
-		offsetof(struct gbenu_hw_stats, field)
+#define GBENU_STATS0_INFO(field)	"GBE_0:"#field, GBENU_STATS0_MODULE,\
+				FIELD_SIZEOF(struct gbenu_hw_stats, field), \
+				offsetof(struct gbenu_hw_stats, field)
 
-/* NU host port ethtool stats */
-#define GBENU_STATS_HOST(mod, modn)				\
-	{GBENU_STATS_INFO(mod, modn, rx_good_frames)},		\
-	{GBENU_STATS_INFO(mod, modn, rx_broadcast_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, rx_multicast_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, rx_crc_errors)},		\
-	{GBENU_STATS_INFO(mod, modn, rx_oversized_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, rx_undersized_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_drop)},		\
-	{GBENU_STATS_INFO(mod, modn, ale_overrun_drop)},	\
-	{GBENU_STATS_INFO(mod, modn, rx_bytes)},		\
-	{GBENU_STATS_INFO(mod, modn, tx_good_frames)},		\
-	{GBENU_STATS_INFO(mod, modn, tx_broadcast_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_multicast_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_bytes)},		\
-	{GBENU_STATS_INFO(mod, modn, tx_64B_frames)},		\
-	{GBENU_STATS_INFO(mod, modn, tx_65_to_127B_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_128_to_255B_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_256_to_511B_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_512_to_1023B_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_1024B_frames)},		\
-	{GBENU_STATS_INFO(mod, modn, net_bytes)},		\
-	{GBENU_STATS_INFO(mod, modn, rx_bottom_fifo_drop)},	\
-	{GBENU_STATS_INFO(mod, modn, rx_port_mask_drop)},	\
-	{GBENU_STATS_INFO(mod, modn, rx_top_fifo_drop)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_rate_limit_drop)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_vid_ingress_drop)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_da_eq_sa_drop)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_unknown_ucast)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_unknown_ucast_bytes)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_unknown_mcast)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_unknown_mcast_bytes)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_unknown_bcast)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_unknown_bcast_bytes)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_mem_protect_err)}
+#define GBENU_STATS1_INFO(field)	"GBE_1:"#field, GBENU_STATS1_MODULE,\
+				FIELD_SIZEOF(struct gbenu_hw_stats, field), \
+				offsetof(struct gbenu_hw_stats, field)
 
-/* NU slave port ethtool stats */
-#define GBENU_STATS_PORT(mod, modn)				\
-	{GBENU_STATS_INFO(mod, modn, rx_good_frames)},		\
-	{GBENU_STATS_INFO(mod, modn, rx_broadcast_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, rx_multicast_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, rx_pause_frames)},		\
-	{GBENU_STATS_INFO(mod, modn, rx_crc_errors)},		\
-	{GBENU_STATS_INFO(mod, modn, rx_align_code_errors)},	\
-	{GBENU_STATS_INFO(mod, modn, rx_oversized_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, rx_jabber_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, rx_undersized_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, rx_fragments)},		\
-	{GBENU_STATS_INFO(mod, modn, ale_drop)},		\
-	{GBENU_STATS_INFO(mod, modn, ale_overrun_drop)},	\
-	{GBENU_STATS_INFO(mod, modn, rx_bytes)},		\
-	{GBENU_STATS_INFO(mod, modn, tx_good_frames)},		\
-	{GBENU_STATS_INFO(mod, modn, tx_broadcast_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_multicast_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_pause_frames)},		\
-	{GBENU_STATS_INFO(mod, modn, tx_deferred_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_collision_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_single_coll_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_mult_coll_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_excessive_collisions)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_late_collisions)},	\
-	{GBENU_STATS_INFO(mod, modn, rx_ipg_error)},		\
-	{GBENU_STATS_INFO(mod, modn, tx_carrier_sense_errors)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_bytes)},		\
-	{GBENU_STATS_INFO(mod, modn, tx_64B_frames)},		\
-	{GBENU_STATS_INFO(mod, modn, tx_65_to_127B_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_128_to_255B_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_256_to_511B_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_512_to_1023B_frames)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_1024B_frames)},		\
-	{GBENU_STATS_INFO(mod, modn, net_bytes)},		\
-	{GBENU_STATS_INFO(mod, modn, rx_bottom_fifo_drop)},	\
-	{GBENU_STATS_INFO(mod, modn, rx_port_mask_drop)},	\
-	{GBENU_STATS_INFO(mod, modn, rx_top_fifo_drop)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_rate_limit_drop)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_vid_ingress_drop)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_da_eq_sa_drop)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_unknown_ucast)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_unknown_ucast_bytes)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_unknown_mcast)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_unknown_mcast_bytes)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_unknown_bcast)},	\
-	{GBENU_STATS_INFO(mod, modn, ale_unknown_bcast_bytes)},	\
-	{GBENU_STATS_INFO(mod, modn, tx_mem_protect_err)}
+#define GBENU_STATS2_INFO(field)	"GBE_2:"#field, GBENU_STATS2_MODULE,\
+				FIELD_SIZEOF(struct gbenu_hw_stats, field), \
+				offsetof(struct gbenu_hw_stats, field)
 
 /* TODO: calculate instead of hard code */
-#define GBENU_ET_STATS_HOST_SIZE	33
-#define GBENU_ET_STATS_PORT_SIZE	46
+#define GBENU_ET_STATS0_SIZE	33
+#define GBENU_ET_STATS1_SIZE	46
 
 static const struct netcp_ethtool_stat gbenu_et_stats[] = {
-	GBENU_STATS_HOST("GBE_HOST:", GBENU_STATS0_MODULE),
-	GBENU_STATS_PORT("GBE_P1:", GBENU_STATS1_MODULE),
-	GBENU_STATS_PORT("GBE_P2:", GBENU_STATS2_MODULE),
-	GBENU_STATS_PORT("GBE_P3:", GBENU_STATS2_MODULE),
-	GBENU_STATS_PORT("GBE_P4:", GBENU_STATS2_MODULE),
-	GBENU_STATS_PORT("GBE_P5:", GBENU_STATS2_MODULE),
-	GBENU_STATS_PORT("GBE_P6:", GBENU_STATS2_MODULE),
-	GBENU_STATS_PORT("GBE_P7:", GBENU_STATS2_MODULE),
-	GBENU_STATS_PORT("GBE_P8:", GBENU_STATS2_MODULE),
+	/* GBENU module 0 */
+	{GBENU_STATS0_INFO(rx_good_frames)},
+	{GBENU_STATS0_INFO(rx_broadcast_frames)},
+	{GBENU_STATS0_INFO(rx_multicast_frames)},
+	{GBENU_STATS0_INFO(rx_crc_errors)},
+	{GBENU_STATS0_INFO(rx_oversized_frames)},
+	{GBENU_STATS0_INFO(rx_undersized_frames)},
+	{GBENU_STATS0_INFO(ale_drop)},
+	{GBENU_STATS0_INFO(ale_overrun_drop)},
+	{GBENU_STATS0_INFO(rx_bytes)},
+	{GBENU_STATS0_INFO(tx_good_frames)},
+	{GBENU_STATS0_INFO(tx_broadcast_frames)},
+	{GBENU_STATS0_INFO(tx_multicast_frames)},
+	{GBENU_STATS0_INFO(tx_bytes)},
+	{GBENU_STATS0_INFO(tx_64byte_frames)},
+	{GBENU_STATS0_INFO(tx_65_to_127byte_frames)},
+	{GBENU_STATS0_INFO(tx_128_to_255byte_frames)},
+	{GBENU_STATS0_INFO(tx_256_to_511byte_frames)},
+	{GBENU_STATS0_INFO(tx_512_to_1023byte_frames)},
+	{GBENU_STATS0_INFO(tx_1024byte_frames)},
+	{GBENU_STATS0_INFO(net_bytes)},
+	{GBENU_STATS0_INFO(rx_bottom_fifo_drop)},
+	{GBENU_STATS0_INFO(rx_port_mask_drop)},
+	{GBENU_STATS0_INFO(rx_top_fifo_drop)},
+	{GBENU_STATS0_INFO(ale_rate_limit_drop)},
+	{GBENU_STATS0_INFO(ale_vid_ingress_drop)},
+	{GBENU_STATS0_INFO(ale_da_eq_sa_drop)},
+	{GBENU_STATS0_INFO(ale_unknown_ucast)},
+	{GBENU_STATS0_INFO(ale_unknown_ucast_bytes)},
+	{GBENU_STATS0_INFO(ale_unknown_mcast)},
+	{GBENU_STATS0_INFO(ale_unknown_mcast_bytes)},
+	{GBENU_STATS0_INFO(ale_unknown_bcast)},
+	{GBENU_STATS0_INFO(ale_unknown_bcast_bytes)},
+	{GBENU_STATS0_INFO(tx_mem_protect_err)},
+	/* GBENU module 1 */
+	{GBENU_STATS1_INFO(rx_good_frames)},
+	{GBENU_STATS1_INFO(rx_broadcast_frames)},
+	{GBENU_STATS1_INFO(rx_multicast_frames)},
+	{GBENU_STATS1_INFO(rx_pause_frames)},
+	{GBENU_STATS1_INFO(rx_crc_errors)},
+	{GBENU_STATS1_INFO(rx_align_code_errors)},
+	{GBENU_STATS1_INFO(rx_oversized_frames)},
+	{GBENU_STATS1_INFO(rx_jabber_frames)},
+	{GBENU_STATS1_INFO(rx_undersized_frames)},
+	{GBENU_STATS1_INFO(rx_fragments)},
+	{GBENU_STATS1_INFO(ale_drop)},
+	{GBENU_STATS1_INFO(ale_overrun_drop)},
+	{GBENU_STATS1_INFO(rx_bytes)},
+	{GBENU_STATS1_INFO(tx_good_frames)},
+	{GBENU_STATS1_INFO(tx_broadcast_frames)},
+	{GBENU_STATS1_INFO(tx_multicast_frames)},
+	{GBENU_STATS1_INFO(tx_pause_frames)},
+	{GBENU_STATS1_INFO(tx_deferred_frames)},
+	{GBENU_STATS1_INFO(tx_collision_frames)},
+	{GBENU_STATS1_INFO(tx_single_coll_frames)},
+	{GBENU_STATS1_INFO(tx_mult_coll_frames)},
+	{GBENU_STATS1_INFO(tx_excessive_collisions)},
+	{GBENU_STATS1_INFO(tx_late_collisions)},
+	{GBENU_STATS1_INFO(rx_ipg_error)},
+	{GBENU_STATS1_INFO(tx_carrier_sense_errors)},
+	{GBENU_STATS1_INFO(tx_bytes)},
+	{GBENU_STATS1_INFO(tx_64byte_frames)},
+	{GBENU_STATS1_INFO(tx_65_to_127byte_frames)},
+	{GBENU_STATS1_INFO(tx_128_to_255byte_frames)},
+	{GBENU_STATS1_INFO(tx_256_to_511byte_frames)},
+	{GBENU_STATS1_INFO(tx_512_to_1023byte_frames)},
+	{GBENU_STATS1_INFO(tx_1024byte_frames)},
+	{GBENU_STATS1_INFO(net_bytes)},
+	{GBENU_STATS1_INFO(rx_bottom_fifo_drop)},
+	{GBENU_STATS1_INFO(rx_port_mask_drop)},
+	{GBENU_STATS1_INFO(rx_top_fifo_drop)},
+	{GBENU_STATS1_INFO(ale_rate_limit_drop)},
+	{GBENU_STATS1_INFO(ale_vid_ingress_drop)},
+	{GBENU_STATS1_INFO(ale_da_eq_sa_drop)},
+	{GBENU_STATS1_INFO(ale_unknown_ucast)},
+	{GBENU_STATS1_INFO(ale_unknown_ucast_bytes)},
+	{GBENU_STATS1_INFO(ale_unknown_mcast)},
+	{GBENU_STATS1_INFO(ale_unknown_mcast_bytes)},
+	{GBENU_STATS1_INFO(ale_unknown_bcast)},
+	{GBENU_STATS1_INFO(ale_unknown_bcast_bytes)},
+	{GBENU_STATS1_INFO(tx_mem_protect_err)},
+	/* GBENU module 2 */
+	{GBENU_STATS2_INFO(rx_good_frames)},
+	{GBENU_STATS2_INFO(rx_broadcast_frames)},
+	{GBENU_STATS2_INFO(rx_multicast_frames)},
+	{GBENU_STATS2_INFO(rx_pause_frames)},
+	{GBENU_STATS2_INFO(rx_crc_errors)},
+	{GBENU_STATS2_INFO(rx_align_code_errors)},
+	{GBENU_STATS2_INFO(rx_oversized_frames)},
+	{GBENU_STATS2_INFO(rx_jabber_frames)},
+	{GBENU_STATS2_INFO(rx_undersized_frames)},
+	{GBENU_STATS2_INFO(rx_fragments)},
+	{GBENU_STATS2_INFO(ale_drop)},
+	{GBENU_STATS2_INFO(ale_overrun_drop)},
+	{GBENU_STATS2_INFO(rx_bytes)},
+	{GBENU_STATS2_INFO(tx_good_frames)},
+	{GBENU_STATS2_INFO(tx_broadcast_frames)},
+	{GBENU_STATS2_INFO(tx_multicast_frames)},
+	{GBENU_STATS2_INFO(tx_pause_frames)},
+	{GBENU_STATS2_INFO(tx_deferred_frames)},
+	{GBENU_STATS2_INFO(tx_collision_frames)},
+	{GBENU_STATS2_INFO(tx_single_coll_frames)},
+	{GBENU_STATS2_INFO(tx_mult_coll_frames)},
+	{GBENU_STATS2_INFO(tx_excessive_collisions)},
+	{GBENU_STATS2_INFO(tx_late_collisions)},
+	{GBENU_STATS2_INFO(rx_ipg_error)},
+	{GBENU_STATS2_INFO(tx_carrier_sense_errors)},
+	{GBENU_STATS2_INFO(tx_bytes)},
+	{GBENU_STATS2_INFO(tx_64byte_frames)},
+	{GBENU_STATS2_INFO(tx_65_to_127byte_frames)},
+	{GBENU_STATS2_INFO(tx_128_to_255byte_frames)},
+	{GBENU_STATS2_INFO(tx_256_to_511byte_frames)},
+	{GBENU_STATS2_INFO(tx_512_to_1023byte_frames)},
+	{GBENU_STATS2_INFO(tx_1024byte_frames)},
+	{GBENU_STATS2_INFO(net_bytes)},
+	{GBENU_STATS2_INFO(rx_bottom_fifo_drop)},
+	{GBENU_STATS2_INFO(rx_port_mask_drop)},
+	{GBENU_STATS2_INFO(rx_top_fifo_drop)},
+	{GBENU_STATS2_INFO(ale_rate_limit_drop)},
+	{GBENU_STATS2_INFO(ale_vid_ingress_drop)},
+	{GBENU_STATS2_INFO(ale_da_eq_sa_drop)},
+	{GBENU_STATS2_INFO(ale_unknown_ucast)},
+	{GBENU_STATS2_INFO(ale_unknown_ucast_bytes)},
+	{GBENU_STATS2_INFO(ale_unknown_mcast)},
+	{GBENU_STATS2_INFO(ale_unknown_mcast_bytes)},
+	{GBENU_STATS2_INFO(ale_unknown_bcast)},
+	{GBENU_STATS2_INFO(ale_unknown_bcast_bytes)},
+	{GBENU_STATS2_INFO(tx_mem_protect_err)},
 };
 
 #define XGBE_STATS0_INFO(field)	"GBE_0:"#field, XGBE_STATS0_MODULE, \
@@ -2278,11 +2277,10 @@ static int set_gbenu_ethss_priv(struct gbe_priv *gbe_dev)
 	gbe_dev->stats_en_mask = (1 << (GBENU_NUM_SLAVES + 1)) - 1;
 
 	if (IS_SS_ID_NU(gbe_dev))
-		gbe_dev->num_et_stats = GBENU_ET_STATS_HOST_SIZE +
-				(GBENU_NUM_SLAVES * GBENU_ET_STATS_PORT_SIZE);
+		gbe_dev->num_et_stats = ARRAY_SIZE(gbenu_et_stats);
 	else
-		gbe_dev->num_et_stats = GBENU_ET_STATS_HOST_SIZE +
-					GBENU_ET_STATS_PORT_SIZE;
+		gbe_dev->num_et_stats = GBENU_ET_STATS0_SIZE +
+					GBENU_ET_STATS1_SIZE;
 
 	/* Subsystem registers */
 	GBENU_SET_REG_OFS(gbe_dev, ss_regs, id_ver);
