@@ -15,7 +15,6 @@
 #include <linux/of_platform.h>
 #include <linux/of_address.h>
 #include <linux/memblock.h>
-#include <linux/pci.h>
 
 #include <asm/setup.h>
 #include <asm/mach/map.h>
@@ -29,7 +28,6 @@
 #include "keystone.h"
 
 static struct notifier_block platform_nb;
-static struct notifier_block pci_nb;
 static unsigned long keystone_dma_pfn_offset __read_mostly;
 
 static int keystone_platform_notifier(struct notifier_block *nb,
@@ -56,8 +54,6 @@ static void __init keystone_init(void)
 	keystone_pm_runtime_init();
 	if (platform_nb.notifier_call)
 		bus_register_notifier(&platform_bus_type, &platform_nb);
-	if (pci_nb.notifier_call)
-		bus_register_notifier(&pci_bus_type, &pci_nb);
 	of_platform_populate(NULL, of_default_bus_match_table, NULL, NULL);
 }
 
@@ -101,7 +97,6 @@ static void __init keystone_init_meminfo(void)
 	/* Populate the arch idmap hook */
 	arch_virt_to_idmap = keystone_virt_to_idmap;
 	platform_nb.notifier_call = keystone_platform_notifier;
-	pci_nb.notifier_call = keystone_platform_notifier;
 	keystone_dma_pfn_offset = PFN_DOWN(KEYSTONE_HIGH_PHYS_START -
 						KEYSTONE_LOW_PHYS_START);
 
