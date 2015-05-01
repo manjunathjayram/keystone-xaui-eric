@@ -24,9 +24,6 @@
 #include <linux/netdevice.h>
 #include <linux/soc/ti/knav_dma.h>
 
-#define NETCP_VERSION_1P0		0
-#define NETCP_VERSION_1P5		1
-
 /* Maximum Ethernet frame size supported by Keystone switch */
 #define NETCP_MAX_FRAME_SIZE		9504
 
@@ -198,7 +195,6 @@ struct netcp_module {
 	struct list_head	interface_list;
 };
 
-void netcp_set_version(struct netcp_device *netcp_device, u32 version);
 int netcp_register_module(struct netcp_module *module);
 void netcp_unregister_module(struct netcp_module *module);
 void *netcp_module_get_intf_data(struct netcp_module *module,
