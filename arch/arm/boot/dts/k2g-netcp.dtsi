@@ -61,7 +61,7 @@ qmss: qmss@4020000 {
 		region-5 {
 			id = <5>;
 			region-spec = <511 128>; /* num_desc desc_size */
-			link-index = <0x600>;
+			link-index = <0x400>;
 		};
 	};
 }; /* qmss */
