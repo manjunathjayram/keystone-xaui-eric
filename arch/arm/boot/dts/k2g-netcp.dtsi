@@ -1,4 +1,4 @@
-qmss: qmss@2a40000 {
+qmss: qmss@4020000 {
 	compatible = "ti,keystone-navigator-qmss";
 	dma-coherent;
 	#address-cells = <1>;
@@ -77,18 +77,19 @@ knav_dmas: knav_dmas@0 {
 
 };
 
-netcp: netcp@4200000 {
-	reg = <0x2620110 0x8>; // in bootcfg
+netcp: netcp@4000000 {
+	reg = <0x2620110 0x8>;
 	reg-names = "efuse";
 	compatible = "ti,netcp-1.0";
 	#address-cells = <1>;
 	#size-cells = <1>;
-	ranges;
+
+	/* NetCP address range */
+	ranges = <0 0x4000000 0x1000000>;
 
 	/* TODO list additional clocks here */
 	clocks = <&clknsssys>, <&chipclk13>;
 	dma-coherent;
-	/* big-endian; */
 
 	ti,navigator-dmas = <&dma_gbe 0>, <&dma_gbe 0>;
 	ti,navigator-dma-names = "netrx0", "nettx";
@@ -97,9 +98,10 @@ netcp: netcp@4200000 {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		ranges;
-		gbe@0x4200000 {
+		gbe@200000 {
 			label = "netcp-gbe";
-			reg = <0x4200000 0x40000>;
+			compatible = "ti,netcp-gbe-2";
+			reg = <0x200000 0xf00>, <220000 0x20000>;
 			/* enable-ale; */
 			tx-queue = <5>;
 			tx-channel = "nettx";
