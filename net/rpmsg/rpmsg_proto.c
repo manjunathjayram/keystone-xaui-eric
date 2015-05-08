@@ -198,7 +198,7 @@ static int rpmsg_sock_sendmsg(struct kiocb *iocb, struct socket *sock,
 		return -EOPNOTSUPP;
 
 	/* no payload ? */
-	if (msg->msg_iov->iov_base == NULL)
+	if (msg->msg_iter.iov->iov_base == NULL)
 		return -EINVAL;
 
 	lock_sock(sk);
@@ -220,7 +220,7 @@ static int rpmsg_sock_sendmsg(struct kiocb *iocb, struct socket *sock,
 	/* XXX for now, ignore the peer address. later use it
 	 * with rpmsg_sendto, but only if user is root
 	 */
-	err = memcpy_fromiovec(payload, msg->msg_iov, len);
+	err = memcpy_from_msg(payload, msg, len);
 	if (err)
 		goto out;
 
@@ -281,7 +281,7 @@ static int rpmsg_sock_recvmsg(struct kiocb *iocb, struct socket *sock,
 		msg->msg_flags |= MSG_TRUNC;
 	}
 
-	ret = skb_copy_datagram_iovec(skb, 0, msg->msg_iov, len);
+	ret = skb_copy_datagram_msg(skb, 0, msg, len);
 	if (ret) {
 		pr_err("error copying skb data: %d\n", ret);
 		goto out_free;
