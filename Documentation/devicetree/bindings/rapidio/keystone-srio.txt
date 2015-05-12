@@ -41,6 +41,13 @@ port-register-timeout:
                   startup. if not specified a default 30 second value will be used.
 ports:            This is the bitfield of RapidIO port(s) to probe at startup.
 		  If not specified, no port will be used.
+ports_remote:     Allow to explicitely specify the remote port number (of the link
+		  partner) for each local port. There is one value per port for the 4
+		  ports.
+		  If not specified, the remote ports will be detected at startup using
+		  the peer Switch Port Information CAR register if available (meaning
+		  theat the link partner implements such register).
+		  The remote ports are needed for the software error recovey process.
 dev-id-size:      RapidIO common transport system size:
                    0 - Small size, 8-bit deviceID fields, 256 devices.
                    1 - Large size, 16-bit deviceID fields, 65536 devices.
@@ -147,6 +154,10 @@ rapidio: rapidio@2900000 {
 	lsu       = <0 0>;            /* DIO and maintenance LSUs */
 
         ports = <0x1>;      /* bitfield of port(s) to probe */
+	ports_remote = <0 1 2 3>; /* Remote ports:
+			           * local port 0 is connected to peer port 0,
+				   * local port 1 is connected to peer port 1, etc..
+				   */
         dev-id-size = <0>;  /* RapidIO common transport system
                              * size.
                              * 0 - Small size. 8-bit deviceID
