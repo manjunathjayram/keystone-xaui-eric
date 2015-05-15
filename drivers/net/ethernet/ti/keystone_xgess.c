@@ -309,6 +309,7 @@ struct cpswx_priv {
 	struct kobject			stats_kobj;
 	spinlock_t			hw_stats_lock;
 	struct device_node              *serdes;
+	u32				fw;
 	u32				opened;
 };
 
@@ -2364,7 +2365,7 @@ static int cpswx_probe(struct netcp_device *netcp_device,
 			goto exit;
 
 		/* needs the serdes pll to acces switch regs */
-		ret = xge_serdes_init(cpsw_dev->serdes);
+		ret = xge_serdes_init(cpsw_dev->serdes, &cpsw_dev->fw);
 		if (ret)
 			goto exit;
 	}
@@ -2404,7 +2405,7 @@ static int cpswx_attach_serdes(struct cpswx_slave *slave,
 	struct cpswx_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 	phy_interface_t phy_mode;
 	int has_phy = 0;
-	int ret;
+	int ret = 0;
 
 	if (slave->link_interface == SGMII_LINK_MAC_PHY) {
 		has_phy = 1;
@@ -2426,7 +2427,9 @@ static int cpswx_attach_serdes(struct cpswx_slave *slave,
 					    slave);
 	}
 
-	ret = xge_serdes_init(cpsw_dev->serdes);
+	if (!cpsw_dev->fw)
+		ret = xge_serdes_init(cpsw_dev->serdes, &cpsw_dev->fw);
+
 	return ret;
 }
 

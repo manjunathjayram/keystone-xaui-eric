@@ -11,18 +11,22 @@
  * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
+
 #include <linux/kernel.h>
-#include <linux/sched.h>
 #include <linux/io.h>
 #include <linux/of.h>
 #include <linux/err.h>
 #include <linux/delay.h>
+#include <linux/random.h>
 
 #include "keystone_net.h"
+#include "keystone_xge_fw.h"
 
+/* Keystone2 XGE SERDES SS */
 #define XGE_SERDES_BASE		0x0231e000
 #define XGE_SERDES_SIZE		0x2000
 
+/* XGE SS */
 #define XGE_SW_BASE		0x02f00000
 #define XGE_SW_SIZE		0x00001000
 
@@ -30,19 +34,26 @@
 #define XGE_SGMII_1_OFFSET	0x0114
 #define XGE_SGMII_2_OFFSET	0x0214
 
-/*
- * Keystone2 SERDES registers
+/* Keystone2 SERDES registers
+ * 0x1fc0 - 0x1fff
  */
-/* 0x1fc0 - 0x1fff */
 #define K2SERDES_SS_OFFSET	0x1fc0
 /* 0x1fc0 */
 #define MOD_VER_REG		(K2SERDES_SS_OFFSET + 0x00)
+/* 0x1fc4 */
+#define MEM_ADR_REG		(K2SERDES_SS_OFFSET + 0x04)
+/* 0x1fc8 */
+#define MEM_DAT_REG		(K2SERDES_SS_OFFSET + 0x08)
+/* 0x1fcc */
+#define MEM_DATINC_REG		(K2SERDES_SS_OFFSET + 0x0c)
 /* 0x1fd0 */
 #define CPU_CTRL_REG		(K2SERDES_SS_OFFSET + 0x10)
-/* 0x1ff4 */
-#define PLL_CTRL_REG		(K2SERDES_SS_OFFSET + 0x34)
 /* 0x1fe0, 0x1fe4 */
 #define LANE_CTRL_STS_REG(x)	(K2SERDES_SS_OFFSET + 0x20 + (x * 0x04))
+/* 0x1ff0 */
+#define LINK_LOSS_WAIT_REG	(K2SERDES_SS_OFFSET + 0x30)
+/* 0x1ff4 */
+#define PLL_CTRL_REG		(K2SERDES_SS_OFFSET + 0x34)
 
 /* CMU0 SS 0x0000 - 0x01ff */
 #define CMU0_SS_OFFSET		0x0000
@@ -118,6 +129,22 @@
 
 #define DFE_OFFSET_SAMPLES		100
 
+/* CPU CTRL bits */
+#define CPU_EN			BIT(31)
+#define CPU_GO			BIT(30)
+#define POR_EN			BIT(29)
+#define CPUREG_EN		BIT(28)
+#define AUTONEG_CTL		BIT(27)
+#define DATASPLIT		BIT(26)
+#define LNKTRN_SIG_DET		BIT(8)
+
+#define ANEG_LINK_CTL_10GKR_MASK	MASK(21, 20)
+#define ANEG_LINK_CTL_1GKX_MASK		MASK(17, 16)
+#define ANEG_LINK_CTL_1G10G_MASK \
+	(ANEG_LINK_CTL_10GKR_MASK | ANEG_LINK_CTL_1GKX_MASK)
+
+#define ANEG_1G_10G_OPT_MASK	MASK(7, 5)
+
 struct k2serdes_comparator_tap_offsets {
 	u32 cmp;
 	u32 tap1;
@@ -148,6 +175,17 @@ struct hw_specific {
 	u32 eq_vreg_enable;
 	u32 eq_cdfe_enable;
 	u32 eq_offset_enable;
+	u32 firmware;
+	u32 link_loss_wait;
+	u32 lane_seeds;
+	u32 fast_train;
+	u32 lane_config[MAX_LANES];
+	u32 active_lane;
+	u32 rate;
+	u32 attn;
+	u32 boost;
+	u32 dlpf;
+	u32 cdrcal;
 };
 
 struct serdes_cfg {
@@ -416,6 +454,10 @@ static inline u32 k2serdes_read_tbus_val(void __iomem *serdes)
 	return tmp;
 }
 
+/* serdes:	serdes IP base address
+ * select:	to select the specific Test Bus based on the PHY type
+ * ofs:		to write the specific offset address in the TBUS
+ */
 static void k2serdes_write_tbus_addr(void __iomem *serdes, int select, int ofs)
 {
 	if (select && !FOUR_LANE(serdes))
@@ -427,8 +469,7 @@ static void k2serdes_write_tbus_addr(void __iomem *serdes, int select, int ofs)
 		FINSR(serdes, CMU0_REG(0xfc), 26, 16, ((select << 8) + ofs));
 }
 
-u32 k2serdes_read_select_tbus(void __iomem *serdes,
-				int select, int ofs)
+u32 k2serdes_read_select_tbus(void __iomem *serdes, int select, int ofs)
 {
 	/* set tbus address */
 	k2serdes_write_tbus_addr(serdes, select, ofs);
@@ -437,8 +478,8 @@ u32 k2serdes_read_select_tbus(void __iomem *serdes,
 }
 
 static inline void k2serdes_config_ss(void __iomem *ss_base,
-				struct serdes_cfg *serdes_cfg,
-				int serdes_cfg_num)
+				      struct serdes_cfg *serdes_cfg,
+				      int serdes_cfg_num)
 {
 	int i;
 
@@ -482,9 +523,10 @@ static inline void k2serdes_pll_enable_1p25g(void __iomem *serdes)
 }
 
 static inline void k2serdes_pll_enable(void __iomem *serdes,
-					struct hw_specific *hw)
+				       struct hw_specific *hw)
 {
-	k2serdes_phyb_rst_clr(serdes);
+	if (!hw->firmware)
+		k2serdes_phyb_rst_clr(serdes);
 
 	if (hw->link_rate == K2SERDES_LINK_RATE_10P3125G)
 		k2serdes_pll_enable_10p3125g(serdes);
@@ -492,8 +534,7 @@ static inline void k2serdes_pll_enable(void __iomem *serdes,
 		k2serdes_pll_enable_1p25g(serdes);
 }
 
-static int k2serdes_init(void __iomem *serdes,
-				struct hw_specific *hw)
+static int k2serdes_init(void __iomem *serdes, struct hw_specific *hw)
 {
 	struct serdes_cfg *serdes_cfg;
 	void __iomem *base;
@@ -525,7 +566,7 @@ static int k2serdes_init(void __iomem *serdes,
 
 /* lane is 0 based */
 static inline void k2serdes_lane_10p3125g_config(void __iomem *serdes,
-						int lane)
+						 int lane)
 {
 	struct serdes_cfg *serdes_cfg;
 	void __iomem *base;
@@ -544,8 +585,7 @@ static inline void k2serdes_lane_10p3125g_config(void __iomem *serdes,
 	FINSR(serdes, LANEX_REG(lane, 0x1c0), 9, 9, 0x0);
 }
 
-static inline void k2serdes_lane_1p25g_config(void __iomem *serdes,
-						int lane)
+static inline void k2serdes_lane_1p25g_config(void __iomem *serdes, int lane)
 {
 	struct serdes_cfg *serdes_cfg;
 	void __iomem *base;
@@ -562,7 +602,7 @@ static inline void k2serdes_lane_1p25g_config(void __iomem *serdes,
 }
 
 static inline void k2serdes_lane_config(void __iomem *serdes,
-				int lane, struct hw_specific *hw)
+					int lane, struct hw_specific *hw)
 {
 	if (hw->ref_clock_rate != K2SERDES_REF_CLOCK_156P25M)
 		return;
@@ -575,7 +615,7 @@ static inline void k2serdes_lane_config(void __iomem *serdes,
 
 
 static inline void k2serdes_com_enable(void __iomem *serdes,
-					struct hw_specific *hw)
+				       struct hw_specific *hw)
 {
 	struct serdes_cfg *serdes_cfg;
 	void __iomem *base;
@@ -596,7 +636,7 @@ static inline void k2serdes_com_enable(void __iomem *serdes,
 
 
 static inline void k2serdes_eq_vreg_enable(void __iomem *serdes,
-					struct hw_specific *hw)
+					   struct hw_specific *hw)
 {
 	u32 i;
 
@@ -609,7 +649,7 @@ static inline void k2serdes_eq_vreg_enable(void __iomem *serdes,
 }
 
 static inline void k2serdes_eq_cdfe_enable(void __iomem *serdes,
-					struct hw_specific *hw)
+					   struct hw_specific *hw)
 {
 	u32 i;
 
@@ -637,7 +677,7 @@ static inline void k2serdes_eq_cdfe_enable(void __iomem *serdes,
 }
 
 static void k2serdes_tx_rx_set_equalizer(void __iomem *serdes,
-					struct hw_specific *hw)
+					 struct hw_specific *hw)
 {
 	u32 i;
 
@@ -658,8 +698,15 @@ static void k2serdes_tx_rx_set_equalizer(void __iomem *serdes,
 	}
 }
 
-static inline void k2serdes_lane_enable(void __iomem *serdes,
-				int lane, struct hw_specific *hw)
+static inline void k2serdes_lane_enable(void __iomem *serdes, int lane)
+{
+	FINSR(serdes, LANE_CTRL_STS_REG(lane), 31, 29, 0x7);
+	FINSR(serdes, LANE_CTRL_STS_REG(lane), 15, 13, 0x7);
+}
+
+static inline void k2serdes_lane_start(void __iomem *serdes,
+				       int lane,
+				       struct hw_specific *hw)
 {
 	/* Set Lane Control Rate */
 	if (hw->link_rate == K2SERDES_LINK_RATE_10P3125G) {
@@ -676,13 +723,12 @@ static inline void k2serdes_lane_enable(void __iomem *serdes,
 	FINSR(serdes, LANE_CTRL_STS_REG(lane), 16, 16, 0x1);
 	FINSR(serdes, LANE_CTRL_STS_REG(lane), 19, 19, 0x1);
 
-	/* enable lanes */
-	FINSR(serdes, LANE_CTRL_STS_REG(lane), 31, 29, 0x7);
-	FINSR(serdes, LANE_CTRL_STS_REG(lane), 15, 13, 0x7);
+	k2serdes_lane_enable(serdes, lane);
 }
 
 static inline int k2serdes_get_lane_status(void __iomem *serdes,
-				struct hw_specific *hw, int lane)
+					   struct hw_specific *hw,
+					   int lane)
 {
 	u32 val;
 
@@ -694,7 +740,7 @@ static inline int k2serdes_get_lane_status(void __iomem *serdes,
 }
 
 static int k2serdes_get_status(void __iomem *serdes,
-			      struct hw_specific *hw)
+			       struct hw_specific *hw)
 {
 	u32 lanes_ok = 1;
 	int i;
@@ -708,7 +754,7 @@ static int k2serdes_get_status(void __iomem *serdes,
 }
 
 static int k2serdes_wait_pll_locked(void __iomem *serdes,
-				      struct hw_specific *hw)
+				    struct hw_specific *hw)
 {
 	unsigned long timeout;
 	int ret = 0;
@@ -741,7 +787,7 @@ static void k2serdes_assert_reset(void __iomem *serdes, struct hw_specific *hw)
 }
 
 static inline void k2serdes_deassert_reset_poll_xge(void __iomem *serdes,
-						struct hw_specific *hw)
+						    struct hw_specific *hw)
 {
 	u32 lanes_ok = MASK((hw->lanes - 1), 0);
 	u32 val;
@@ -753,7 +799,7 @@ static inline void k2serdes_deassert_reset_poll_xge(void __iomem *serdes,
 }
 
 static inline void k2serdes_deassert_reset_poll_pcie(void __iomem *serdes,
-						struct hw_specific *hw)
+						     struct hw_specific *hw)
 {
 	u32 tmp, i;
 
@@ -764,7 +810,7 @@ static inline void k2serdes_deassert_reset_poll_pcie(void __iomem *serdes,
 }
 
 static inline void k2serdes_deassert_reset_poll_others(void __iomem *serdes,
-						struct hw_specific *hw)
+						       struct hw_specific *hw)
 {
 	u32 lanes_ok = MASK((hw->lanes - 1), 0);
 	u32 val;
@@ -777,7 +823,8 @@ static inline void k2serdes_deassert_reset_poll_others(void __iomem *serdes,
 }
 
 static int k2serdes_deassert_reset(void __iomem *serdes,
-			struct hw_specific *hw, int poll)
+				   struct hw_specific *hw,
+				   int poll)
 {
 	u32 i;
 
@@ -832,7 +879,8 @@ static void k2serdes_get_cmp_tap_offsets_xge(void __iomem *serdes,
 }
 
 static void k2serdes_add_offsets_xge(void __iomem *serdes,
-	struct hw_specific *hw, struct k2serdes_offsets *sofs)
+				     struct hw_specific *hw,
+				     struct k2serdes_offsets *sofs)
 {
 	struct k2serdes_comparator_tap_offsets *ctofs;
 	struct k2serdes_comparator_tap_offsets sample;
@@ -871,7 +919,8 @@ static void k2serdes_get_cmp_tap_offsets_non_xge(void __iomem *serdes,
 }
 
 static void k2serdes_add_offsets_non_xge(void __iomem *serdes,
-	struct hw_specific *hw, struct k2serdes_offsets *sofs)
+					 struct hw_specific *hw,
+					 struct k2serdes_offsets *sofs)
 {
 	struct k2serdes_comparator_tap_offsets *ctofs;
 	struct k2serdes_comparator_tap_offsets sample;
@@ -893,7 +942,8 @@ static void k2serdes_add_offsets_non_xge(void __iomem *serdes,
 }
 
 static void k2serdes_get_average_offsets(void __iomem *serdes, u32 samples,
-		struct hw_specific *hw, struct k2serdes_offsets *sofs)
+					 struct hw_specific *hw,
+					 struct k2serdes_offsets *sofs)
 {
 	struct k2serdes_comparator_tap_offsets *ctofs;
 	struct k2serdes_lane_offsets *lofs;
@@ -972,7 +1022,8 @@ static void k2serdes_override_cmp_tap_offsets(void __iomem *serdes,
 }
 
 static inline void k2serdes_override_cmp_offset_cdfe(void __iomem *serdes,
-					u32 lane, u32 cmp, u32 cmp_offset)
+						     u32 lane, u32 cmp,
+						     u32 cmp_offset)
 {
 	/* enable comparator offset calibrate */
 	FINSR(serdes, LANEX_REG(lane, 0x58), 18, 18, 0x1);
@@ -990,7 +1041,7 @@ static inline void k2serdes_override_cmp_offset_cdfe(void __iomem *serdes,
 }
 
 static inline void k2serdes_override_tap_offset_cdfe(void __iomem *serdes,
-	u32 lane, u32 tap, u32 width, u32 tap_offset)
+				u32 lane, u32 tap, u32 width, u32 tap_offset)
 {
 	/* enable tap */
 	FINSR(serdes, LANEX_REG(lane, 0x58), 23, 19, BIT(tap - 1));
@@ -1028,7 +1079,8 @@ static void k2serdes_override_cmp_tap_offsets_cdfe(void __iomem *serdes,
 }
 
 static void k2serdes_set_offsets_xge(void __iomem *serdes,
-	struct hw_specific *hw, struct k2serdes_offsets *sofs)
+				     struct hw_specific *hw,
+				     struct k2serdes_offsets *sofs)
 {
 	struct k2serdes_comparator_tap_offsets *ctofs;
 	struct k2serdes_lane_offsets *lofs;
@@ -1047,7 +1099,8 @@ static void k2serdes_set_offsets_xge(void __iomem *serdes,
 }
 
 static void k2serdes_set_offsets_non_xge(void __iomem *serdes,
-	struct hw_specific *hw, struct k2serdes_offsets *sofs)
+					 struct hw_specific *hw,
+					 struct k2serdes_offsets *sofs)
 {
 	struct k2serdes_comparator_tap_offsets *ctofs;
 	struct k2serdes_lane_offsets *lofs;
@@ -1064,7 +1117,8 @@ static void k2serdes_set_offsets_non_xge(void __iomem *serdes,
 }
 
 static void k2serdes_set_offsets(void __iomem *serdes,
-	struct hw_specific *hw, struct k2serdes_offsets *sofs)
+				 struct hw_specific *hw,
+				 struct k2serdes_offsets *sofs)
 {
 	if (hw->phy_type == K2SERDES_PHY_XGE)
 		k2serdes_set_offsets_xge(serdes, hw, sofs);
@@ -1073,7 +1127,8 @@ static void k2serdes_set_offsets(void __iomem *serdes,
 }
 
 static inline void k2serdes_config_c1_c2_cm(void __iomem *serdes,
-				int lane, struct hw_specific *hw)
+					    int lane,
+					    struct hw_specific *hw)
 {
 	u32 c1, c2, cm;
 
@@ -1101,7 +1156,7 @@ static inline void k2serdes_config_c1_c2_cm(void __iomem *serdes,
 }
 
 static void k2serdes_dfe_offset_calibrate(void __iomem *serdes,
-					struct hw_specific *hw)
+					  struct hw_specific *hw)
 {
 	struct k2serdes_offsets sofs;
 	u32 i;
@@ -1148,9 +1203,15 @@ static void k2serdes_dfe_offset_calibrate(void __iomem *serdes,
 	udelay(10);
 }
 
-static inline void k2serdes_enable_xgmii_port(void __iomem *sw_regs)
+static inline void k2serdes_enable_xgmii_port_all(void __iomem *sw_regs,
+						  struct hw_specific *hw)
 {
-	k2serdes_writel(sw_regs, XGE_CTRL_OFFSET, 0x03);
+	k2serdes_writel(sw_regs, XGE_CTRL_OFFSET, MASK(hw->lanes - 1, 0));
+}
+
+static inline void k2serdes_enable_xgmii_port(void __iomem *sw_regs, u32 port)
+{
+	FINSR(sw_regs, XGE_CTRL_OFFSET, port, port, 0x1);
 }
 
 void k2serdes_reset_cdr(void __iomem *serdes, int lane)
@@ -1163,10 +1224,10 @@ void k2serdes_reset_cdr(void __iomem *serdes, int lane)
 
 /* Call every 10 ms */
 int k2serdes_check_link_status(void __iomem *serdes,
-			      void __iomem *sw_regs,
-			      u32 lanes,
-			      u32 *current_state,
-			      u32 *lane_down)
+			       void __iomem *sw_regs,
+			       u32 lanes,
+			       u32 *current_state,
+			       u32 *lane_down)
 {
 	u32 pcsr_rx_stat, blk_lock, blk_errs;
 	int loss, i, status = 1;
@@ -1179,7 +1240,6 @@ int k2serdes_check_link_status(void __iomem *serdes,
 		pcsr_rx_stat = k2serdes_readl(sw_regs, PCSR_RX_STATUS(i));
 		blk_lock = (pcsr_rx_stat >> 30) & 0x1;
 		blk_errs = (pcsr_rx_stat >> 16) & 0x0ff;
-/*pr_info("++++++ lane %d pcsr_rx_stat=0x%08x\n", i, pcsr_rx_stat);*/
 
 		/* If Block error, attempt recovery! */
 		if (blk_errs)
@@ -1241,7 +1301,7 @@ int k2serdes_check_link_status(void __iomem *serdes,
 }
 
 static int k2serdes_check_lane(void __iomem *serdes,
-		  void __iomem *sw_regs, u32 lanes)
+			       void __iomem *sw_regs, u32 lanes)
 {
 	u32 current_state[2] = {0, 0};
 	int retries = 0, link_up;
@@ -1287,23 +1347,279 @@ static inline void k2serdes_reset(void __iomem *serdes)
 }
 
 static inline void k2serdes_txb_clk_mode(void __iomem *serdes,
-					      struct hw_specific *hw)
+					 struct hw_specific *hw)
 {
-	if (hw->link_rate != K2SERDES_LINK_RATE_1P25G)
-		return;
-
 	k2serdes_writel(serdes, CPU_CTRL_REG, 0x20000000);
 	k2serdes_writel(serdes, PLL_CTRL_REG, 0x00380000);
 	k2serdes_writel(serdes, CPU_CTRL_REG, 0x00000000);
 }
 
-static int k2serdes_config(void __iomem *serdes,
-			      void __iomem *sw_regs,
-			      struct hw_specific *hw)
+static inline void k2serdes_set_link_loss_wait(void __iomem *serdes,
+					       struct hw_specific *hw)
 {
-	u32 ret, i, lanes = hw->lanes;
+	k2serdes_writel(serdes, LINK_LOSS_WAIT_REG, hw->link_loss_wait);
+}
 
-	k2serdes_txb_clk_mode(serdes, hw);
+static inline void k2serdes_fw_get_lane_params(void __iomem *serdes,
+					       struct hw_specific *hw,
+					       int lane)
+{
+	u32 tx_ctrl, val_0, val_1;
+	u32 phy_a = PHY_A(serdes);
+
+	val_0 = k2serdes_readl(serdes, LANEX_REG(lane, 0x04));
+	val_1 = k2serdes_readl(serdes, LANEX_REG(lane, 0x08));
+
+	tx_ctrl = ((((val_0 >> 18) & 0x1)    << 24) |	/* TX_CTRL_O_24 */
+		   (((val_1 >> 0)  & 0xffff) <<  8) |	/* TX_CTRL_O_23_8 */
+		   (((val_0 >> 24) & 0xff)   <<  0));	/* TX_CTRL_O_7_0 */
+
+	if (phy_a) {
+		hw->cm = (val_1 >> 12) & 0xf;
+		hw->c1 = (val_1 >> 0) & 0x1f;
+		hw->c2 = (val_1 >> 8) & 0xf;
+	} else {
+		hw->cm = (tx_ctrl >> 16) & 0xf;
+		hw->c1 = (tx_ctrl >> 8) & 0x1f;
+		hw->c2 = (tx_ctrl >> 13) & 0x7;
+		hw->c2 = hw->c2 | (((tx_ctrl >> 24) & 0x1) << 3);
+	}
+
+	val_0 = k2serdes_read_select_tbus(serdes, lane + 1,
+					(phy_a ? 0x11 : 0x10));
+	hw->attn = (val_0 >> 4) & 0xf;
+	hw->boost = (val_0 >> 8) & 0xf;
+
+	val_0 = k2serdes_read_select_tbus(serdes, lane + 1, 0x5);
+	hw->dlpf = (val_0 >> 2) & 0x3ff;
+
+	val_0 = k2serdes_read_select_tbus(serdes, lane + 1, 0x6);
+	hw->cdrcal = (val_0 >> 3) & 0xff;
+}
+
+static inline void k2serdes_fw_mem_init(void __iomem *serdes,
+					struct hw_specific *hw)
+{
+	u32 i, lane_config = 0, lanes = hw->lanes;
+
+	for (i = 0; i < lanes; i++)
+		lane_config = (lane_config << 8) |
+			(hw->lane_config[i] & 0xff);
+
+	lane_config <<= 8;
+
+	/* initialize 64B data mem */
+	k2serdes_writel(serdes, MEM_ADR_REG, 0x0000ffc0);
+
+	for (i = 0; i < 11; i++)
+		k2serdes_writel(serdes, MEM_DATINC_REG, 0x00000000);
+
+	/* Flush 64 bytes 10,11,12,13 */
+	k2serdes_writel(serdes, MEM_DATINC_REG, 0x00009C9C);
+
+	/* fast train */
+	k2serdes_writel(serdes, MEM_DATINC_REG, hw->fast_train);
+
+	k2serdes_writel(serdes, MEM_DATINC_REG, 0x00000000);
+	/* lane seeds */
+	k2serdes_writel(serdes, MEM_DATINC_REG, hw->lane_seeds);
+	/* lane config */
+	k2serdes_writel(serdes, MEM_DATINC_REG, lane_config);
+}
+
+static void k2serdes_fw_check_download(void __iomem *serdes,
+				       struct hw_specific *hw)
+{
+	struct k2serdes_fw_entry *ent = &(k2serdes_firmware[0]);
+	int a_size, i;
+	u32 val, addr;
+
+	a_size = ARRAY_SIZE(k2serdes_firmware);
+
+	for (i = 0; i < a_size; i++, ent++) {
+		if (ent->reg_ofs == MEM_ADR_REG)
+			k2serdes_writel(serdes, MEM_ADR_REG, ent->data);
+		else if (ent->reg_ofs == MEM_DATINC_REG) {
+			addr = k2serdes_readl(serdes, MEM_ADR_REG);
+			val  = k2serdes_readl(serdes, MEM_DATINC_REG);
+			if (val != ent->data) {
+				pr_err("diff@ %d 0x%08x: 0x%08x 0x%08x\n",
+					i, addr, ent->data, val);
+			}
+		} else
+			pr_err("unknown reg_ofs %08x\n", ent->reg_ofs);
+	}
+}
+
+static void k2serdes_fw_download(void __iomem *serdes,
+				 struct hw_specific *hw)
+{
+	struct k2serdes_fw_entry *ent = &(k2serdes_firmware[0]);
+	int a_size, i;
+
+	a_size = ARRAY_SIZE(k2serdes_firmware);
+
+	for (i = 0; i < a_size; i++, ent++)
+		k2serdes_writel(serdes, ent->reg_ofs, ent->data);
+}
+
+static inline void k2serdes_fw_restart_cpu(void __iomem *serdes,
+					   struct hw_specific *hw)
+{
+	u32 val;
+
+	/* place serdes in reset and allow cpu to access regs */
+	val = (POR_EN | CPUREG_EN | AUTONEG_CTL | DATASPLIT);
+	k2serdes_writel(serdes, CPU_CTRL_REG, val);
+
+	/* let reset propagate to uC */
+	mdelay(50);
+
+	val &= ~POR_EN;
+	k2serdes_writel(serdes, CPU_CTRL_REG, val);
+
+	/* set VCO div to match firmware */
+	FINSR(serdes, CMU0_REG(0x0), 23, 16, 0x80);
+	/* override CMU1 pin reset */
+	FINSR(serdes, CMU1_REG(0x10), 31, 24, 0x40);
+
+	/* kick off cpu */
+	val |= (CPU_EN | CPU_GO);
+	k2serdes_writel(serdes, CPU_CTRL_REG, val);
+}
+
+static inline void k2serdes_fw_get_params(void __iomem *serdes,
+					  void __iomem *sw_regs,
+					  struct hw_specific *hw)
+{
+	u32 val, val_1, i, lanes = hw->lanes;
+
+	val = k2serdes_readl(serdes, PLL_CTRL_REG);
+	k2serdes_writel(serdes, MEM_ADR_REG, 0x0000ffeb);
+	val_1 = k2serdes_readl(serdes, MEM_DAT_REG);
+
+	pr_info("Initialized KR firmware version: %x\n", val_1);
+	pr_info("firmware restarted status:\n");
+	pr_info("  pll_ctrl = 0x%08x", val);
+
+	for (i = 0; i < lanes; i++) {
+		if (!(BIT(i) & hw->active_lane))
+			continue;
+
+		val = k2serdes_readl(sw_regs, PCSR_RX_STATUS(i));
+		val_1 = k2serdes_readl(serdes, LANE_CTRL_STS_REG(i));
+
+		/* get FW adaptation parameters from phy */
+		k2serdes_fw_get_lane_params(serdes, hw, i);
+		pr_info("LANE%d:\n", i);
+		pr_info("  pcsr_rx_sts = 0x%08x, lane_ctrl_sts = 0x%08x\n",
+				val, val_1);
+		pr_info("  cm = %d, c1 = %d, c2 = %d\n",
+				hw->cm, hw->c1, hw->c2);
+		pr_info("  attn = %d, boost = %d, dlpf = %d, cdrcal = %d\n",
+				hw->attn, hw->boost, hw->dlpf, hw->cdrcal);
+	}
+}
+
+static void k2serdes_fw_auto_neg_status(void __iomem *serdes,
+					      struct hw_specific *hw)
+{
+	u32 aneg_in_prog = 0, i, aneg_ctl, tmp;
+	unsigned long timeout;
+
+	/* set aneg_in_prog to lane(s) that is/are active,
+	 * set to auto-negotiate, and on the 1G/10G rate.
+	 */
+	for (i = 0; i < hw->lanes; i++) {
+		tmp = (hw->lane_config[i] & ANEG_1G_10G_OPT_MASK);
+
+		if ((tmp == ANEG_1G_10G_OPT_MASK) &&
+		    (hw->active_lane & BIT(i)))
+			aneg_in_prog |= BIT(i);
+	}
+
+	if (aneg_in_prog == 0)
+		return;
+
+	timeout = jiffies + msecs_to_jiffies(5000);
+
+	pr_info("Waiting for autonegotiated link up.\n");
+
+	while (aneg_in_prog) {
+		for (i = 0; i < hw->lanes; i++) {
+			aneg_ctl = k2serdes_readl(serdes, LANEX_REG(i, 0x1d8));
+			aneg_ctl = (aneg_ctl & ANEG_LINK_CTL_1G10G_MASK);
+
+			if ((aneg_ctl == ANEG_LINK_CTL_10GKR_MASK) ||
+			    (aneg_ctl == ANEG_LINK_CTL_1GKX_MASK))
+				aneg_in_prog &= ~BIT(i);
+		}
+		if (time_after(jiffies, timeout))
+			break;
+		cpu_relax();
+	}
+
+	pr_debug("Lanes auto neg completed (mask): 0x%x\n",
+		~aneg_in_prog & hw->active_lane);
+}
+
+static int k2serdes_fw_start(void __iomem *serdes,
+			     void __iomem *sw_regs,
+			     struct hw_specific *hw)
+{
+	u32 i;
+	int ret = 0;
+
+	k2serdes_pll_disable(serdes);
+
+	k2serdes_reset(serdes);
+
+	for (i = 0; i < hw->lanes; i++)
+		k2serdes_lane_enable(serdes, i);
+
+	k2serdes_set_link_loss_wait(serdes, hw);
+
+	k2serdes_pll_enable(serdes, hw);
+
+	k2serdes_fw_mem_init(serdes, hw);
+
+	k2serdes_fw_download(serdes, hw);
+
+	k2serdes_fw_restart_cpu(serdes, hw);
+
+	/* 10G Auto-Negotiation Handling:
+	 * Wait to see if we can synchronize with other side.
+	 * If it doesn't it may require an interface
+	 * toggle after boot
+	 */
+	k2serdes_fw_auto_neg_status(serdes, hw);
+
+	k2serdes_enable_xgmii_port_all(sw_regs, hw);
+
+	mdelay(100);
+
+	ret = k2serdes_wait_pll_locked(serdes, hw);
+	if (ret) {
+		k2serdes_fw_check_download(serdes, hw);
+		return ret;
+	}
+
+	k2serdes_fw_get_params(serdes, sw_regs, hw);
+
+	return ret;
+}
+
+static int k2serdes_config(void __iomem *serdes,
+			   void __iomem *sw_regs,
+			   struct hw_specific *hw)
+{
+	u32 i, lanes = hw->lanes;
+	u32 ret;
+
+	k2serdes_reset(serdes);
+
+	if (hw->link_rate == K2SERDES_LINK_RATE_1P25G)
+		k2serdes_txb_clk_mode(serdes, hw);
 
 	ret = k2serdes_init(serdes, hw);
 	if (ret)
@@ -1319,7 +1635,7 @@ static int k2serdes_config(void __iomem *serdes,
 	k2serdes_pll_enable(serdes, hw);
 
 	for (i = 0; i < lanes; i++)
-		k2serdes_lane_enable(serdes, i, hw);
+		k2serdes_lane_start(serdes, i, hw);
 
 	/* SB PLL Status Poll */
 	ret = k2serdes_wait_pll_locked(serdes, hw);
@@ -1328,7 +1644,7 @@ static int k2serdes_config(void __iomem *serdes,
 
 	k2serdes_dfe_offset_calibrate(serdes, hw);
 
-	k2serdes_enable_xgmii_port(sw_regs);
+	k2serdes_enable_xgmii_port_all(sw_regs, hw);
 
 	k2serdes_check_lane(serdes, sw_regs, lanes);
 
@@ -1343,39 +1659,118 @@ static int k2serdes_start(struct hw_specific *hw)
 	serdes = ioremap(XGE_SERDES_BASE, XGE_SERDES_SIZE);
 	xge_sw_regs = ioremap(XGE_SW_BASE, XGE_SW_SIZE);
 
-	pr_info("XGE: serdes reset\n");
-	k2serdes_reset(serdes);
-
-	ret = k2serdes_config(serdes, xge_sw_regs, hw);
+	if (hw->firmware) {
+		ret = k2serdes_fw_start(serdes, xge_sw_regs, hw);
+	} else {
+		pr_info("XGE: serdes reset\n");
+		ret = k2serdes_config(serdes, xge_sw_regs, hw);
+	}
 
 	iounmap(serdes);
 	iounmap(xge_sw_regs);
+
 	return ret;
 }
 
-static int k2_xge_serdes_configured;  /* FIXME */
-
-int xge_serdes_init(struct device_node *node)
+static int k2serdes_parse_fw_configs(struct device_node *node,
+				     struct hw_specific *hw)
 {
-	int ret;
-	struct hw_specific *hw = NULL;
+	struct device_node *lane;
+	u32 rate, lnum;
 
-	hw = kzalloc(sizeof(*hw), GFP_KERNEL);
+	/* Get random lane seeds */
+	get_random_bytes(&hw->lane_seeds, sizeof(u32));
+	hw->lane_seeds &= 0x00ffff00;
 
-	if (!hw) {
-		pr_err("xge serdes mem alloc failed\n");
-		return -ENOMEM;
+	hw->link_loss_wait = 20000;
+	/* Flush 64 bytes 0c,0d,0e,0f FAST Train */
+	hw->fast_train = 0x60000000;
+
+	/* get lane configs via DTS */
+	for_each_available_child_of_node(node, lane) {
+		if (of_property_read_u32(lane, "lane", &lnum))
+			lnum = 0;
+
+		/* Set active lane(s) for polling */
+		hw->active_lane |= BIT(lnum);
+
+		/* get lane rate from DTS
+		 * 0=1g/10g, 1=force 1g, 2=force 10g
+		 */
+		of_property_read_u32(lane, "rate", &rate);
+		if (rate == 0) {
+			hw->lane_config[lnum] |= BIT(6);
+			hw->lane_config[lnum] |= BIT(5);
+		} else if (rate == 1)
+			hw->lane_config[lnum] |= BIT(5);
+		else if (rate == 2)
+			hw->lane_config[lnum] |= BIT(6);
+		else {
+			/* default to 1G/10G */
+			pr_err("Invalid lane rate defined. Using 1/10G.\n");
+			hw->lane_config[lnum] |= BIT(6);
+			hw->lane_config[lnum] |= BIT(5);
+		}
+
+		/* get lane properties from DTS */
+		if (of_find_property(lane, "autonegotiate", NULL))
+			hw->lane_config[lnum] |= BIT(7);
+
+		if (of_find_property(lane, "tx_pause", NULL))
+			hw->lane_config[lnum] |= BIT(4);
+
+		if (of_find_property(lane, "rx_pause", NULL))
+			hw->lane_config[lnum] |= BIT(3);
+
+		if (of_find_property(lane, "10g_train", NULL))
+			hw->lane_config[lnum] |= BIT(2);
+
+		if (of_find_property(lane, "fec", NULL))
+			hw->lane_config[lnum] |= BIT(1);
 	}
 
-	if (of_property_read_u32(node, "ref_clock",
-					&hw->ref_clock_rate))
-		hw->ref_clock_rate = K2SERDES_REF_CLOCK_156P25M;
+	if (hw->active_lane == 0) {
+		pr_err("No active serdes firmware lanes defined.");
+		return -EINVAL;
+	}
 
-	if (of_property_read_u32(node, "link_rate",
-					&hw->link_rate))
-		hw->link_rate = K2SERDES_LINK_RATE_10P3125G;
+	pr_debug("Active serdes fw lane(s): 0x%x", hw->active_lane);
 
-	if (of_property_read_u32_array(node, "tx_ctrl_override",
+	/* Both lanes should be configured even if one is not in use, just
+	 * mirror the config over in that case.
+	 */
+	if (hw->active_lane == 0x1 || hw->active_lane == 0x2) {
+		if (hw->lane_config[0] & 0xff)
+			hw->lane_config[1] = hw->lane_config[0];
+		else if (hw->lane_config[1] & 0xff)
+			hw->lane_config[0] = hw->lane_config[1];
+	}
+
+	pr_debug("fw configs:\n");
+	pr_debug("  ref_clk=%s, link_rate=%s, lanes=%u\n",
+		(hw->ref_clock_rate == K2SERDES_REF_CLOCK_156P25M) ?
+			"156.25MHz" : "not 156.25MHz",
+		(hw->link_rate == K2SERDES_LINK_RATE_10P3125G) ?
+			"10.3125G" : "1.25G",
+		hw->lanes);
+	pr_debug("  lane_configs: 0x%02x, 0x%02x\n",
+		hw->lane_config[0], hw->lane_config[1]);
+	pr_debug("  lnk_loss_wait: %d, lane_seeds: 0x%08x, fast_train: 0x%08x\n",
+		hw->link_loss_wait, hw->lane_seeds, hw->fast_train);
+
+	return 0;
+}
+
+static int k2serdes_parse_cdfe_configs(struct device_node *node,
+					struct hw_specific *hw)
+{
+	struct device_node *hw_node = NULL;
+
+	hw_node = of_get_child_by_name(node, "cdfe-params");
+	if (!hw_node)
+		return -EINVAL;
+
+	if (of_property_read_u32_array(hw_node, "tx_ctrl_override",
 					&hw->c1, 5)) {
 		hw->c1		= 2;
 		hw->c2		= 0;
@@ -1384,15 +1779,46 @@ int xge_serdes_init(struct device_node *node)
 		hw->tx_vreg	= 4;
 	}
 
-	if (of_property_read_u32_array(node, "equalizer_flags",
+	if (of_property_read_u32_array(hw_node, "equalizer_flags",
 					&hw->eq_vreg_enable, 3)) {
 		hw->eq_vreg_enable	= 1;
 		hw->eq_cdfe_enable	= 1;
 		hw->eq_offset_enable	= 1;
 	}
 
-	hw->lanes = 2;
-	hw->phy_type = K2SERDES_PHY_XGE;
+	of_node_put(hw_node);
+
+	pr_debug("XGE serdes config:\n");
+	pr_debug("  ref_clk=%s, link_rate=%s, lanes=%u\n",
+		(hw->ref_clock_rate == K2SERDES_REF_CLOCK_156P25M) ?
+		"156.25MHz" : "not 156.25MHz",
+		(hw->link_rate == K2SERDES_LINK_RATE_10P3125G) ?
+		"10.3125G" : "1.25G",
+		hw->lanes);
+	pr_debug("  c1=%u, c2=%u, cm=%u, tx_att=%u, tx_vreg=%u\n",
+		hw->c1, hw->c2, hw->cm, hw->tx_att, hw->tx_vreg);
+	pr_debug("  eq flags: vreg=%u, cdfe=%u, offset=%u\n",
+		hw->eq_vreg_enable, hw->eq_cdfe_enable,
+		hw->eq_offset_enable);
+
+	return 0;
+}
+
+static int k2serdes_parse_dts_params(struct device_node *node,
+				     struct hw_specific *hw)
+{
+	struct device_node *fw_node = NULL;
+	int ret = 0;
+
+	/* read common parameters */
+	if (of_property_read_u32(node, "ref_clock",
+					&hw->ref_clock_rate))
+		hw->ref_clock_rate = K2SERDES_REF_CLOCK_156P25M;
+
+	if (of_property_read_u32(node, "link_rate",
+					&hw->link_rate))
+		hw->link_rate = K2SERDES_LINK_RATE_10P3125G;
+
 
 	if (hw->ref_clock_rate != K2SERDES_REF_CLOCK_156P25M) {
 		pr_err("XGE serdes invalid ref_clock code %d",
@@ -1405,25 +1831,51 @@ int xge_serdes_init(struct device_node *node)
 		return -EINVAL;
 	}
 
-	if (!k2_xge_serdes_configured) {
-		pr_info("XGE serdes config:\n");
-		pr_info("  ref_clk=%s, link_rate=%s, lanes=%u\n",
-			(hw->ref_clock_rate == K2SERDES_REF_CLOCK_156P25M) ?
-				"156.25MHz" : "not 156.25MHz",
-			(hw->link_rate == K2SERDES_LINK_RATE_10P3125G) ?
-				"10.3125G" : "1.25G",
-			hw->lanes);
-		pr_info("  c1=%u, c2=%u, cm=%u, tx_att=%u, tx_vreg=%u\n",
-			hw->c1, hw->c2, hw->cm, hw->tx_att, hw->tx_vreg);
-		pr_info("  eq flags: vreg=%u, cdfe=%u, offset=%u\n",
-			hw->eq_vreg_enable, hw->eq_cdfe_enable,
-			hw->eq_offset_enable);
+	/* check if firmware should be used */
+	fw_node = of_get_child_by_name(node, "firmware");
+	if (fw_node) {
+		if (of_device_is_available(fw_node)) {
+			/* firmware should be used */
+			hw->firmware = 1;
+			ret = k2serdes_parse_fw_configs(fw_node, hw);
+		}
+		of_node_put(fw_node);
+	}
+
+	/* parse cdfe configs */
+	if (hw->firmware == 0)
+		ret = k2serdes_parse_cdfe_configs(node, hw);
+
+	return ret;
+}
+
+int xge_serdes_init(struct device_node *node, u32 *fw_on)
+{
+	int ret = 0;
+	struct hw_specific *hw = NULL;
+
+	hw = kzalloc(sizeof(*hw), GFP_KERNEL);
+	if (!hw) {
+		pr_err("xge serdes mem alloc failed\n");
+		return -ENOMEM;
+	}
+
+	hw->phy_type = K2SERDES_PHY_XGE;
+	hw->lanes = 2;
+
+	ret = k2serdes_parse_dts_params(node, hw);
+	if (ret) {
+		pr_err("Error parsing SerDes configuration.\n");
+		goto exit;
 	}
 
 	ret = k2serdes_start(hw);
-	if (!ret)
-		++k2_xge_serdes_configured;
 
+	/* If firmware is up and running, set flag so it inits once */
+	if (!ret && hw->firmware)
+		*fw_on = 1;
+
+exit:
 	kfree(hw);
 	return ret;
 }
