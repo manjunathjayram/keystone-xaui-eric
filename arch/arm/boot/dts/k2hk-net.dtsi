@@ -328,10 +328,38 @@ netcpx: netcp@2f00000 {
 		};
 
 		serdes {
-			/* ref_clock = <0> */ /* 0 - 156.25MHz */
-			/* link_rate = <0> */ /* 0 - 10.3125GHz */
-			tx_ctrl_override = <2 0 2 12 4>; /* c1 c2 cm tx_att tx_vreg */
-			equalizer_flags = <1 1 1>; /* vreg cdfe offset */
+			ref_clock = <0>; /* 0 - 156.25MHz */
+			link_rate = <0>; /* 0 - 10.3125GHz */
+
+			cdfe-params {
+				tx_ctrl_override = <2 0 2 12 4>; /* c1 c2 cm tx_att tx_vreg */
+				equalizer_flags = <1 1 1>; /* vreg cdfe offset */
+			};
+
+			/* 10G-KR firmware */
+			firmware {
+				status = "disabled";
+				lane-0 {
+					status = "disabled";
+					lane = <0>;
+					rate = <0>; /*0=1g/10g 1=1g 2=10g*/
+					autonegotiate;
+					/*tx_pause;*/
+					/*rx_pause;*/
+					10g_train;
+					/*fec;*/
+				};
+				lane-1 {
+					status = "disabled";
+					lane = <1>;
+					rate = <0>; /*0=1g/10g 1=1g 2=10g*/
+					autonegotiate;
+					/*tx_pause;*/
+					/*rx_pause;*/
+					10g_train;
+					/*fec;*/
+				};
+			};
 		};
 	};
 };
