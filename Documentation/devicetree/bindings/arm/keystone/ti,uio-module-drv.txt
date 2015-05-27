@@ -21,10 +21,15 @@ Optional properties:
 	ti,serdes_refclk_khz: serdes reference clock in khz
 	ti,serdes_maxserrate_khz: serdes maximum serial rate in khz
 	ti,serdes_maxlanerate: Lane rate "half" or "full"
+	ti,serdes_numlanes: Number of lanes
 	The following are serdes equilization tap parameters
-	ti,serdes_c1	: Serdes c1 coefficient (0-31)
-	ti,serdes_c2	: Serdes c2 coefficient (0-15)
-	ti,serdes_cm	: Serdes cm coefficient (0-15)
+	ti,serdes_c1	: Serdes c1 coefficient (0-31), one per lane
+	ti,serdes_c2	: Serdes c2 coefficient (0-15), one per lane
+	ti,serdes_cm	: Serdes cm coefficient (0-15), one per lane
+	ti,serdes_tx_att: Transmit att, one per lane
+	ti,serdes_tx_vreg: Transmit vreg, one per lane
+	ti,serdes_rx_att: Receive att, one per lane
+	ti,serdes_rx_boost: Receive boost, one per lane
 	ti,qm-queue     : QMSS queue associated with qpend binding
 
 Example:
@@ -42,8 +47,13 @@ Example:
 			ti,serdes_refclk_khz = <312500>;
 			ti,serdes_maxserrate_khz = <6250000>;
 			ti,serdes_lanerate = "half";
-			ti,serdes_c1 = <4>;
-			ti,serdes_c2 = <0>;
-			ti,serdes_cm = <3>;
+			ti,serdes_numlanes = <4>;
+			ti,serdes_c1 = <4 4 4 4>;
+			ti,serdes_c2 = <0 0 0 0>;
+			ti,serdes_cm = <0 0 0 0>;
+			ti,serdes_tx_att = <12 12 12 12>;
+			ti,serdes_tx_vreg = <4 4 4 4>;
+			ti,serdes_rx_att = <11 11 11 11>;
+			ti,serdes_rx_boost = <3 3 3 3>;
 		};
 	};
