@@ -1,0 +1,491 @@
+/*
+ * Copyright 2015 Texas Instruments, Inc.
+ *
+ * Keystone 2 Lamarr EVM kernel crash recovery device tree file
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+/dts-v1/;
+/include/ "skeleton.dtsi"
+/ {
+	model = "Texas Instruments Keystone 2 SoC";
+	#address-cells = <2>;
+	#size-cells = <2>;
+	interrupt-parent = <&gic>;
+	compatible = "ti,k2l-evm", "ti,keystone";
+
+	chosen {
+		bootargs = "console=ttyS0,115200n8 earlyprintk rootwait=1 rootfstype=ubifs root=ubi0:rootfs-recovery rootflags=sync rw ubi.mtd=2,4096 elfcorehdr=0x97f00000";
+	};
+
+	aliases {
+		serial0	= &uart0;
+	};
+
+	memory {
+		reg = <0x00000000 0x80000000 0x00000000 0x20000000>;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		interrupt-parent = <&gic>;
+
+		cpu@0 {
+			compatible = "arm,cortex-a15";
+			device_type = "cpu";
+			reg = <0x0>;
+			clocks = <&armpllclk>;
+		};
+	};
+
+	soc {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "ti,keystone","simple-bus";
+		interrupt-parent = <&gic>;
+		ranges = <0x0 0x0 0x0 0xc0000000>;
+
+		rstctrl:rstctrl@23100e8 {
+			compatible = "ti,keystone-reset";
+			reg = <0x023100e8 4	/* pll reset control reg */
+				0x02620328 4>;	/* rstmux8 register */
+		};
+
+		clocks {
+			#address-cells = <0x1>;
+			#size-cells = <0x1>;
+			ranges;
+
+			mainpllclk: mainpllclk@2310110 {
+				#clock-cells = <0>;
+				compatible = "keystone,main-pll-clk";
+				clocks = <&refclkmain>;
+				reg = <0x02310110 4	/* PLLCTRL PLLM */
+					0x02620350 4>;	/* MAINPLL_CTL0 */
+				pll_has_pllctrl;
+				pllm_lower_mask	= <0x3f>;
+				pllm_upper_mask = <0x7f000>;
+				pllm_upper_shift = <6>;
+				plld_mask = <0x3f>;
+				fixed_postdiv = <2>;
+			};
+
+			armpllclk: armpllclk@2620370 {
+				#clock-cells = <0>;
+				compatible = "keystone,pll-clk";
+				clocks = <&refclkarm>;
+				clock-output-names = "arm-pll-clk";
+				reg = <0x02620370 4>;
+				pllm_upper_mask = <0x7ffc0>;
+				pllm_upper_shift = <6>;
+				plld_mask = <0x3f>;
+			};
+
+			ddr3_clk: ddr3_clk@2620360 {
+				#clock-cells = <0>;
+				compatible = "keystone,pll-clk";
+				clocks = <&refclkddr3>;
+				clock-output-names = "ddr3-pll-clk";
+				reg = <0x02620360 4>;
+				pllm_upper_mask = <0x7ffc0>;
+				pllm_upper_shift = <6>;
+				plld_mask = <0x3f>;
+			};
+
+			mainmuxclk: mainmuxclk@2310108 {
+				#clock-cells = <0>;
+				compatible = "davinci,main-pll-mux-clk";
+				clocks = <&mainpllclk>, <&refclkmain>;
+				reg = <0x02310108 4>;
+				shift = <23>;
+				width = <1>;
+			};
+
+			chipclk1: chipclk1 {
+				#clock-cells = <0>;
+				compatible = "fixed-clock-factor";
+				clocks = <&mainmuxclk>;
+				clock-mult = <1>;
+				clock-div = <1>;
+			};
+
+			chipclk1rstiso: chipclk1rstiso {
+				#clock-cells = <0>;
+				compatible = "fixed-clock-factor";
+				clocks = <&mainmuxclk>;
+				clock-mult = <1>;
+				clock-div = <1>;
+			};
+
+			gemtraceclk: gemtraceclk@2310120 {
+				#clock-cells = <0>;
+				compatible = "davinci,pll-divider-clk";
+				clocks = <&mainmuxclk>;
+				reg = <0x02310120 4>;
+				shift = <0>;
+				width = <8>;
+			};
+
+			chipclk12: chipclk12 {
+				#clock-cells = <0>;
+				compatible = "fixed-clock-factor";
+				clocks = <&chipclk1>;
+				clock-mult = <1>;
+				clock-div = <2>;
+			};
+
+			chipclk13: chipclk13 {
+				#clock-cells = <0>;
+				compatible = "fixed-clock-factor";
+				clocks = <&chipclk1>;
+				clock-mult = <1>;
+				clock-div = <3>;
+			};
+
+			chipclk14: chipclk14 {
+				#clock-cells = <0>;
+				compatible = "fixed-clock-factor";
+				clocks = <&chipclk1>;
+				clock-mult = <1>;
+				clock-div = <4>;
+			};
+
+			chipclk16: chipclk16 {
+				#clock-cells = <0>;
+				compatible = "fixed-clock-factor";
+				clocks = <&chipclk1>;
+				clock-mult = <1>;
+				clock-div = <6>;
+			};
+
+			chipclk112: chipclk112 {
+				#clock-cells = <0>;
+				compatible = "fixed-clock-factor";
+				clocks = <&chipclk1>;
+				clock-mult = <1>;
+				clock-div = <12>;
+			};
+
+			chipclk124: chipclk124 {
+				#clock-cells = <0>;
+				compatible = "fixed-clock-factor";
+				clocks = <&chipclk1>;
+				clock-mult = <1>;
+				clock-div = <24>;
+			};
+
+			chipclk1rstiso13: chipclk1rstiso13 {
+				#clock-cells = <0>;
+				compatible = "fixed-clock-factor";
+				clocks = <&chipclk1rstiso>;
+				clock-mult = <1>;
+				clock-div = <3>;
+			};
+
+			chipclk1rstiso14: chipclk1rstiso14 {
+				#clock-cells = <0>;
+				compatible = "fixed-clock-factor";
+				clocks = <&chipclk1rstiso>;
+				clock-mult = <1>;
+				clock-div = <4>;
+			};
+
+			chipclk1rstiso16: chipclk1rstiso16 {
+				#clock-cells = <0>;
+				compatible = "fixed-clock-factor";
+				clocks = <&chipclk1rstiso>;
+				clock-mult = <1>;
+				clock-div = <6>;
+			};
+
+			chipclk1rstiso112: chipclk1rstiso112 {
+				#clock-cells = <0>;
+				compatible = "fixed-clock-factor";
+				clocks = <&chipclk1rstiso>;
+				clock-mult = <1>;
+				clock-div = <12>;
+			};
+
+			clkaemifspi: clkaemifspi {
+				#clock-cells = <0>;
+				compatible = "davinci,psc-clk";
+				clocks = <&chipclk16>;
+				clock-output-names = "aemif-spi";
+				reg = <0x02350000 4096>;
+				status = "enabled";
+				lpsc = <3>;
+			};
+
+			clkdebugsstrc: clkdebugsstrc {
+				#clock-cells = <0>;
+				compatible = "davinci,psc-clk";
+				clocks = <&chipclk13>;
+				clock-output-names = "debugss-trc";
+				base-flags = "ignore-unused";
+				reg = <0x02350000 4096>;
+				lpsc = <5>;
+				pd = <1>;
+			};
+
+			clktetbtrc: clktetbtrc {
+				#clock-cells = <0>;
+				compatible = "davinci,psc-clk";
+				clocks = <&chipclk13>;
+				clock-output-names = "tetb-trc";
+				base-flags = "ignore-unused";
+				reg = <0x02350000 4096>;
+				lpsc = <6>;
+				pd = <1>;
+			};
+
+			clkddr30: clkddr30 {
+				#clock-cells = <0>;
+				compatible = "davinci,psc-clk";
+				clocks = <&chipclk12>;
+				clock-output-names = "ddr3-0";
+				base-flags = "ignore-unused";
+				reg = <0x02350000 4096>;
+				lpsc = <23>;
+				pd = <16>;
+			};
+
+			clkwdtimer0: clkwdtimer0 {
+				#clock-cells = <0>;
+				compatible = "davinci,psc-clk";
+				clocks = <&clkmodrst0>;
+				clock-output-names = "timer0";
+				status = "enabled";
+				reg = <0x02350000 4096>;
+			};
+
+			clkwdtimer1: clkwdtimer1 {
+				#clock-cells = <0>;
+				compatible = "davinci,psc-clk";
+				clocks = <&clkmodrst0>;
+				clock-output-names = "timer1";
+				status = "enabled";
+				reg = <0x02350000 4096>;
+			};
+
+			clkwdtimer2: clkwdtimer2 {
+				#clock-cells = <0>;
+				compatible = "davinci,psc-clk";
+				clocks = <&clkmodrst0>;
+				clock-output-names = "timer2";
+				status = "enabled";
+				reg = <0x02350000 4096>;
+			};
+
+			clkwdtimer3: clkwdtimer3 {
+				#clock-cells = <0>;
+				compatible = "davinci,psc-clk";
+				clocks = <&clkmodrst0>;
+				clock-output-names = "timer3";
+				status = "enabled";
+				reg = <0x02350000 4096>;
+			};
+
+			clktimer15: clktimer15 {
+				#clock-cells = <0>;
+				compatible = "davinci,psc-clk";
+				clocks = <&clkmodrst0>;
+				clock-output-names = "timer15";
+				status = "enabled";
+				reg = <0x02350000 4096>;
+			};
+
+			clkuart0: clkuart0 {
+				#clock-cells = <0>;
+				compatible = "davinci,psc-clk";
+				clocks = <&clkmodrst0>;
+				clock-output-names = "uart0";
+				status = "enabled";
+				reg = <0x02350000 4096>;
+			};
+
+			clkmodrst0: clkmodrst0 {
+				#clock-cells = <0>;
+				compatible = "davinci,psc-clk";
+				clocks = <&chipclk16>;
+				clock-output-names = "modrst0";
+				status = "enabled";
+				reg = <0x02350000 4096>;
+			};
+
+			clkaemif: clkaemif {
+				#clock-cells = <0>;
+				compatible = "davinci,psc-clk";
+				clocks = <&clkaemifspi>;
+				clock-output-names = "aemif";
+				status = "enabled";
+				reg = <0x02350000 4096>;
+			};
+
+			refclkmain: refclkmain {
+				#clock-cells = <0>;
+				compatible = "fixed-clock";
+				clock-frequency = <122880000>;
+				clock-output-names = "refclk-main";
+			};
+
+			refclkarm: refclkarm {
+				#clock-cells = <0>;
+				compatible = "fixed-clock";
+				clock-frequency = <122880000>;
+				clock-output-names = "refclk-arm";
+			};
+
+			refclkddr3: refclkddr3 {
+				#clock-cells = <0>;
+				compatible = "fixed-clock";
+				clock-frequency = <100000000>;
+				clock-output-names = "refclk-ddr3";
+			};
+		};
+
+		gic: interrupt-controller@02560000 {
+			compatible = "arm,cortex-a15-gic";
+			#interrupt-cells = <3>;
+			#size-cells = <0>;
+			#address-cells = <1>;
+			interrupt-controller;
+			reg = <0x02561000 0x1000>,
+			      <0x02562000 0x2000>;
+		};
+
+		ipcirq0: ipcirq0@26202bc {	/* ipc irq chip */
+			compatible = "ti,keystone-ipc-irq";
+			reg  = <0x026202a0 4	/* host ack register */
+			        0x02620260 4>;	/* ipc host interrupt generation
+						   register */
+			interrupts = <0 4 0x101>;
+				/* it should match the value in irqs.h */
+				/* following is the source id to irq mapping
+				   SRCS0 <-> ipc hw irq 0 ... SRCS27 <-> ipc hw
+				    irq 27 note that SRCS0 is bit 4 in ipc
+				    register */
+			interrupt-controller;
+			#interrupt-cells = <2>;
+		};
+
+		timer {
+			compatible = "arm,armv7-timer";
+			interrupts = <1 13 0xf08 1 14 0xf08>;
+		};
+
+		uart0:	serial@02530c00 {
+			compatible	= "ns16550a";
+			current-speed	= <115200>;
+			reg-shift	= <2>;
+			reg-io-width	= <4>;
+			reg		= <0x02530c00 0x100>;
+			clocks		= <&clkuart0>;
+			interrupts	= <0 277 0xf01>;
+		};
+
+		aemif@30000000 {
+			compatible = "ti,davinci-aemif";
+			#address-cells = <2>;
+			#size-cells = <1>;
+			reg = <0x21000A00 0x100>;
+			ranges = <2 0 0x30000000 0x08000000
+				3 0 0x34000000 0x04000000
+				4 0 0x38000000 0x04000000
+				5 0 0x3C000000 0x04000000
+				6 0 0x21000A00 0x100>;
+			clocks = <&clkaemif>;
+			clock-names = "aemif";
+
+			nand_cs:cs2@30000000 {
+				compatible = "ti,davinci-cs";
+				#address-cells = <1>;
+				#size-cells = <1>;
+				/* all timings in nanoseconds */
+				ti,davinci-cs-ta = <12>;
+				ti,davinci-cs-rhold = <6>;
+				ti,davinci-cs-rstrobe = <23>;
+				ti,davinci-cs-rsetup = <9>;
+				ti,davinci-cs-whold = <8>;
+				ti,davinci-cs-wstrobe = <23>;
+				ti,davinci-cs-wsetup = <8>;
+			};
+
+			nand@2,0 {
+				compatible = "ti,davinci-nand";
+				reg = <2 0x0 0x8000000
+					6 0x0 0x100>;
+				#address-cells = <1>;
+				#size-cells = <1>;
+				ti,davinci-chipselect = <0>;
+				ti,davinci-mask-ale = <0x2000>;
+				ti,davinci-mask-cle = <0x4000>;
+				ti,davinci-mask-chipsel = <0>;
+				ti,davinci-ecc-mode = "hw";
+				ti,davinci-ecc-bits = <4>;
+				ti,davinci-nand-use-bbt;
+				ti,davinci-no-subpage-write;
+				clocks = <&clkaemif>;
+				clock-names = "aemif";
+
+				partition@0 {
+					label = "u-boot";
+					reg = <0x0 0x100000>;
+					read-only;
+				};
+
+				partition@100000 {
+					label = "params";
+					reg = <0x100000 0x80000>;
+					read-only;
+				};
+
+				partition@180000 {
+					label = "ubifs";
+					reg = <0x180000 0x7fe80000>;
+				};
+			};
+		};
+
+		wdt: wdt@22f0080 {
+			compatible = "ti,davinci-wdt";
+			reg = <0x022f0080 0x80>;
+			clocks = <&clkwdtimer0>;
+			clock-names = "watchdog";
+		};
+
+		timer15: timer@22f0000 {
+			compatible = "ti,keystone-timer";
+			reg = <0x022f0000 0x80>;
+			interrupts = <0 110 0xf01>;
+			clocks = <&clktimer15>;
+		};
+
+                debugss: debugss {
+                        compatible = "ti,keystone-debugss";
+                        clocks = <&mainpllclk>, <&armpllclk>, <&clkdebugsstrc>, <&gemtraceclk>, <&clktetbtrc>;
+                        clock-names = "mainpllclock", "armpllclock", "debugssclock", "gemtraceclock", "tetbclock";
+                };
+
+		sysctrl {
+			/*
+			 * add all system level resources here that are used by
+			 * keystone soc code. Move rstctrl contents to this node
+			 */
+			compatible = "ti,keystone-sys";
+			reg = <0x21010000 0x200>; /* DDR3 controller reg */
+			interrupts = <0 24 0xf01>, /* L1L2 ECC error interrupt */
+				     <0 448 0xf04>; /* DDR3 ECC error interrupt */
+		};
+
+		pmu {
+			compatible = "arm,cortex-a15-pmu";
+			interrupts = <0 20 0xf01>,
+				     <0 21 0xf01>;
+		};
+	};
+};
+
