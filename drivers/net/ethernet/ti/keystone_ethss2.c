@@ -176,7 +176,7 @@
 
 /* CPSW SERDES */
 #define CPSW2_SERDES_MAX_NUM			2
-#define CPSW2_LANE_NUM_PER_SERDES		4
+#define CPSW2_SERDES_MAX_LANES			4
 
 struct cpts2_port_ts_ctl {
 	int	uni;
@@ -1095,6 +1095,12 @@ static const struct netcp2_ethtool_stat et_stats[] = {
 #define ETHTOOL_PORT_STATS_NUM (ARRAY_SIZE(et_stats)/CPSW2_NUM_PORTS)
 #define ETHTOOL_STATS_NUM(num_ports)	(ETHTOOL_PORT_STATS_NUM * (num_ports))
 
+struct cpsw2_serdes_priv {
+	u32				num_serdes;
+	int				init_serdes_at_probe;
+	struct kserdes_config		serdes_config[CPSW2_SERDES_MAX_NUM];
+};
+
 struct cpsw2_priv {
 	struct device			*dev;
 	struct clk			*cpgmac;
@@ -1138,7 +1144,6 @@ struct cpsw2_priv {
 
 	u64				 hw_stats[ARRAY_SIZE(et_stats)];
 	u32				 hw_stats_prev[ARRAY_SIZE(et_stats)];
-	int				 init_serdes_at_probe;
 	struct kobject			kobj;
 	struct kobject			tx_pri_kobj;
 	struct kobject			pvlan_kobj;
@@ -1148,10 +1153,7 @@ struct cpsw2_priv {
 	struct cpts			cpts;
 	int				cpts_registered;
 	int				force_no_hwtstamp;
-	void __iomem			*serdes_regs[CPSW2_SERDES_MAX_NUM];
-	u32				num_serdes;
-	u32				serdes_lanes;
-	struct serdes			serdes;
+	struct cpsw2_serdes_priv	serdes_priv;
 	u32				opened;
 };
 
@@ -3573,32 +3575,41 @@ static void cpsw2_update_cpts_dt_params(struct cpsw2_priv *cpsw_dev,
 }
 #endif /* CONFIG_TI_CPTS */
 
+/* returns number of serdeses configured */
 static int cpsw2_serdes_init(struct cpsw2_priv *cpsw_dev)
 {
-	int i, total_slaves, slaves;
-	int ret = 0;
+	struct cpsw2_serdes_priv *spriv = &cpsw_dev->serdes_priv;
+	struct kserdes_config *sconfig;
+	int i, serdes_configured = 0, ret = 0;
 
-	for (i = 0, total_slaves = cpsw_dev->num_slaves;
-	     i < cpsw_dev->num_serdes;
-	     i++, total_slaves -= cpsw_dev->serdes_lanes) {
-		if (total_slaves <= 0)
-			break;
-
-		if (total_slaves > cpsw_dev->serdes_lanes)
-			slaves = cpsw_dev->serdes_lanes;
-		else
-			slaves = total_slaves;
-
-		serdes_reset(cpsw_dev->serdes_regs[i], slaves);
-		ret = serdes_init(cpsw_dev->serdes_regs[i], &cpsw_dev->serdes,
-				  slaves);
+	for (i = 0; i < spriv->num_serdes; i++) {
+		sconfig = &spriv->serdes_config[i];
+		ret = kserdes_init(sconfig);
 		if (ret < 0) {
 			dev_err(cpsw_dev->dev,
-				"cpsw serdes initialization failed\n");
-			break;
+				"cpsw serdes %d initialization failed: %d\n",
+				i, ret);
+			/* don't break, continue to the next serdes */
+			continue;
 		}
+
+		ret = kserdes_lanes_enable(sconfig);
+		if (ret < 0) {
+			dev_err(cpsw_dev->dev,
+				"cpsw serdes %d lanes enable failed: %d\n",
+				i, ret);
+			/* don't break, continue to the next serdes */
+			continue;
+		}
+
+		dev_info(cpsw_dev->dev,
+			"cpsw serdes %d config done lanes(mask) 0x%x\n",
+			i, ret);
+
+		++serdes_configured;
 	}
-	return ret;
+
+	return serdes_configured;
 }
 
 static int cpsw2_tx_hook(int order, void *data, struct netcp_packet *p_info)
@@ -3674,7 +3685,7 @@ static int cpsw2_open(void *intf_priv, struct net_device *ndev)
 	for_each_slave(cpsw_intf, cpsw2_slave_stop, cpsw_intf);
 
 	/* Serdes init */
-	if (cpsw_dev->init_serdes_at_probe == 0)
+	if (cpsw_dev->serdes_priv.init_serdes_at_probe == 0)
 		cpsw2_serdes_init(cpsw_dev);
 
 	/* disable priority elevation and enable statistics on all ports */
@@ -3770,9 +3781,10 @@ static int cpsw2_remove(struct netcp_device *netcp_device, void *inst_priv)
 	BUG_ON(!list_empty(&cpsw_dev->cpsw_intf_head));
 
 	iounmap(cpsw_dev->ss_regs);
-	for (i = 0; i < cpsw_dev->num_serdes; i++)
-		if (cpsw_dev->serdes_regs[i])
-			iounmap(cpsw_dev->serdes_regs[i]);
+	for (i = 0; i < cpsw_dev->serdes_priv.num_serdes; i++) {
+		if (cpsw_dev->serdes_priv.serdes_config[i].regs)
+			iounmap(cpsw_dev->serdes_priv.serdes_config[i].regs);
+	}
 	memset(cpsw_dev, 0x00, sizeof(*cpsw_dev));	/* FIXME: Poison */
 	kfree(cpsw_dev);
 	return 0;
@@ -3884,6 +3896,64 @@ static int cpsw2_create_sysfs_entries(struct cpsw2_priv *cpsw_dev)
 	return 0;
 }
 
+static void cpsw2_set_serdes_lane_default(struct kserdes_lane_config *lc)
+{
+	memset(lc, 0, sizeof(*lc));
+	lc->ctrl_rate = KSERDES_QUARTER_RATE;
+}
+
+static void cpsw2_set_serdes_default(struct kserdes_config *sc)
+{
+	int i;
+
+	sc->clk_rate	= KSERDES_CLOCK_RATE_156P25M;
+	sc->link_rate	= KSERDES_LINK_RATE_1P25G;
+	sc->phy_type	= KSERDES_PHY_SGMII;
+	sc->lanes	= min(CPSW2_SERDES_MAX_LANES, KSERDES_MAX_LANES);
+	sc->rx_force_enable = 0;
+
+	for (i = 0; i < sc->lanes; i++)
+		cpsw2_set_serdes_lane_default(&(sc->lane[i]));
+}
+
+int cpsw2_get_serdeses_properties(struct device *dev,
+				  struct cpsw2_serdes_priv *spriv,
+				  struct device_node *node)
+{
+	struct device_node *serdeses, *serdes;
+	struct kserdes_config *sc;
+	u32 i;
+
+	serdeses = of_get_child_by_name(node, "serdeses");
+	if (!serdeses) {
+		dev_err(dev, "could not find serdeses node\n");
+		return -ENODEV;
+	}
+
+	if (of_property_read_u32(serdeses, "serdes-at-probe",
+				   &spriv->init_serdes_at_probe)) {
+		dev_info(dev, "use default serdes-at-probe: 1\n");
+		spriv->init_serdes_at_probe = 1;
+	}
+	dev_dbg(dev, "serdes-at-probe %u\n", spriv->init_serdes_at_probe);
+
+	i = 0;
+	for_each_child_of_node(serdeses, serdes) {
+		sc = &spriv->serdes_config[i];
+		cpsw2_set_serdes_default(sc);
+		if (kserdes_get_serdes_bindings("cpsw2", serdes, sc))
+			return -EINVAL;
+
+		if (++i >= CPSW2_SERDES_MAX_NUM)
+			break;
+	}
+
+	spriv->num_serdes = i;
+	of_node_put(serdeses);
+	dev_info(dev, "number of serdeses %u\n", spriv->num_serdes);
+	return 0;
+}
+
 static int cpsw2_probe(struct netcp_device *netcp_device,
 			struct device *dev,
 			struct device_node *node,
@@ -3913,91 +3983,9 @@ static int cpsw2_probe(struct netcp_device *netcp_device,
 	cpsw_dev->dev = dev;
 	cpsw_dev->netcp_device = netcp_device;
 
-	ret = of_property_read_u32(node, "num-serdes",
-				   &cpsw_dev->num_serdes);
-	if (ret < 0) {
-		dev_err(dev, "missing num-serdes parameter\n");
-		cpsw_dev->num_serdes = CPSW2_SERDES_MAX_NUM;
-	}
-	if (cpsw_dev->num_serdes > CPSW2_SERDES_MAX_NUM) {
-		dev_err(dev, "invalid num_serdes, should not be bigger than"
-			     " CPSW2_SERDES_MAX_NUM, reset the value to"
-			     " CPSW2_SERDES_MAX_NUM\n");
-		cpsw_dev->num_serdes = CPSW2_SERDES_MAX_NUM;
-	}
-	dev_dbg(dev, "num-serdes %u\n", cpsw_dev->num_serdes);
-
-	ret = of_property_read_u32(node, "serdes-lanes",
-				   &cpsw_dev->serdes_lanes);
-	if (ret < 0) {
-		dev_err(dev, "missing serdes-lanes parameter\n");
-		cpsw_dev->serdes_lanes = CPSW2_LANE_NUM_PER_SERDES;
-	}
-	dev_dbg(dev, "serdes-lanes %u\n", cpsw_dev->serdes_lanes);
-
-	if (of_property_read_u32_array(node, "serdes_reg", (u32 *)&(temp[0]),
-					cpsw_dev->num_serdes * 2)) {
-		dev_err(dev, "No serdes regs defined\n");
-		ret = -ENODEV;
+	ret = cpsw2_get_serdeses_properties(dev, &cpsw_dev->serdes_priv, node);
+	if (ret)
 		goto exit;
-	}
-
-	for (i = 0; i < cpsw_dev->num_serdes; i++) {
-		cpsw_dev->serdes_regs[i] = ioremap(temp[i*2], temp[i*2+1]);
-		if (!cpsw_dev->serdes_regs[i]) {
-			dev_err(dev, "can't map serdes regs\n");
-			ret = -ENOMEM;
-			goto exit;
-		}
-	}
-
-	ret = of_property_read_u32(node, "serdes-ref-clk",
-				   &cpsw_dev->serdes.clk);
-	if (ret < 0) {
-		dev_err(dev, "missing serdes-ref-clk parameter\n");
-		cpsw_dev->serdes.clk = SERDES_CLOCK_156P25M;
-	}
-	dev_dbg(dev, "serdes-ref-clk %u\n", cpsw_dev->serdes.clk);
-
-	ret = of_property_read_u32(node, "serdes-baud-rate",
-				   &cpsw_dev->serdes.rate);
-	if (ret < 0) {
-		dev_err(dev, "missing serdes-baud-rate parameter\n");
-		cpsw_dev->serdes.rate = SERDES_RATE_5G;
-	}
-	dev_dbg(dev, "serdes-baud-rate %u\n", cpsw_dev->serdes.rate);
-
-	ret = of_property_read_u32(node, "serdes-rate-mode",
-				   &cpsw_dev->serdes.rate_mode);
-	if (ret < 0) {
-		dev_err(dev, "missing serdes-rate-mode parameter\n");
-		cpsw_dev->serdes.rate_mode = SERDES_QUARTER_RATE;
-	}
-	dev_dbg(dev, "serdes-rate-mode %u\n", cpsw_dev->serdes.rate_mode);
-
-	ret = of_property_read_u32(node, "serdes-phy-intf",
-				   &cpsw_dev->serdes.intf);
-	if (ret < 0) {
-		dev_err(dev, "missing serdes-phy-intf parameter\n");
-		cpsw_dev->serdes.intf = SERDES_PHY_SGMII;
-	}
-	dev_dbg(dev, "serdes-phy-intf %u\n", cpsw_dev->serdes.intf);
-
-	ret = of_property_read_u32(node, "serdes-loopback",
-				   &cpsw_dev->serdes.loopback);
-	if (ret < 0) {
-		dev_err(dev, "missing serdes-loopback parameter\n");
-		cpsw_dev->serdes.loopback = 0;
-	}
-	dev_dbg(dev, "serdes-loopback %u\n", cpsw_dev->serdes.loopback);
-
-	ret = of_property_read_u32(node, "serdes_at_probe",
-				   &cpsw_dev->init_serdes_at_probe);
-	if (ret < 0) {
-		dev_err(dev, "missing serdes_at_probe parameter\n");
-		cpsw_dev->init_serdes_at_probe = 0;
-	}
-	dev_dbg(dev, "serdes_at_probe %u\n", cpsw_dev->init_serdes_at_probe);
 
 	ret = of_property_read_u32(node, "num_slaves", &cpsw_dev->num_slaves);
 	if (ret < 0) {
@@ -4113,7 +4101,7 @@ static int cpsw2_probe(struct netcp_device *netcp_device,
 	if (cpsw_dev->cpts_reg_ofs)
 		cpsw_dev->cpts.reg = regs + cpsw_dev->cpts_reg_ofs;
 
-	if (cpsw_dev->init_serdes_at_probe == 1)
+	if (cpsw_dev->serdes_priv.init_serdes_at_probe == 1)
 		cpsw2_serdes_init(cpsw_dev);
 
 	cpsw_dev->host_port = 0;
@@ -4179,9 +4167,11 @@ static int cpsw2_probe(struct netcp_device *netcp_device,
 exit:
 	if (cpsw_dev->ss_regs)
 		iounmap(cpsw_dev->ss_regs);
-	for (i = 0; i < cpsw_dev->num_serdes; i++)
-		if (cpsw_dev->serdes_regs[i])
-			iounmap(cpsw_dev->serdes_regs[i]);
+
+	for (i = 0; i < cpsw_dev->serdes_priv.num_serdes; i++) {
+		if (cpsw_dev->serdes_priv.serdes_config[i].regs)
+			iounmap(cpsw_dev->serdes_priv.serdes_config[i].regs);
+	}
 
 	*inst_priv = NULL;
 	kfree(cpsw_dev);

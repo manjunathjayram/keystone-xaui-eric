@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 Texas Instruments Incorporated
+ * Copyright (C) 2015 Texas Instruments Incorporated
  * Author: WingMan Kwok <w-kwok2@ti.com>
  *
  * This program is free software; you can redistribute it and/or
@@ -12,12 +12,12 @@
  * GNU General Public License for more details.
  */
 
-struct k2serdes_fw_entry {
+struct kserdes_fw_entry {
 	u32 reg_ofs;
 	u32 data;
 };
 
-struct k2serdes_fw_entry k2serdes_firmware[] = {
+struct kserdes_fw_entry kserdes_firmware[] = {
 {0x1fc4, 0x00000000},
 {0x1fcc, 0x0092b602},
 {0x1fc4, 0x0000b690},
