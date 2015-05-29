@@ -15,53 +15,102 @@
 #ifndef __TI_KEYSTONE_SERDES_H__
 #define __TI_KEYSTONE_SERDES_H__
 
-/* SERDES Reference clock */
-enum SERDES_CLOCK {
-	SERDES_CLOCK_100M,		/* 100 MHz */
-	SERDES_CLOCK_122P88M,		/* 122.88 MHz */
-	SERDES_CLOCK_125M,		/* 125 MHz */
-	SERDES_CLOCK_156P25M,		/* 156.25 MHz */
-	SERDES_CLOCK_312P5M,		/* 312.5 MHz */
+/* SERDES Reference clock KHz */
+enum KSERDES_CLOCK_RATE {
+	KSERDES_CLOCK_RATE_100M		= 100000,
+	KSERDES_CLOCK_RATE_122P88M	= 122880,
+	KSERDES_CLOCK_RATE_125M		= 125000,
+	KSERDES_CLOCK_RATE_153P6M	= 153600,
+	KSERDES_CLOCK_RATE_156P25M	= 156250,
+	KSERDES_CLOCK_RATE_312P5M	= 312500,
 };
 
-/* SERDES Lane Baud Rate */
-enum SERDES_RATE {
-	SERDES_RATE_4P9152G,		/* 4.9152 GBaud */
-	SERDES_RATE_5G,			/* 5 GBaud */
-	SERDES_RATE_6P144G,		/* 6.144 GBaud */
-	SERDES_RATE_6P25G,		/* 6.25 GBaud */
-	SERDES_RATE_10p3125g,		/* 10.3215 GBaud */
-	SERDES_RATE_12p5g,		/* 12.5 GBaud */
+/* SERDES Link Rate Kbps */
+enum KSERDES_LINK_RATE {
+	KSERDES_LINK_RATE_1P25G		=  1250000,
+	KSERDES_LINK_RATE_3P125G	=  3125000,
+	KSERDES_LINK_RATE_4P9152G	=  4915200,
+	KSERDES_LINK_RATE_5G		=  5000000,
+	KSERDES_LINK_RATE_6P144G	=  6144000,
+	KSERDES_LINK_RATE_6P25G		=  6250000,
+	KSERDES_LINK_RATE_7P3728G	=  7372800,
+	KSERDES_LINK_RATE_9P8304G	=  9830400,
+	KSERDES_LINK_RATE_10G		= 10000000,
+	KSERDES_LINK_RATE_10P3125G	= 10312500,
+	KSERDES_LINK_RATE_12P5G		= 12500000,
 };
 
-/* SERDES Lane Rate Mode */
-enum SERDES_RATE_MODE {
-	SERDES_FULL_RATE,
-	SERDES_HALF_RATE,
-	SERDES_QUARTER_RATE,
+/* SERDES Lane Control Rate */
+enum KSERDES_LANE_CTRL_RATE {
+	KSERDES_FULL_RATE,
+	KSERDES_HALF_RATE,
+	KSERDES_QUARTER_RATE,
 };
 
-/* SERDES PHY TYPE */
-enum SERDES_INTERFACE {
-	SERDES_PHY_SGMII,
-	SERDES_PHY_PCSR,		/* XGE SERDES */
+enum KSERDES_PHY_TYPE {
+	KSERDES_PHY_XGE,
+	KSERDES_PHY_SGMII,
+	KSERDES_PHY_PCIE,
+	KSERDES_PHY_HYPERLINK,
 };
 
-struct serdes {
-	enum SERDES_CLOCK	clk;
-	enum SERDES_RATE	rate;
-	enum SERDES_RATE_MODE	rate_mode;
-	enum SERDES_INTERFACE	intf;
-	u32			loopback;
+#define KSERDES_FLAG_ENABLE	0x1
+
+struct kserdes_tx_coeff {
+	u32	c1;
+	u32	c2;
+	u32	cm;
+	u32	att;
+	u32	vreg;
 };
 
-void serdes_reset(void __iomem *serdes_regs, u32 num_lanes);
-void serdes_lane_reset(void __iomem *serdes_regs, bool reset, u32 lane);
-void serdes_lane_enable(void __iomem *serdes_regs, struct serdes *serdes,
-			u32 lane);
-void serdes_lane_disable(void __iomem *serdes_regs, u32 lane);
-int serdes_init(void __iomem *serdes_regs, struct serdes *serdes,
-		 u32 num_lanes);
+struct kserdes_equalizer {
+	u32	att;
+	u32	boost;
+};
 
+struct kserdes_lane_config {
+	u32				enable;
+	u32				ctrl_rate;
+	struct kserdes_tx_coeff		tx_coeff;
+	struct kserdes_equalizer	rx_start;
+	struct kserdes_equalizer	rx_force;
+	u32				loopback;
+};
+
+#define KSERDES_MAX_LANES		4
+
+struct kserdes_fw_config {
+	bool				on;
+	u32				rate;
+	u32				link_loss_wait;
+	u32				lane_seeds;
+	u32				fast_train;
+	u32				active_lane;
+	u32				c1, c2, cm, attn, boost, dlpf, cdrcal;
+	u32				lane_config[KSERDES_MAX_LANES];
+};
+
+struct kserdes_config {
+	enum KSERDES_CLOCK_RATE		clk_rate;
+	enum KSERDES_PHY_TYPE		phy_type;
+	u32				lanes;
+	bool				debug;
+	void __iomem			*regs;
+	void __iomem			*sw_regs;
+	/* non-fw specific */
+	enum KSERDES_LINK_RATE		link_rate;
+	u32				rx_force_enable;
+	struct kserdes_lane_config	lane[KSERDES_MAX_LANES];
+	/* fw specific */
+	bool				firmware;
+	struct kserdes_fw_config	fw;
+};
+
+int kserdes_init(struct kserdes_config *sc);
+int kserdes_lanes_enable(struct kserdes_config *sc);
+int kserdes_get_serdes_bindings(const char *dev,
+				struct device_node *np,
+				struct kserdes_config *sc);
 #endif
 

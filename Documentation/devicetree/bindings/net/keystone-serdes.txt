@@ -1,0 +1,160 @@
+This document describes the device tree bindings associated with the
+Keystone gbe and 10gbe ethernet switch SerDes.
+
+Per serdes configurations:
+serdes-at-probe:	Start serdes during driver probe.
+refclk-khz:	 	The reference clock rate in khz.
+link-rate-kbps:		The connection link rate in kbps.
+phy-type:		"xge", "sgmii"
+max-lanes:		Total number of serdes lanes.
+
+Per lane configurations:
+	rx-start:	rx equalizer attenuation and boost
+	rx-force:	force rx enable of attenuation and boost
+	tx-coeff:	tx coefficients - c1, c2, cm, attenuation and vreg
+	control-rate:	- 0 -> full rate
+			- 1 -> half rate
+			- 2 -> quart rate
+
+For 10gbe, there is an option of using an 10G-KR firmware.
+When the firmware is active, the individual lanes can be configured
+with the following:
+
+lane:		Lane number.
+		- 0 -> Lane 0 (default)
+		- 1 -> Lane 1
+rate:		Link rate:
+		- 0 -> 1G/10G (default)
+		- 1 -> Force 1G
+		- 2 -> Force 10G
+autonegotiate:	Set to enable link rate autonegotiation when rate == 1G/10G.
+		- 0 -> disabled (default)
+		- 1 -> enabled
+tx_pause:	Enable TX pause frame generation.
+		- 0 -> disabled (default)
+		- 1 -> enabled
+rx_pause:	Enable RX pause frame generation.
+		- 0 -> disabled (default)
+		- 1 -> enabled
+10g_train:	Enable 10G link training.
+		- 0 -> disabled (default)
+		- 1 -> enabled
+fec:		Enable Forward Error Correction.
+		- 0 -> disabled (default)
+		- 1 -> enabled
+
+The entire serdes node needs to be included under the cpsw{} or cpswx{} node.
+
+Examples provided below.
+
+gbe example:
+netcp {
+	...
+	cpsw: cpsw@2090000 {
+		...
+		serdeses {
+			serdes-at-probe    = <1>;
+
+			serdes0 {
+				regs               = <0x0232a000 0x2000>;
+				refclk-khz         = <156250>;
+				link-rate-kbps     = <1250000>;
+				phy-type           = "sgmii";
+				max-lanes          = <4>;
+				/*rx-force-enable;*/
+				/*debug;*/
+				lane0 {
+					/*disable;*/
+					/*loopback;*/
+					control-rate    = <2>; /* quart */
+					rx-start        = <7 5>;
+					rx-force        = <1 1>;
+					tx-coeff        = <0 0 0 12 4>;
+						/* c1 c2 cm att vreg */
+				};
+				lane1 {
+					/*disable;*/
+					/*loopback;*/
+					control-rate    = <2>; /* quart */
+					rx-start        = <7 5>;
+					rx-force        = <1 1>;
+					tx-coeff        = <0 0 0 12 4>;
+						/* c1 c2 cm att vreg */
+				};
+			};
+		};
+	}
+};
+
+
+10gbe Non-firmware enabled example:
+netcpx {
+	...
+	cpswx {
+		...
+		serdeses {
+			serdes-at-probe = <1>;
+                        serdes0 {
+                                regs               = <0x0231e000 0x2000>;
+                                refclk-khz         = <156250>;
+                                link-rate-kbps     = <10312500>;
+                                phy-type           = "xge";
+                                max-lanes          = <2>;
+                                /*debug;*/
+
+                                /*rx-force-enable;*/
+                                lane0 {
+                                        /*disable;*/
+                                        /*loopback;*/
+                                        rx-start        = <7 5>;
+                                        rx-force        = <1 1>;
+                                        tx-coeff        = <2 0 0 12 4>;
+                                                       /* c1 c2 cm att vreg */
+                                        control-rate    = <0>; /* full */
+                                };
+                                lane1 {
+                                        /*disable;*/
+                                        /*loopback;*/
+                                        rx-start        = <7 5>;
+                                        rx-force        = <1 1>;
+                                        tx-coeff        = <2 0 0 12 4>;
+                                                       /* c1 c2 cm att vreg */
+                                        control-rate    = <0>; /* full */
+                                };
+			}
+		};
+	};
+};
+
+10gbe 10G-KR firmware enabled example:
+netcpx {
+	...
+	cpswx {
+		...
+		serdeses {
+			serdes-at-probe    = <1>;
+
+                        serdes0 {
+                                regs               = <0x0231e000 0x2000>;
+                                refclk-khz         = <156250>;
+                                link-rate-kbps     = <10312500>;
+
+				firmware {
+					status = "ok";
+					lane-0 {
+						status = "ok";
+						lane = <0>;
+						rate = <0>;
+						autonegotiate;
+						10g_train;
+					};
+					lane-1 {
+						status = "disabled";
+						lane = <1>;
+						rate = <0>;
+					};
+				};
+			};
+		};
+	};
+};
