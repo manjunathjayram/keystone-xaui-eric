@@ -1193,7 +1193,7 @@ static int keystone_rio_hw_init(u32 baud, struct keystone_rio_data *krio_priv)
 		     &krio_priv->serial_port_regs->sp_link_timeout_ctl);
 
 	/* Set response timeout value */
-	__raw_writel(0x000FFF00,
+	__raw_writel(0x01000000,
 		     &krio_priv->serial_port_regs->sp_rsp_timeout_ctl);
 
 	/* Allows SELF_RESET and PWDN_PORT resets to clear stcky reg bits */
