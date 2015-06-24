@@ -309,6 +309,7 @@ struct keystone_rio_packet {
 	u32				epib[4];
 	u32				psdata[2];
 	u32				mbox;
+	u32                             slot;
 	void			       *buff;
 	struct keystone_rio_data       *priv;
 	enum dma_status			status;
@@ -320,8 +321,7 @@ struct keystone_rio_mbox_info {
 	u32               id;  /* mbox */
 	u32               running;
 	u32               entries;
-	u32               slot;
-	spinlock_t        lock;
+	atomic_t          slot;
 	void             *dev_id;
 	int		  rxu_map_id[2];
 };
@@ -932,6 +932,7 @@ struct keystone_rio_fabric_regs {
 extern int rio_basic_attach(void);
 
 /* Message Passing management functions */
+extern void keystone_rio_chan_work_handler(unsigned long data);
 extern int keystone_rio_open_outb_mbox(struct rio_mport *mport,
 				       void *dev_id,
 				       int mbox,
