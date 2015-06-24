@@ -79,7 +79,7 @@ static void keystone_rio_rxpool_free(void *arg,
 	return;
 }
 
-static void keystone_rio_chan_work_handler(unsigned long data)
+void keystone_rio_chan_work_handler(unsigned long data)
 {
 	struct keystone_rio_data *krio_priv = (struct keystone_rio_data *)data;
 	struct keystone_rio_rx_chan_info *krx_chan;
@@ -197,9 +197,6 @@ static int keystone_rio_mp_inb_init(int mbox,
 			"error configuring Rx channel, err %d\n", err);
 		goto fail;
 	}
-
-	tasklet_init(&krio_priv->task, keystone_rio_chan_work_handler,
-		     (unsigned long) krio_priv);
 
 	dma_set_notify(krx_chan->dma_channel,
 		       keystone_rio_rx_notify,
@@ -703,9 +700,8 @@ int keystone_rio_open_outb_mbox(struct rio_mport *mport,
 	tx_mbox->entries = entries;
 	tx_mbox->port    = mport;
 	tx_mbox->id      = mbox;
-	tx_mbox->slot    = 0;
 	tx_mbox->running = 1;
-	spin_lock_init(&tx_mbox->lock);
+	atomic_set(&tx_mbox->slot, 0);
 
 	return 0;
 }
@@ -773,27 +769,9 @@ static void keystone_rio_tx_complete(void *data)
 #endif
 
 	if (mbox->running) {
-		/*
-		 * Client is in charge of freeing the associated buffers
-		 * because we do not have explicit hardware ring but queues, we
-		 * do not know where we are in the sw ring, let use fake slot.
-		 * But the semantic hereafter is dangerous in case of re-order:
-		 * bad buffer may be released...
-		 */
-		u32 slot;
-
-		spin_lock(&mbox->lock);
-
-		/* Move slot index to the next message to be sent */
-		mbox->slot++;
-		if (mbox->slot == mbox->entries)
-			mbox->slot = 0;
-		slot = mbox->slot;
-
-		spin_unlock(&mbox->lock);
-
 		port->outb_msg[mbox_id].mcback(port, dev_id,
-					       mbox_id, slot);
+					       mbox_id, p_info->slot %
+					       mbox->entries);
 	}
 end:
 	kfree(p_info);
@@ -820,6 +798,8 @@ int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 	struct keystone_rio_data *krio_priv = mport->priv;
 	struct keystone_rio_tx_chan_info *ktx_chan =
 		&(krio_priv->tx_channels[mbox]);
+	struct keystone_rio_mbox_info *ktx_mbox =
+		&(krio_priv->tx_mbox[mbox]);
 	struct dma_async_tx_descriptor *desc;
 	struct keystone_rio_packet *p_info;
 	u32 plen;
@@ -827,7 +807,7 @@ int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 	int ret = 0;
 	void *send_buffer = NULL;
 
-	if (unlikely((krio_priv->tx_mbox[mbox].port != mport) || (!rdev)))
+	if (unlikely((ktx_mbox->port != mport) || (!rdev)))
 		return -EINVAL;
 
 	/*
@@ -936,6 +916,7 @@ int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 
 	desc->callback_param = p_info;
 	desc->callback = keystone_rio_tx_complete;
+	p_info->slot   = atomic_read(&ktx_mbox->slot);
 	p_info->cookie = dmaengine_submit(desc);
 
 	if (dma_submit_error(p_info->cookie)) {
@@ -946,6 +927,15 @@ int keystone_rio_hw_add_outb_message(struct rio_mport *mport,
 		ret = -EBUSY;
 		goto error;
 	}
+
+	/*
+	 * Move slot index to the next message to be sent.
+	 * Client is in charge of freeing the associated buffers
+	 * because we do not have explicit hardware ring but queues, we
+	 * do not know where we are in the sw ring. Let's try to keep
+	 * slot in sync with client.
+	 */
+	atomic_inc(&ktx_mbox->slot);
 
 	return ret;
 

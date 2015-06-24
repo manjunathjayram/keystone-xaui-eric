@@ -3228,6 +3228,10 @@ static int keystone_rio_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&krio_priv->pe_work, keystone_rio_pe_dpc);
 	INIT_WORK(&krio_priv->reset_work, keystone_rio_reset_dpc);
 
+	tasklet_init(&krio_priv->task, keystone_rio_chan_work_handler,
+		     (unsigned long) krio_priv);
+
+
 #ifdef CONFIG_RAPIDIO_DMA_ENGINE
 	for (i = 0; i < KEYSTONE_RIO_LSU_NUM; i++)
 		INIT_LIST_HEAD(&krio_priv->dma_channels[i]);
