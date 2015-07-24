@@ -191,6 +191,8 @@ netcp {
 		multi-interface;
 		interface-0;
 		interface-1;
+		/* Optional: Specify NATT port for fragmentation detection */
+		natt-port = <0>;
 		tx_queue_depth = <1024>;
 	};
 
