@@ -46,6 +46,7 @@ struct sa_intf {
 	struct net_device		*net_device;
 	char				 tx_chan_name[24];
 	struct netcp_tx_pipe		 tx_pipe;
+	u32				 natt_port;
 	u32				 netcp_ver; /* 0: NETCP 1.0, 1: NSS
 						       1.0 */
 };
@@ -146,6 +147,9 @@ static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 
 #define SA_RXHOOK_ORDER	30
 
+#define ETH_TYPE_OFFSET	12
+#define ETH_HDR_LEN	14
+
 /* Version 0 of sa_rx_hook definitions (for NETCP 1.0 on K2HK) */
 #define BITS(x) (BIT(x) - 1)
 #define BITMASK(n, s)          (BITS(n) << (s))
@@ -153,31 +157,83 @@ static int sa_tx_hook(int order, void *data, struct netcp_packet *p_info)
 #define SA_IS_FLAG_FRAG_MASK	BIT(3)
 #define SA_NUM_IP_HEADERS_SHIFT	8
 #define SA_NUM_IP_HEADERS_MASK BITMASK(3, SA_NUM_IP_HEADERS_SHIFT)
+#define SA_NUM_VLAN_HEADERS_SHIFT	14
+#define SA_NUM_VLAN_HEADERS_MASK BITMASK(2, SA_NUM_VLAN_HEADERS_SHIFT)
 
 static int sa_rx_hook(int order, void *data, struct netcp_packet *p_info)
 {
 	struct sk_buff *skb = p_info->skb;
+	struct sa_intf *sa = data;
 
-	/* Check to see if this is an ESP packet, if not just return.
-	 * ESP packet indication is in word 3, bit 25 of psdata
-	 * This is valid only for first fragment.
+	/* See if packet is a fragment, if it is not then return out.
+	 * This is word 3, bit 3 of metadata psdata
 	 */
-	if (!(p_info->psdata[3] & SA_IS_IPSEC_ESP_MASK))
+	if (!(p_info->psdata[3] & SA_IS_FLAG_FRAG_MASK))
 		return 0;
 
-	/* Make sure there is just one IP header. If 2 ipheaders then we
-	 * passed IPSEC
+	/* Make sure there is just one IP header. If 2 ipheaders then
+	 * we passed IPSEC; so return out.
 	 */
 	if (((p_info->psdata[3] & SA_NUM_IP_HEADERS_MASK) >>
-	     SA_NUM_IP_HEADERS_SHIFT) != 1)
+	      SA_NUM_IP_HEADERS_SHIFT) != 1)
 		return 0;
 
-	/* See if packet is the first fragment, if so, mark the local_df
-	 * flag of skb which will be checked by the ipsecmgr kernel module
-	 * to indicate packet has not been decrypted by NETCP SA.
+	/* Check to see if this is an ESP packet.
+	 * ESP packet indication is in word 3, bit 25 of psdata
 	 */
-	if ((p_info->psdata[3] & SA_IS_FLAG_FRAG_MASK))
+	if (p_info->psdata[3] & SA_IS_IPSEC_ESP_MASK) {
+
+		/* Packet is ESP, a fragment and does not have 2
+		 * ipheaders, so set local_df flag
+		 */
 		skb->local_df = 1;
+		return 0;
+	}
+
+	/* If we have a NAT-T port set, check for NAT-T packet */
+	if (sa->natt_port) {
+		struct iphdr *ip_hdr;
+		uint16_t e_type;
+		int vlan;
+
+		/* Count how many VLAN headers we have */
+		vlan = ((p_info->psdata[3] & SA_NUM_VLAN_HEADERS_MASK) >>
+			 SA_NUM_VLAN_HEADERS_SHIFT);
+
+		/* Return out for IPv6, nothing to be done.
+		 * Ethertype follows the MAC and optional VLAN tags.
+		 */
+		e_type = *((uint16_t *)skb->data +
+				     ((ETH_TYPE_OFFSET / 2) + (vlan << 1)));
+		if (ntohs(e_type) == ETH_P_IPV6)
+			return 0;
+
+		/* Skip over Eth header to IP header.
+		 * Eth header is 14 bytes + (4 bytes per VLAN header).
+		 */
+		ip_hdr = (struct iphdr *)(skb->data +
+					 (ETH_HDR_LEN + (vlan << 2)));
+
+		/* Check if the protocol is UDP */
+		if (ip_hdr->protocol == IPPROTO_UDP) {
+
+			/* Get the UDP header.
+			 * It follows the IP header + optional words;
+			 * calculate offset with IHL
+			 */
+			struct udphdr *udp_hdr;
+			udp_hdr = (struct udphdr *)
+				  ((u_char *)ip_hdr + (ip_hdr->ihl << 2));
+
+			/* Check if the source or destination ports ==
+			 * NAT-T port. If so, it is a NAT-T packet;
+			 * set local_df flag
+			 */
+			if (ntohs(udp_hdr->dest) == sa->natt_port  ||
+			    ntohs(udp_hdr->source) == sa->natt_port)
+				skb->local_df = 1;
+		}
+	}
 
 	return 0;
 }
@@ -187,31 +243,84 @@ static int sa_rx_hook(int order, void *data, struct netcp_packet *p_info)
 #define SA_IS_FLAG_FRAG_MASK_VER1	BIT(19)
 #define SA_NUM_IP_HEADERS_SHIFT_VER1	0
 #define SA_NUM_IP_HEADERS_MASK_VER1	BITMASK(3, SA_NUM_IP_HEADERS_SHIFT_VER1)
+#define SA_NUM_VLAN_HEADERS_SHIFT_VER1	6
+#define SA_NUM_VLAN_HEADERS_MASK_VER1	\
+				BITMASK(2, SA_NUM_VLAN_HEADERS_SHIFT_VER1)
 
 static int sa_rx_hook_ver1(int order, void *data, struct netcp_packet *p_info)
 {
 	struct sk_buff *skb = p_info->skb;
+	struct sa_intf *sa = data;
 
-	/* Check to see if this is an ESP packet, if not just return.
-	 * ESP packet indication is in word 3, bit 25 of psdata
-	 * This is valid only for first fragment.
+	/* See if packet is a fragment, if it is not then return out.
+	 * This is word 0, bit 19 of metadata psdata
 	 */
-	if (!(p_info->psdata[3] & SA_IS_IPSEC_ESP_MASK_VER1))
+	if (!(p_info->psdata[0] & SA_IS_FLAG_FRAG_MASK_VER1))
 		return 0;
 
-	/* make sure there is just one IP header.  If 2 ipheaders then we
-	 * passed IPSEC
+	/* Make sure there is just one IP header. If 2 ipheaders then
+	 * we passed IPSEC; so return out.
 	 */
 	if (((p_info->psdata[4] & SA_NUM_IP_HEADERS_MASK_VER1) >>
 	     SA_NUM_IP_HEADERS_SHIFT_VER1) != 1)
 		return 0;
 
-	/* See if packet is the first fragment, if so, mark the local_df
-	 * flag of skb which will be checked by the ipsecmgr kernel module
-	 * to indicate packet has not been decrypted by NETCP SA.
+	/* Check to see if this is an ESP packet.
+	 * ESP packet indication is in word 3, bit 8 of psdata
 	 */
-	if (p_info->psdata[0] & SA_IS_FLAG_FRAG_MASK_VER1)
+	if (p_info->psdata[3] & SA_IS_IPSEC_ESP_MASK_VER1) {
+
+		/* Packet is ESP, a fragment and does not have 2
+		 * ipheaders, so set local_df flag
+		 */
 		skb->local_df = 1;
+		return 0;
+	}
+
+	/* If we have a NAT-T port set, check for NAT-T packet */
+	if (sa->natt_port) {
+		struct iphdr *ip_hdr;
+		uint16_t e_type;
+		int vlan;
+
+		/* Count how many VLAN headers we have */
+		vlan = ((p_info->psdata[4] & SA_NUM_VLAN_HEADERS_MASK_VER1) >>
+			 SA_NUM_VLAN_HEADERS_SHIFT_VER1);
+
+		/* Return out for IPv6, nothing to be done.
+		 * Ethertype follows the MAC and optional VLAN tags.
+		 */
+		e_type = *((uint16_t *)skb->data +
+				     ((ETH_TYPE_OFFSET / 2) + (vlan << 1)));
+		if (ntohs(e_type) == ETH_P_IPV6)
+			return 0;
+
+		/* Skip over Eth header to IP header.
+		 * Eth header is 14 bytes + (4 bytes per VLAN header).
+		 */
+		ip_hdr = (struct iphdr *)(skb->data +
+					 (ETH_HDR_LEN + (vlan << 2)));
+
+		/* Check if the protocol is UDP */
+		if (ip_hdr->protocol == IPPROTO_UDP) {
+
+			/* Get the UDP header.
+			 * It follows the IP header; calculate with IHL
+			 */
+			struct udphdr *udp_hdr;
+			udp_hdr = (struct udphdr *)
+				  ((u_char *)ip_hdr + (ip_hdr->ihl << 2));
+
+			/* check if the source or destination ports ==
+			 * NAT-T port. If so, it is a NAT-T packet;
+			 * set local_df flag
+			 */
+			if (ntohs(udp_hdr->dest) == sa->natt_port  ||
+			    ntohs(udp_hdr->source) == sa->natt_port)
+				skb->local_df = 1;
+		}
+	}
+
 	return 0;
 }
 
@@ -283,6 +392,11 @@ static int sa_attach(void *inst_priv, struct net_device *ndev, void **intf_priv)
 		netcp_txpipe_init(&sa_intf->tx_pipe, netdev_priv(ndev),
 				  sa_intf->tx_chan_name, sa_dev->tx_queue_depth);
 		dev_dbg(sa_dev->dev, "keystone-sa attached for %s\n", node_name);
+
+		ret = of_property_read_u32(sa_dev->node, "natt-port",
+					   &sa_intf->natt_port);
+		if (ret < 0)
+			sa_intf->natt_port = 0;
 
 		ret = of_property_read_u32(sa_dev->node, "netcp_ver",
 					   &sa_intf->netcp_ver);
