@@ -47,8 +47,18 @@ MODULE_PARM_DESC(
 static bool enable_ports = 1;
 module_param(enable_ports, bool, 0);
 MODULE_PARM_DESC(
-	enable_port,
+	enable_ports,
 	"Enable RapidIO ports at boottime (default = 1)");
+
+/*
+ * When using some RIO switches like CPS gen2, error recovery must be
+ * disabled. Local controller reset and reset symbol will be used instead.
+ */
+static bool error_recovery = 1;
+module_param(error_recovery, bool, 0);
+MODULE_PARM_DESC(
+	error_recovery,
+	"Use RapidIO error recovery mechanism (default = 1)");
 
 static void dbell_handler(
 	struct keystone_rio_data *krio_priv);
@@ -105,7 +115,8 @@ static irqreturn_t lsu_interrupt_handler(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static void reset_symbol_handler(struct keystone_rio_data *krio_priv)
+static void keystone_rio_reset_symbol_handler(
+	struct keystone_rio_data *krio_priv)
 {
 	/* Disable SerDes lanes asap to generate a loss of link */
 	krio_priv->serdes.ops->disable_lanes(krio_priv->board_rio_cfg.lanes,
@@ -113,6 +124,40 @@ static void reset_symbol_handler(struct keystone_rio_data *krio_priv)
 
 	/* Schedule SRIO peripheral reinitialization */
 	schedule_work(&krio_priv->reset_work);
+}
+
+static inline void keystone_rio_send_reset(
+	struct keystone_rio_data *krio_priv,
+	u32 port)
+{
+	/* Send a reset control symbol on appropriate port */
+	__raw_writel(0x3,
+		     &krio_priv->serial_port_regs->sp[port].link_maint_req);
+}
+
+static void keystone_rio_port_error(struct keystone_rio_data *krio_priv,
+				    u32 port)
+{
+	if (error_recovery) {
+		dev_dbg(krio_priv->dev, "do recovery of port %d\n", port);
+
+		/* Add port to failed ports and schedule immediate recovery */
+		krio_priv->pe_cnt =
+			krio_priv->board_rio_cfg.port_register_timeout /
+			(KEYSTONE_RIO_REGISTER_DELAY / HZ);
+		krio_priv->pe_ports |= BIT(port);
+
+		schedule_delayed_work(&krio_priv->pe_work, 0);
+	} else {
+		dev_dbg(krio_priv->dev, "send reset symbol to port %d\n", port);
+
+		/* Send reset control symbol to peer */
+		if (krio_priv->board_rio_cfg.ports & BIT(port))
+			keystone_rio_send_reset(krio_priv, port);
+
+		/* Reset local ports (all) */
+		keystone_rio_reset_symbol_handler(krio_priv);
+	}
 }
 
 static void special_interrupt_handler(int ics,
@@ -143,20 +188,13 @@ static void special_interrupt_handler(int ics,
 	case KEYSTONE_RIO_PORT2_ERROR_INT:
 	case KEYSTONE_RIO_PORT3_ERROR_INT:
 		/* Port error */
-
-		/* Add port to failed ports and schedule immediate recovery */
-		krio_priv->pe_cnt =
-			krio_priv->board_rio_cfg.port_register_timeout /
-			(KEYSTONE_RIO_REGISTER_DELAY / HZ);
-		krio_priv->pe_ports |= BIT(ics - KEYSTONE_RIO_PORT0_ERROR_INT);
-
-		schedule_delayed_work(&krio_priv->pe_work, 0);
+		keystone_rio_port_error(krio_priv,
+					ics - KEYSTONE_RIO_PORT0_ERROR_INT);
 		break;
 
 	case KEYSTONE_RIO_RESET_INT:
 		/* Device reset interrupt on any port */
-		reset_symbol_handler(krio_priv);
-
+		keystone_rio_reset_symbol_handler(krio_priv);
 		break;
 	}
 	return;
@@ -1730,7 +1768,8 @@ static int keystone_rio_port_status(int port,
 			goto port_error;
 
 		/* Check if we need to retrieve the corresponding remote port */
-		if (krio_priv->board_rio_cfg.ports_remote[port] < 0) {
+		if ((error_recovery) &&
+		    (krio_priv->board_rio_cfg.ports_remote[port] < 0)) {
 			int rport;
 
 			rport = keystone_rio_get_remote_port(port, krio_priv);
