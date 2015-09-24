@@ -156,7 +156,8 @@ static void keystone_rio_port_error(struct keystone_rio_data *krio_priv,
 			keystone_rio_send_reset(krio_priv, port);
 
 		/* Reset local ports (all) */
-		keystone_rio_reset_symbol_handler(krio_priv);
+		if (!krio_priv->ports_registering)
+			keystone_rio_reset_symbol_handler(krio_priv);
 	}
 }
 
