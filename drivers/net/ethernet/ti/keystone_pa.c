@@ -946,7 +946,7 @@ static void tstamp_complete(u32 context, struct pa_packet *p_info)
 	struct skb_shared_hwtstamps *sh_hw_tstamps;
 	u64			 pa_ns;
 	u64			 sys_time;
-	int			 err;
+	int			 err = 0;
 
 	pend = tstamp_remove_pending(context);
 	if (!pend)
@@ -956,7 +956,6 @@ static void tstamp_complete(u32 context, struct pa_packet *p_info)
 	skb = pend->skb;
 	if (!p_info) {
 		dev_warn(pa_dev->dev, "Timestamp completion timeout\n");
-		kfree_skb(skb);
 	} else {
 		pa_ns = tstamp_raw_to_ns(pa_dev,
 				p_info->epib[0], p_info->epib[2]);
@@ -973,9 +972,11 @@ static void tstamp_complete(u32 context, struct pa_packet *p_info)
 		serr->ee.ee_origin = SO_EE_ORIGIN_TIMESTAMPING;
 
 		err = sock_queue_err_skb(pend->sock, skb);
-		if (err)
-			kfree_skb(skb);
 	}
+
+	sock_put(skb->sk);
+	if (!p_info || err)
+		kfree_skb(skb);
 
 	kfree(pend);
 }
