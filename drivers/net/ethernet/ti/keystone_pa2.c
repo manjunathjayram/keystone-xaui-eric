@@ -1065,7 +1065,6 @@ struct pa2_device {
 	u32				 lut_size;
 
 	const char			*pdsp_fw[PA2_NUM_PDSPS];
-	u32				 opened;
 };
 
 #define pa2_from_module(data)	container_of(data, struct pa2_device, module)
@@ -2414,7 +2413,6 @@ static int pa2_close(void *intf_priv, struct net_device *ndev)
 		pa_dev->clk = NULL;
 	}
 
-	pa_dev->opened = 0;
 	mutex_unlock(&pa2_modules_lock);
 	return 0;
 }
@@ -2613,7 +2611,6 @@ static int pa2_open(void *intf_priv, struct net_device *ndev)
 		netcp_register_txhook(netcp_priv, pa_dev->txhook_softcsum,
 				      pa2_txhook_softcsum, intf_priv);
 
-	pa_dev->opened = 1;
 	return 0;
 
 fail:
@@ -2665,7 +2662,7 @@ static int pa2_add_addr(void *intf_priv, struct netcp_addr *naddr)
 	int idx, error;
 	const u8 *addr;
 
-	if (!pa_dev->opened)
+	if (!pa_dev->inuse_if_count)
 		return -ENXIO;
 
 	for (idx = 0; idx < count; idx++) {
@@ -2721,7 +2718,7 @@ static int pa2_del_addr(void *intf_priv, struct netcp_addr *naddr)
 	struct pa2_lut_entry *entry;
 	int idx;
 
-	if (!pa_dev->opened)
+	if (!pa_dev->inuse_if_count)
 		return -ENXIO;
 
 	for (idx = 0; idx < pa_dev->lut_size; idx++) {

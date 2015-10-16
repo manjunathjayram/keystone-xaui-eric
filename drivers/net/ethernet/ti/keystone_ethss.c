@@ -558,7 +558,6 @@ struct cpsw_priv {
 	int				cpts_registered;
 	int				force_no_hwtstamp;
 	struct cpsw_serdes_priv		serdes_priv;
-	u32				opened;
 };
 
 /* slave_port: 0-based (currently relevant only in multi_if mode)
@@ -2406,7 +2405,7 @@ int cpsw_add_addr(void *intf_priv, struct netcp_addr *naddr)
 	struct cpsw_intf *cpsw_intf = intf_priv;
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 
-	if (!cpsw_dev->opened)
+	if (!atomic_read(&cpsw_dev->ale_refcnt))
 		return -ENXIO;
 
 	dev_dbg(cpsw_dev->dev, "ethss adding address %pM, type %d\n",
@@ -2435,7 +2434,7 @@ int cpsw_del_addr(void *intf_priv, struct netcp_addr *naddr)
 	struct cpsw_intf *cpsw_intf = intf_priv;
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 
-	if (!cpsw_dev->opened)
+	if (!atomic_read(&cpsw_dev->ale_refcnt))
 		return -ENXIO;
 
 	dev_dbg(cpsw_dev->dev, "ethss deleting address %pM, type %d\n",
@@ -3114,7 +3113,6 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 				   PSTREAM_ROUTE_DMA);
 
 	cpsw_register_cpts(cpsw_dev);
-	cpsw_dev->opened = 1;
 	return 0;
 
 ale_fail:
@@ -3154,7 +3152,6 @@ static int cpsw_close(void *intf_priv, struct net_device *ndev)
 	clk_put(cpsw_dev->cpgmac);
 
 	cpsw_unregister_cpts(cpsw_dev);
-	cpsw_dev->opened = 0;
 	return 0;
 }
 

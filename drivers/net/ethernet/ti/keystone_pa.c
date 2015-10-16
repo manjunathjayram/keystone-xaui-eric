@@ -301,7 +301,6 @@ struct pa_device {
 	u32				 ip_lut_size;
 	netdev_features_t		 netif_features;
 	const char			*pdsp_fw[DEVICE_PA_NUM_PDSPS];
-	u32				 opened;
 };
 
 #define pa_from_module(data)	container_of(data, struct pa_device, module)
@@ -2097,7 +2096,6 @@ static int pa_close(void *intf_priv, struct net_device *ndev)
 		pa_dev->clk = NULL;
 	}
 
-	pa_dev->opened = 0;
 	mutex_unlock(&pa_modules_lock);
 	return 0;
 }
@@ -2339,7 +2337,6 @@ static int pa_open(void *intf_priv, struct net_device *ndev)
 		netcp_register_rxhook(netcp_priv, pa_dev->rxhook_order,
 				      pa_rx_hook, intf_priv);
 
-	pa_dev->opened = 1;
 	return 0;
 
 fail:
@@ -2359,7 +2356,7 @@ int pa_add_addr(void *intf_priv, struct netcp_addr *naddr)
 	int idx, error;
 	const u8 *addr;
 
-	if (!pa_dev->opened)
+	if (!pa_dev->inuse_if_count)
 		return -ENXIO;
 
 	for (idx = 0; idx < count; idx++) {
@@ -2416,7 +2413,7 @@ static int pa_del_addr(void *intf_priv, struct netcp_addr *naddr)
 	struct pa_lut_entry *entry;
 	int idx;
 
-	if (!pa_dev->opened)
+	if (!pa_dev->inuse_if_count)
 		return -ENXIO;
 
 	for (idx = 0; idx < pa_dev->lut_size; idx++) {
