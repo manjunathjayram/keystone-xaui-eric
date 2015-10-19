@@ -1060,6 +1060,7 @@ struct pa2_device {
 	u32				 multi_if;
 	u32				 mark_mcast_match[2];
 	u32				 inuse_if_count;
+	u32				 if_count;
 	u32				 lut_inuse_count;
 	struct pa2_lut_entry		 *lut;
 	u32				 lut_size;
@@ -2366,7 +2367,6 @@ static int pa2_txhook_softcsum(int order, void *data,
 	return ret;
 }
 
-
 static int pa2_close(void *intf_priv, struct net_device *ndev)
 {
 	struct pa2_intf *pa_intf = intf_priv;
@@ -2388,31 +2388,7 @@ static int pa2_close(void *intf_priv, struct net_device *ndev)
 
 
 	mutex_lock(&pa2_modules_lock);
-	if (!--pa_dev->inuse_if_count) {
-		/* Do pa disable related stuff only if this is the last
-		 * interface to go down
-		 */
-
-		if (pa_dev->pdsp0_tx_channel) {
-			dma_release_channel(pa_dev->pdsp0_tx_channel);
-			pa_dev->pdsp0_tx_channel = NULL;
-		}
-		if (pa_dev->rx_channel) {
-			dmaengine_pause(pa_dev->rx_channel);
-			tasklet_kill(&pa_dev->task);
-			dma_rxfree_flush(pa_dev->rx_channel);
-			dma_poll(pa_dev->rx_channel, -1);
-			dma_release_channel(pa_dev->rx_channel);
-			pa_dev->rx_channel = NULL;
-		}
-
-		if (pa_dev->clk) {
-			clk_disable_unprepare(pa_dev->clk);
-			clk_put(pa_dev->clk);
-		}
-		pa_dev->clk = NULL;
-	}
-
+	pa_dev->inuse_if_count++;
 	mutex_unlock(&pa2_modules_lock);
 	return 0;
 }
@@ -2422,11 +2398,8 @@ static int pa2_open(void *intf_priv, struct net_device *ndev)
 	struct pa2_intf *pa_intf = intf_priv;
 	struct pa2_device *pa_dev = pa_intf->pa_device;
 	struct netcp_priv *netcp_priv = netdev_priv(ndev);
-	struct dma_keystone_info config;
-	const struct firmware *fw;
 	struct dma_chan *chan;
-	dma_cap_mask_t mask;
-	int i, ret, err;
+	int ret;
 
 	/* The first time an open is being called */
 	mutex_lock(&pa2_modules_lock);
@@ -2434,160 +2407,9 @@ static int pa2_open(void *intf_priv, struct net_device *ndev)
 	dev_dbg(pa_dev->dev, "pa2_open() called for port: %d\n",
 		 netcp_priv->cpsw_port);
 
-	if (++pa_dev->inuse_if_count == 1) {
+	pa_dev->inuse_if_count++;
 
-		/* Do pa enable, load firmware only for the first interface
-		 * that comes up
-		 */
-		dev_dbg(pa_dev->dev, "pa2_open() called for first time"
-			" initializing per dev stuff\n");
-
-		pa_dev->clk = clk_get(pa_dev->dev, "clk_pa");
-		if (IS_ERR_OR_NULL(pa_dev->clk)) {
-			dev_warn(pa_dev->dev,
-				 "unable to get Packet Accelerator clock\n");
-			pa_dev->clk = NULL;
-		}
-
-		if (pa_dev->clk)
-			clk_prepare_enable(pa_dev->clk);
-
-		/* System Statistics initialization */
-		__raw_writel(PA2_STATS_CTL_ENABLE_ALLOC_MASK,
-				&pa_dev->reg_stats_ctl->enable_alloc);
-		__raw_writel(1, &pa_dev->reg_stats_ctl->soft_reset);
-
-		/* Initialize all clusters */
-		for (i = 0; i < PA2_NUM_CLUSTERS; i++) {
-			__raw_writel(PA2_CLUSTER_SPLITTER_EOP_CTL,
-				&pa_dev->cluster[i].splitter->eop_ctl);
-			__raw_writel(PA2_CLUSTER_SPLITTER_EOP_BUF_SIZE(i),
-				&pa_dev->cluster[i].splitter->mop_buf_size);
-			__raw_writel(PA2_CLUSTER_SPLITTER_MOP_BUF_PTR,
-				&pa_dev->cluster[i].splitter->mop_buf_ptr);
-			__raw_writel(PA2_CLUSTER_SPLITTER_SOP_CTL,
-				&pa_dev->cluster[i].splitter->sop_ctl);
-		}
-
-		keystone_pa2_reset_control(pa_dev, PA2_STATE_RESET);
-
-		for (i = 0; i < PA2_NUM_PDSPS; i++) {
-			if (!pa_dev->pdsp_fw[i])
-				continue;
-
-			ret = request_firmware(&fw, pa_dev->pdsp_fw[i],
-						pa_dev->dev);
-			if (ret != 0) {
-				dev_err(pa_dev->dev,
-					"can't find fw for pdsp %d", i);
-				ret = -ENODEV;
-				goto fail;
-			}
-
-			/* Download the firmware to the PDSP */
-			ret = keystone_pa2_set_firmware(pa_dev, i,
-						(const unsigned int *) fw->data,
-						fw->size);
-			if (ret != 0) {
-				dev_err(pa_dev->dev,
-					"failed to download fw for pdsp %d", i);
-				ret = -ENODEV;
-				goto fail;
-			}
-
-
-			release_firmware(fw);
-		}
-
-		ret = keystone_pa2_reset_control(pa_dev, PA2_STATE_ENABLE);
-		if (ret != 1) {
-			dev_err(pa_dev->dev, "enable failed, ret = %d\n", ret);
-			ret = -ENODEV;
-			goto fail;
-		}
-
-		pa2_get_version(pa_dev);
-
-		dma_cap_zero(mask);
-		dma_cap_set(DMA_SLAVE, mask);
-
-		/* Open the PA Command transmit channel */
-		pa_dev->pdsp0_tx_channel = dma_request_channel_by_name(mask,
-								"patx-pdsp0");
-		if (IS_ERR_OR_NULL(pa_dev->pdsp0_tx_channel)) {
-			dev_err(pa_dev->dev, "Couldnt get PATX cmd channel\n");
-			pa_dev->pdsp0_tx_channel = NULL;
-			ret = -ENODEV;
-			goto fail;
-		}
-
-		memset(&config, 0, sizeof(config));
-		config.direction	= DMA_MEM_TO_DEV;
-		config.tx_queue_depth	= pa_dev->tx_cmd_queue_depth;
-
-		err = dma_keystone_config(pa_dev->pdsp0_tx_channel, &config);
-		if (err)
-			goto fail;
-
-		/* Open the PA common response channel */
-		pa_dev->rx_channel = dma_request_channel_by_name(mask, "parx");
-		if (IS_ERR_OR_NULL(pa_dev->rx_channel)) {
-			dev_err(pa_dev->dev, "Could not get PA RX channel\n");
-			pa_dev->rx_channel = NULL;
-			ret = -ENODEV;
-			goto fail;
-		}
-
-		memset(&config, 0, sizeof(config));
-
-		config.direction		= DMA_DEV_TO_MEM;
-		config.scatterlist_size		= PA2_SGLIST_SIZE;
-		config.rxpool_allocator		= pa2_rxpool_alloc;
-		config.rxpool_destructor	= pa2_rxpool_free;
-		config.rxpool_param		= pa_dev;
-		config.rxpool_count		= 1;
-		config.rxpool_thresh_enable	= DMA_THRESH_NONE;
-		config.rxpools[0].pool_depth	= pa_dev->rx_pool_depth;
-		config.rxpools[0].buffer_size	= pa_dev->rx_buffer_size;
-
-		err = dma_keystone_config(pa_dev->rx_channel, &config);
-		if (err)
-			goto fail;
-
-		tasklet_init(&pa_dev->task, pa2_chan_work_handler,
-			     (unsigned long) pa_dev);
-
-		dma_set_notify(pa_dev->rx_channel, pa2_chan_notify, pa_dev);
-
-		pa_dev->cmd_flow_num = dma_get_rx_flow(pa_dev->rx_channel);
-		pa_dev->cmd_queue_num = dma_get_rx_queue(pa_dev->rx_channel);
-
-		dev_dbg(pa_dev->dev, "command receive flow %d, queue %d\n",
-			pa_dev->cmd_flow_num, pa_dev->cmd_queue_num);
-
-		pa_dev->addr_count = 0;
-
-		dma_rxfree_refill(pa_dev->rx_channel);
-
-		ret = pa2_config_sctp_crc_engine(pa_dev);
-		if (ret < 0)
-			goto fail;
-
-		/* make lut entries invalid */
-		/* for (i = 0; i < pa_dev->lut_size; i++) {
-			if (!pa_dev->lut[i].valid)
-				continue;
-			keystone_pa2_add_mac(pa_intf, i, NULL, NULL,
-					PACKET_DROP, 0, PA2_INVALID_PORT);
-		} */
-	}
 	mutex_unlock(&pa2_modules_lock);
-
-	pa_intf->saved_ss_state = netcp_get_streaming_switch2(
-						     pa_dev->netcp_device,
-						     netcp_priv->cpsw_port);
-	dev_dbg(pa_dev->dev, "saved_ss_state for port %d is %d\n",
-		 netcp_priv->cpsw_port, pa_intf->saved_ss_state);
 
 	chan = netcp_get_rx_chan(netcp_priv);
 	pa_intf->data_flow_num = dma_get_rx_flow(chan);
@@ -2779,6 +2601,18 @@ static int pa2_attach(void *inst_priv, struct net_device *ndev,
 		netdev_update_features(ndev);
 		rtnl_unlock();
 	}
+
+	/* make lut entries invalid
+	 * FIXME: This was already commented out, is it needed? */
+	 if (++pa_dev->if_count == 1) {
+		/* for (i = 0; i < pa_dev->lut_size; i++) {
+			if (!pa_dev->lut[i].valid)
+				continue;
+			keystone_pa2_add_mac(pa_intf, i, NULL, NULL,
+					PACKET_DROP, 0, PA2_INVALID_PORT);
+		} */
+	}
+
 	return 0;
 }
 
@@ -2797,8 +2631,8 @@ static int pa2_release(void *intf_priv)
 		netdev_update_features(ndev);
 		rtnl_unlock();
 	}
+	pa_dev->if_count--;
 	mutex_unlock(&pa2_modules_lock);
-
 	devm_kfree(pa_dev->dev, pa_intf);
 	return 0;
 }
@@ -2808,6 +2642,29 @@ static int pa2_remove(struct netcp_device *netcp_device, void *inst_priv)
 	struct pa2_device *pa_dev = inst_priv;
 	struct device *dev = pa_dev->dev;
 	u32 i;
+
+	/* Do pa disable related stuff only if this is the last
+	 * interface to go down
+	 */
+
+	if (pa_dev->pdsp0_tx_channel) {
+		dma_release_channel(pa_dev->pdsp0_tx_channel);
+		pa_dev->pdsp0_tx_channel = NULL;
+	}
+	if (pa_dev->rx_channel) {
+		dmaengine_pause(pa_dev->rx_channel);
+		tasklet_kill(&pa_dev->task);
+		dma_rxfree_flush(pa_dev->rx_channel);
+		dma_poll(pa_dev->rx_channel, -1);
+		dma_release_channel(pa_dev->rx_channel);
+		pa_dev->rx_channel = NULL;
+	}
+
+	if (pa_dev->clk) {
+		clk_disable_unprepare(pa_dev->clk);
+		clk_put(pa_dev->clk);
+	}
+	pa_dev->clk = NULL;
 
 	pa2_cond_unmap(pa_dev->reg_mailbox);
 	pa2_cond_unmap(pa_dev->reg_ra_bridge);
@@ -2846,6 +2703,9 @@ static int pa2_probe(struct netcp_device *netcp_device,
 	struct pa2_device *pa_dev;
 	int ret, len = 0, start, end, i, j;
 	int table_size, num_ranges;
+	const struct firmware *fw;
+	dma_cap_mask_t mask;
+	struct dma_keystone_info config;
 	u32 *prange;
 	u32 regs_base;
 
@@ -3132,6 +2992,135 @@ static int pa2_probe(struct netcp_device *netcp_device,
 	}
 
 	devm_kfree(pa_dev->dev, prange);
+
+	pa_dev->clk = clk_get(pa_dev->dev, "clk_pa");
+	if (IS_ERR_OR_NULL(pa_dev->clk)) {
+		dev_warn(pa_dev->dev,
+			 "unable to get Packet Accelerator clock\n");
+		pa_dev->clk = NULL;
+	}
+
+	if (pa_dev->clk)
+		clk_prepare_enable(pa_dev->clk);
+
+	/* System Statistics initialization */
+	__raw_writel(PA2_STATS_CTL_ENABLE_ALLOC_MASK,
+			&pa_dev->reg_stats_ctl->enable_alloc);
+	__raw_writel(1, &pa_dev->reg_stats_ctl->soft_reset);
+
+	/* Initialize all clusters */
+	for (i = 0; i < PA2_NUM_CLUSTERS; i++) {
+		__raw_writel(PA2_CLUSTER_SPLITTER_EOP_CTL,
+			&pa_dev->cluster[i].splitter->eop_ctl);
+		__raw_writel(PA2_CLUSTER_SPLITTER_EOP_BUF_SIZE(i),
+			&pa_dev->cluster[i].splitter->mop_buf_size);
+		__raw_writel(PA2_CLUSTER_SPLITTER_MOP_BUF_PTR,
+			&pa_dev->cluster[i].splitter->mop_buf_ptr);
+		__raw_writel(PA2_CLUSTER_SPLITTER_SOP_CTL,
+			&pa_dev->cluster[i].splitter->sop_ctl);
+	}
+
+	keystone_pa2_reset_control(pa_dev, PA2_STATE_RESET);
+
+	for (i = 0; i < PA2_NUM_PDSPS; i++) {
+		if (!pa_dev->pdsp_fw[i])
+			continue;
+
+		ret = request_firmware(&fw, pa_dev->pdsp_fw[i],
+						pa_dev->dev);
+		if (ret != 0) {
+			dev_err(pa_dev->dev,
+				"can't find fw for pdsp %d", i);
+				ret = -ENODEV;
+			goto exit;
+		}
+
+		/* Download the firmware to the PDSP */
+		ret = keystone_pa2_set_firmware(pa_dev, i,
+					(const unsigned int *) fw->data,
+					fw->size);
+		if (ret != 0) {
+			dev_err(pa_dev->dev,
+				"failed to download fw for pdsp %d", i);
+			ret = -ENODEV;
+			goto exit;
+		}
+
+		release_firmware(fw);
+	}
+
+	ret = keystone_pa2_reset_control(pa_dev, PA2_STATE_ENABLE);
+	if (ret != 1) {
+		dev_err(pa_dev->dev, "enable failed, ret = %d\n", ret);
+		ret = -ENODEV;
+		goto exit;
+	}
+
+	pa2_get_version(pa_dev);
+
+	dma_cap_zero(mask);
+	dma_cap_set(DMA_SLAVE, mask);
+
+	/* Open the PA Command transmit channel */
+	pa_dev->pdsp0_tx_channel = dma_request_channel_by_name(mask,
+							"patx-pdsp0");
+	if (IS_ERR_OR_NULL(pa_dev->pdsp0_tx_channel)) {
+		dev_err(pa_dev->dev, "Couldnt get PATX cmd channel\n");
+		pa_dev->pdsp0_tx_channel = NULL;
+		ret = -ENODEV;
+		goto exit;
+	}
+
+	memset(&config, 0, sizeof(config));
+	config.direction	= DMA_MEM_TO_DEV;
+	config.tx_queue_depth	= pa_dev->tx_cmd_queue_depth;
+
+	ret = dma_keystone_config(pa_dev->pdsp0_tx_channel, &config);
+	if (ret)
+		goto exit;
+
+	/* Open the PA common response channel */
+	pa_dev->rx_channel = dma_request_channel_by_name(mask, "parx");
+	if (IS_ERR_OR_NULL(pa_dev->rx_channel)) {
+		dev_err(pa_dev->dev, "Could not get PA RX channel\n");
+		pa_dev->rx_channel = NULL;
+		ret = -ENODEV;
+		goto exit;
+	}
+
+	memset(&config, 0, sizeof(config));
+	config.direction		= DMA_DEV_TO_MEM;
+	config.scatterlist_size		= PA2_SGLIST_SIZE;
+	config.rxpool_allocator		= pa2_rxpool_alloc;
+	config.rxpool_destructor	= pa2_rxpool_free;
+	config.rxpool_param		= pa_dev;
+	config.rxpool_count		= 1;
+	config.rxpool_thresh_enable	= DMA_THRESH_NONE;
+	config.rxpools[0].pool_depth	= pa_dev->rx_pool_depth;
+	config.rxpools[0].buffer_size	= pa_dev->rx_buffer_size;
+
+	ret = dma_keystone_config(pa_dev->rx_channel, &config);
+	if (ret)
+		goto exit;
+
+	tasklet_init(&pa_dev->task, pa2_chan_work_handler,
+		     (unsigned long) pa_dev);
+
+	dma_set_notify(pa_dev->rx_channel, pa2_chan_notify, pa_dev);
+
+	pa_dev->cmd_flow_num = dma_get_rx_flow(pa_dev->rx_channel);
+	pa_dev->cmd_queue_num = dma_get_rx_queue(pa_dev->rx_channel);
+
+	dev_dbg(pa_dev->dev, "command receive flow %d, queue %d\n",
+		pa_dev->cmd_flow_num, pa_dev->cmd_queue_num);
+
+	pa_dev->addr_count = 0;
+
+	dma_rxfree_refill(pa_dev->rx_channel);
+
+	ret = pa2_config_sctp_crc_engine(pa_dev);
+	if (ret < 0)
+		goto exit;
 
 	spin_lock_init(&pa_dev->lock);
 
