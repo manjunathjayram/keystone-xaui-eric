@@ -2863,7 +2863,6 @@ static void cpsw2_slave_open(struct cpsw2_slave *slave,
 			    struct cpsw2_intf *cpsw_intf)
 {
 	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
-	u32 slave_port;
 
 	keystone_sgmii_reset(SGMII2_BASE(slave->slave_num), slave->slave_num);
 
@@ -2879,19 +2878,12 @@ static void cpsw2_slave_open(struct cpsw2_slave *slave,
 
 	cpsw2_set_slave_mac(slave, cpsw_intf);
 
-	/* this slave port here is 1 based */
-	slave_port = cpsw2_get_slave_port(cpsw_dev, slave->slave_num);
-
-	/* hence port num here is also 1 based */
-	slave->port_num = slave_port;
-	slave->ale = cpsw_dev->ale;
-
 	/* enable forwarding */
-	cpsw_ale_control_set(cpsw_dev->ale, slave_port,
+	cpsw_ale_control_set(cpsw_dev->ale, slave->port_num,
 			     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
 
 	cpsw_ale_add_mcast(cpsw_dev->ale, cpsw_intf->ndev->broadcast,
-			   1 << slave_port, 0, 0, ALE_MCAST_FWD_2);
+			   1 << slave->port_num, 0, 0, ALE_MCAST_FWD_2);
 
 	if (IS_SGMII_MAC_PHY(slave->link_interface)) {
 		slave->phy = of_phy_connect(cpsw_intf->ndev,
@@ -2975,9 +2967,17 @@ static void cpsw2_slave_init(struct cpsw2_slave *slave, struct cpsw2_priv *priv)
 {
 	void __iomem		*regs = priv->ss_regs;
 	int			slave_num = slave->slave_num;
+	u32			slave_port;
 
 	slave->regs = regs + priv->slave_reg_ofs +
 			(CPSW2_SLAVE_REGS_SIZE * slave_num);
+
+	/* this slave port here is 1 based */
+	slave_port = cpsw2_get_slave_port(priv, slave->slave_num);
+
+	/* hence port num here is also 1 based */
+	slave->port_num = slave_port;
+	slave->ale = priv->ale;
 }
 
 static void cpsw2_add_mcast_addr(struct cpsw2_intf *cpsw_intf, u8 *addr)
