@@ -558,7 +558,6 @@ struct cpsw_priv {
 	int				cpts_registered;
 	int				force_no_hwtstamp;
 	struct cpsw_serdes_priv		serdes_priv;
-	u32				opened;
 };
 
 /* slave_port: 0-based (currently relevant only in multi_if mode)
@@ -2243,7 +2242,6 @@ static void cpsw_slave_open(struct cpsw_slave *slave,
 {
 	struct cpsw_priv *priv = cpsw_intf->cpsw_priv;
 	void __iomem *sgmii_port_regs;
-	u32 slave_port;
 
 	if (slave->slave_num < 2)
 		sgmii_port_regs = priv->sgmii_port_regs;
@@ -2263,19 +2261,12 @@ static void cpsw_slave_open(struct cpsw_slave *slave,
 
 	cpsw_set_slave_mac(slave, cpsw_intf);
 
-	/* this slave port here is 1 based */
-	slave_port = cpsw_get_slave_port(priv, slave->slave_num);
-
-	/* hence port num here is also 1 based */
-	slave->port_num = slave_port;
-	slave->ale = priv->ale;
-
 	/* enable forwarding */
-	cpsw_ale_control_set(priv->ale, slave_port,
+	cpsw_ale_control_set(priv->ale, slave->port_num,
 			     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
 
 	cpsw_ale_add_mcast(priv->ale, cpsw_intf->ndev->broadcast,
-			   1 << slave_port, 0, 0, ALE_MCAST_FWD_2);
+			   1 << slave->port_num, 0, 0, ALE_MCAST_FWD_2);
 
 	if (IS_SGMII_MAC_PHY(slave->link_interface)) {
 		slave->phy = of_phy_connect(cpsw_intf->ndev,
@@ -2360,7 +2351,7 @@ static void cpsw_slave_init(struct cpsw_slave *slave, struct cpsw_priv *priv)
 	void __iomem		*regs = priv->ss_regs;
 	int			slave_num = slave->slave_num;
 	int			slave_reg_num = slave_num;
-	u32			slave_reg_ofs;
+	u32			slave_reg_ofs, slave_port;
 
 	if (slave_num > 1) {
 		slave_reg_ofs = priv->slave23_reg_ofs;
@@ -2370,6 +2361,13 @@ static void cpsw_slave_init(struct cpsw_slave *slave, struct cpsw_priv *priv)
 
 	slave->regs	= regs + slave_reg_ofs + (0x30 * slave_reg_num);
 	slave->sliver	= regs + priv->sliver_reg_ofs + (0x40 * slave_num);
+
+	/* this slave port here is 1 based */
+	slave_port = cpsw_get_slave_port(priv, slave->slave_num);
+
+	/* hence port num here is also 1 based */
+	slave->port_num = slave_port;
+	slave->ale = priv->ale;
 }
 
 static void cpsw_add_mcast_addr(struct cpsw_intf *cpsw_intf, u8 *addr)
@@ -2406,7 +2404,7 @@ int cpsw_add_addr(void *intf_priv, struct netcp_addr *naddr)
 	struct cpsw_intf *cpsw_intf = intf_priv;
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 
-	if (!cpsw_dev->opened)
+	if (!atomic_read(&cpsw_dev->ale_refcnt))
 		return -ENXIO;
 
 	dev_dbg(cpsw_dev->dev, "ethss adding address %pM, type %d\n",
@@ -2435,7 +2433,7 @@ int cpsw_del_addr(void *intf_priv, struct netcp_addr *naddr)
 	struct cpsw_intf *cpsw_intf = intf_priv;
 	struct cpsw_priv *cpsw_dev = cpsw_intf->cpsw_priv;
 
-	if (!cpsw_dev->opened)
+	if (!atomic_read(&cpsw_dev->ale_refcnt))
 		return -ENXIO;
 
 	dev_dbg(cpsw_dev->dev, "ethss deleting address %pM, type %d\n",
@@ -3114,7 +3112,6 @@ static int cpsw_open(void *intf_priv, struct net_device *ndev)
 				   PSTREAM_ROUTE_DMA);
 
 	cpsw_register_cpts(cpsw_dev);
-	cpsw_dev->opened = 1;
 	return 0;
 
 ale_fail:
@@ -3154,7 +3151,6 @@ static int cpsw_close(void *intf_priv, struct net_device *ndev)
 	clk_put(cpsw_dev->cpgmac);
 
 	cpsw_unregister_cpts(cpsw_dev);
-	cpsw_dev->opened = 0;
 	return 0;
 }
 
