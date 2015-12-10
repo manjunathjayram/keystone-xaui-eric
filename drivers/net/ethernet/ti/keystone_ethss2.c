@@ -57,6 +57,9 @@
 #define SOFT_RESET_MASK				BIT(0)
 #define SOFT_RESET				BIT(0)
 
+/* MAC STATUS reg bits */
+#define MAC_STATUS_IDLE				BIT(31)
+
 #define MACSL_RX_ENABLE_CSF			BIT(23)
 #define MACSL_RX_ENABLE_EXT_CTL			BIT(18)
 #define MACSL_ENABLE				BIT(5)
@@ -2732,59 +2735,6 @@ static inline int cpsw2_get_slave_port(struct cpsw2_priv *priv, u32 slave_num)
 		return slave_num;
 }
 
-static void _cpsw2_adjust_link(struct cpsw2_slave *slave, bool *link)
-{
-	struct phy_device *phy = slave->phy;
-	u32 mac_control = 0;
-	u32 slave_port;
-
-	if (!phy)
-		return;
-
-	slave_port = slave->port_num;
-
-	if (phy->link) {
-		mac_control = slave->mac_control;
-		mac_control |= MACSL_DEFAULT_CONFIG;
-		/* enable forwarding */
-		cpsw_ale_control_set(slave->ale, slave_port,
-				     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
-
-		if (phy->duplex)
-			mac_control |= BIT(0);	/* FULLDUPLEXEN	*/
-		else
-			mac_control &= ~0x1;
-
-		*link = true;
-	} else {
-		mac_control = 0;
-		/* disable forwarding */
-		cpsw_ale_control_set(slave->ale, slave_port,
-				     ALE_PORT_STATE, ALE_PORT_STATE_DISABLE);
-	}
-
-	if (mac_control != slave->mac_control) {
-		phy_print_status(phy);
-		writel(mac_control, &slave->regs->mac_control);
-	}
-
-	slave->mac_control = mac_control;
-}
-
-static void cpsw2_adjust_link(struct net_device *n_dev, void *context)
-{
-	struct cpsw2_slave *slave = (struct cpsw2_slave *)context;
-	struct netcp_priv *netcp = netdev_priv(n_dev);
-	bool link = false;
-
-	_cpsw2_adjust_link(slave, &link);
-
-	if (link)
-		netcp->phy_link_state_mask |= BIT(slave->slave_num);
-	else
-		netcp->phy_link_state_mask &= ~BIT(slave->slave_num);
-}
-
 /*
  * Reset the the mac sliver
  * Soft reset is set and polled until clear, or until a timeout occurs
@@ -2805,6 +2755,88 @@ static int cpsw2_port_reset(struct cpsw2_slave *slave)
 
 	/* Timeout on the reset */
 	return GMACSL_RET_WARN_RESET_INCOMPLETE;
+}
+
+static void _cpsw2_adjust_link(struct cpsw2_priv *cpsw_dev,
+			       struct cpsw2_slave *slave, bool up,
+			       struct phy_device *phy)
+{
+	u32 mac_control = 0;
+	u32 slave_port, stat_en, v;
+
+	slave_port = slave->port_num;
+	stat_en = readl(&cpsw_dev->regs->stat_port_en);
+
+	if (up) {
+		mac_control = slave->mac_control;
+		mac_control |= MACSL_DEFAULT_CONFIG;
+		/* enable forwarding */
+		cpsw_ale_control_set(slave->ale, slave_port,
+				     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
+
+		if (phy) {
+			if (phy->duplex)
+				mac_control |= BIT(0);	/* FULLDUPLEXEN	*/
+			else
+				mac_control &= ~0x1;
+		}
+
+		stat_en |= BIT(slave_port);
+	} else {
+		mac_control = 0;
+		/* disable forwarding */
+		cpsw_ale_control_set(slave->ale, slave_port,
+				     ALE_PORT_STATE, ALE_PORT_STATE_DISABLE);
+		stat_en &= ~BIT(slave_port);
+	}
+
+	if (mac_control != slave->mac_control) {
+		if (up)
+			cpsw2_port_reset(slave);
+		else
+			writel(stat_en, &cpsw_dev->regs->stat_port_en);
+
+		if (phy) {
+			phy_print_status(phy);
+		} else {
+			dev_info(cpsw_dev->dev, "port %u - Link is %s\n",
+				 slave_port, (up ? "Up" : "Down"));
+		}
+
+		writel(mac_control, &slave->regs->mac_control);
+
+		if (up) {
+			do {
+				v = readl(&slave->regs->mac_status);
+			} while (!(v & MAC_STATUS_IDLE));
+
+			writel(stat_en, &cpsw_dev->regs->stat_port_en);
+		}
+	}
+
+	slave->mac_control = mac_control;
+}
+
+static void cpsw2_adjust_link(struct net_device *n_dev, void *context)
+{
+	struct cpsw2_slave *slave = (struct cpsw2_slave *)context;
+	struct netcp_priv *netcp = netdev_priv(n_dev);
+	struct netcp_device *netcp_device = netcp->netcp_device;
+	struct cpsw2_priv *cpsw_dev;
+	bool link = false;
+
+	cpsw_dev = (struct cpsw2_priv *)
+		   netcp_device_find_module(netcp_device, CPSW2_MODULE_NAME);
+
+	if (slave->phy) {
+		link = slave->phy->link;
+		_cpsw2_adjust_link(cpsw_dev, slave, link, slave->phy);
+	}
+
+	if (link)
+		netcp->phy_link_state_mask |= BIT(slave->slave_num);
+	else
+		netcp->phy_link_state_mask &= ~BIT(slave->slave_num);
 }
 
 /*
@@ -2863,6 +2895,7 @@ static void cpsw2_slave_open(struct cpsw2_slave *slave,
 			    struct cpsw2_intf *cpsw_intf)
 {
 	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+	u32 stat_en;
 
 	keystone_sgmii_reset(SGMII2_BASE(slave->slave_num), slave->slave_num);
 
@@ -2902,6 +2935,10 @@ static void cpsw2_slave_open(struct cpsw2_slave *slave,
 			slave->phy_port_t = PORT_MII;
 			phy_start(slave->phy);
 		}
+	} else {
+		stat_en = readl(&cpsw_dev->regs->stat_port_en);
+		stat_en |= BIT(slave->port_num);
+		writel(stat_en, &cpsw_dev->regs->stat_port_en);
 	}
 }
 
@@ -3265,9 +3302,13 @@ static void cpsw2_timer(unsigned long arg)
 {
 	struct cpsw2_intf *cpsw_intf = (struct cpsw2_intf *)arg;
 	struct cpsw2_priv *cpsw_dev = cpsw_intf->cpsw_priv;
+	struct cpsw2_slave *slave;
 	u32 sp = cpsw_intf->slave_port;
 	u32 ns = cpsw_intf->num_slaves;
 	u32 link_state;
+	unsigned long i, link_state_delta;
+	unsigned long link_state_old = cpsw_intf->link_state;
+	bool up;
 
 	if (cpsw_dev->multi_if)
 		link_state = keystone_sgmii_get_port_link(SGMII2_BASE(sp), sp);
@@ -3308,6 +3349,34 @@ static void cpsw2_timer(unsigned long arg)
 			netif_carrier_on(cpsw_intf->ndev);
 		else
 			netif_carrier_off(cpsw_intf->ndev);
+	}
+
+	slave = &cpsw_intf->slaves[0];
+	if ((cpsw_dev->multi_if && !IS_SGMII_MAC_PHY(slave->link_interface))) {
+		if (cpsw_intf->link_state != link_state_old) {
+			if (cpsw_intf->link_state)
+				up = true;
+			else
+				up = false;
+
+			_cpsw2_adjust_link(cpsw_dev, slave, up, NULL);
+		}
+	} else if (!cpsw_dev->multi_if) {
+		link_state_delta = cpsw_intf->link_state ^ link_state_old;
+
+		for_each_set_bit(i, &link_state_delta, ns) {
+			slave = &cpsw_intf->slaves[i];
+
+			if (IS_SGMII_MAC_PHY(slave->link_interface))
+				continue;
+
+			if (cpsw_intf->link_state & BIT(i))
+				up = true;
+			else
+				up = false;
+
+			_cpsw2_adjust_link(cpsw_dev, slave, up, NULL);
+		}
 	}
 
 	/* A timer runs as a BH, no need to block them */
@@ -3677,6 +3746,10 @@ static int cpsw2_open(void *intf_priv, struct net_device *ndev)
 			goto ale_fail;
 		}
 		cpsw2_init_host_port(cpsw_dev);
+		/* enable HOST port stat once and forever
+		 * SLAVE port stat is en/disabled according to link up/down
+		 */
+		writel(BIT(cpsw_dev->host_port), &cpsw_dev->regs->stat_port_en);
 	}
 
 	for_each_slave(cpsw_intf, cpsw2_slave_init, cpsw_dev);
@@ -3693,10 +3766,6 @@ static int cpsw2_open(void *intf_priv, struct net_device *ndev)
 	/* Control register */
 	__raw_writel(CPSW2_CTL_P0_ENABLE | CPSW_CTL_P0_TX_CRC_REMOVE,
 			&cpsw_dev->regs->control);
-
-	/* All statistics enabled by default */
-	writel(CPSW2_REG_VAL_STAT_ENABLE_ALL(cpsw_dev->num_slaves + 1),
-		     &cpsw_dev->regs->stat_port_en);
 
 	for_each_slave(cpsw_intf, cpsw2_slave_open, cpsw_intf);
 
