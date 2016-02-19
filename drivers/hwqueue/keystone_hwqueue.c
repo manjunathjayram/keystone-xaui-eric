@@ -238,7 +238,7 @@ static int khwq_push(struct hwqueue_instance *inst, dma_addr_t dma,
 
 	val = (u32)dma | ((size / 16) - 1);
 
-	__raw_writel(val, &qmgr->reg_push[id].ptr_size_thresh);
+	writel(val, &qmgr->reg_push[id].ptr_size_thresh);
 
 	return 0;
 }
@@ -313,7 +313,7 @@ static int khwq_flush(struct hwqueue_instance *inst)
 	id = hwqueue_inst_to_id(inst) - qmgr->start_queue;
 
 	atomic_set(&kq->desc_count, 0);
-	__raw_writel(0, &qmgr->reg_push[id].ptr_size_thresh);
+	writel(0, &qmgr->reg_push[id].ptr_size_thresh);
 	return 0;
 }
 
@@ -764,9 +764,9 @@ static int khwq_setup_queue_range(struct khwq_device *kdev,
 			    range->queue_base + range->num_queues);
 		for (id = start; id < end; id++) {
 			index = id - qmgr->start_queue;
-			__raw_writel(THRESH_GTE | 1,
-				     &qmgr->reg_peek[index].ptr_size_thresh);
-			__raw_writel(0, &qmgr->reg_push[index].ptr_size_thresh);
+			writel(THRESH_GTE | 1,
+			       &qmgr->reg_peek[index].ptr_size_thresh);
+			writel(0, &qmgr->reg_push[index].ptr_size_thresh);
 		}
 	}
 

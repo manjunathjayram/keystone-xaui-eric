@@ -24,6 +24,7 @@
 #include <linux/skbuff.h>
 #include <linux/crc32.h>
 #include <linux/ethtool.h>
+#include <linux/reboot.h>
 
 #define DRV_NAME        "rionet"
 #define DRV_VERSION     "0.3"
@@ -48,6 +49,8 @@ MODULE_LICENSE("GPL");
 #define RIONET_TX_RING_SIZE	CONFIG_RIONET_TX_SIZE
 #define RIONET_RX_RING_SIZE	CONFIG_RIONET_RX_SIZE
 #define RIONET_MAX_NETS		8
+#define RIONET_MSG_SIZE         RIO_MAX_MSG_SIZE
+#define RIONET_MAX_MTU          (RIONET_MSG_SIZE - ETH_HLEN)
 
 struct rionet_private {
 	struct rio_mport *mport;
@@ -105,7 +108,7 @@ static int rionet_rx_clean(struct net_device *ndev)
 			break;
 
 		rnet->rx_skb[i]->data = data;
-		skb_put(rnet->rx_skb[i], RIO_MAX_MSG_SIZE);
+		skb_put(rnet->rx_skb[i], RIONET_MSG_SIZE);
 		rnet->rx_skb[i]->protocol =
 		    eth_type_trans(rnet->rx_skb[i], ndev);
 		error = netif_rx(rnet->rx_skb[i]);
@@ -114,7 +117,7 @@ static int rionet_rx_clean(struct net_device *ndev)
 			ndev->stats.rx_dropped++;
 		} else {
 			ndev->stats.rx_packets++;
-			ndev->stats.rx_bytes += RIO_MAX_MSG_SIZE;
+			ndev->stats.rx_bytes += RIONET_MSG_SIZE;
 		}
 
 	} while ((i = (i + 1) % RIONET_RX_RING_SIZE) != rnet->rx_slot);
@@ -129,7 +132,7 @@ static void rionet_rx_fill(struct net_device *ndev, int end)
 
 	i = rnet->rx_slot;
 	do {
-		rnet->rx_skb[i] = dev_alloc_skb(RIO_MAX_MSG_SIZE);
+		rnet->rx_skb[i] = dev_alloc_skb(RIONET_MSG_SIZE);
 
 		if (!rnet->rx_skb[i])
 			break;
@@ -204,6 +207,17 @@ static int rionet_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 		if (nets[rnet->mport->id].active[destid])
 			rionet_queue_tx_msg(skb, ndev,
 					nets[rnet->mport->id].active[destid]);
+		else {
+			/*
+			 * If the target device was removed from the list of
+			 * active peers but we still have TX packets targeting
+			 * it just report sending a packet to the target
+			 * (without actual packet transfer).
+			 */
+			dev_kfree_skb_any(skb);
+			ndev->stats.tx_packets++;
+			ndev->stats.tx_bytes += skb->len;
+		}
 	}
 
 	spin_unlock_irqrestore(&rnet->tx_lock, flags);
@@ -211,6 +225,7 @@ static int rionet_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	return NETDEV_TX_OK;
 }
 
+#if !defined(CONFIG_TI_KEYSTONE_RAPIDIO)
 static void rionet_dbell_event(struct rio_mport *mport, void *dev_id, u16 sid, u16 tid,
 			       u16 info)
 {
@@ -243,6 +258,7 @@ static void rionet_dbell_event(struct rio_mport *mport, void *dev_id, u16 sid, u
 			       DRV_NAME);
 	}
 }
+#endif
 
 static void rionet_inb_msg_event(struct rio_mport *mport, void *dev_id, int mbox, int slot)
 {
@@ -265,7 +281,7 @@ static void rionet_outb_msg_event(struct rio_mport *mport, void *dev_id, int mbo
 	struct net_device *ndev = dev_id;
 	struct rionet_private *rnet = netdev_priv(ndev);
 
-	spin_lock(&rnet->lock);
+	spin_lock(&rnet->tx_lock);
 
 	if (netif_msg_intr(rnet))
 		printk(KERN_INFO
@@ -284,7 +300,7 @@ static void rionet_outb_msg_event(struct rio_mport *mport, void *dev_id, int mbo
 	if (rnet->tx_cnt < RIONET_TX_RING_SIZE)
 		netif_wake_queue(ndev);
 
-	spin_unlock(&rnet->lock);
+	spin_unlock(&rnet->tx_lock);
 }
 
 static int rionet_open(struct net_device *ndev)
@@ -296,12 +312,14 @@ static int rionet_open(struct net_device *ndev)
 	if (netif_msg_ifup(rnet))
 		printk(KERN_INFO "%s: open\n", DRV_NAME);
 
+#if !defined(CONFIG_TI_KEYSTONE_RAPIDIO)
 	if ((rc = rio_request_inb_dbell(rnet->mport,
 					(void *)ndev,
 					RIONET_DOORBELL_JOIN,
 					RIONET_DOORBELL_LEAVE,
 					rionet_dbell_event)) < 0)
 		goto out;
+#endif
 
 	if ((rc = rio_request_inb_mbox(rnet->mport,
 				       (void *)ndev,
@@ -332,6 +350,7 @@ static int rionet_open(struct net_device *ndev)
 
 	list_for_each_entry_safe(peer, tmp,
 				 &nets[rnet->mport->id].peers, node) {
+#if !defined(CONFIG_TI_KEYSTONE_RAPIDIO)
 		if (!(peer->res = rio_request_outb_dbell(peer->rdev,
 							 RIONET_DOORBELL_JOIN,
 							 RIONET_DOORBELL_LEAVE)))
@@ -343,6 +362,23 @@ static int rionet_open(struct net_device *ndev)
 
 		/* Send a join message */
 		rio_send_doorbell(peer->rdev, RIONET_DOORBELL_JOIN);
+#else
+		/* Read configuration again (it may have changed) */
+		rio_read_config_32(peer->rdev, RIO_PEF_CAR, &peer->rdev->pef);
+		rio_read_config_32(peer->rdev, RIO_SRC_OPS_CAR,
+						&peer->rdev->src_ops);
+		rio_read_config_32(peer->rdev, RIO_DST_OPS_CAR,
+						&peer->rdev->dst_ops);
+
+		/* Hack for adding INB_MBOX and INB_DOORBELL on
+		   KeyStone devices
+		*/
+		peer->rdev->pef |= RIO_PEF_INB_DOORBELL | RIO_PEF_INB_MBOX;
+
+		if (dev_rionet_capable(peer->rdev))
+			nets[rnet->mport->id].active[peer->rdev->destid] =
+								  peer->rdev;
+#endif
 	}
 
       out:
@@ -367,38 +403,57 @@ static int rionet_close(struct net_device *ndev)
 	list_for_each_entry_safe(peer, tmp,
 				 &nets[rnet->mport->id].peers, node) {
 		if (nets[rnet->mport->id].active[peer->rdev->destid]) {
+#if !defined(CONFIG_TI_KEYSTONE_RAPIDIO)
 			rio_send_doorbell(peer->rdev, RIONET_DOORBELL_LEAVE);
+#endif
 			nets[rnet->mport->id].active[peer->rdev->destid] = NULL;
 		}
+#if !defined(CONFIG_TI_KEYSTONE_RAPIDIO)
 		rio_release_outb_dbell(peer->rdev, peer->res);
+#endif
 	}
 
+#if !defined(CONFIG_TI_KEYSTONE_RAPIDIO)
 	rio_release_inb_dbell(rnet->mport, RIONET_DOORBELL_JOIN,
 			      RIONET_DOORBELL_LEAVE);
+#endif
 	rio_release_inb_mbox(rnet->mport, RIONET_MAILBOX);
 	rio_release_outb_mbox(rnet->mport, RIONET_MAILBOX);
 
 	return 0;
 }
 
-static void rionet_remove(struct rio_dev *rdev)
+static int rionet_remove_dev(struct device *dev, struct subsys_interface *sif)
 {
-	struct net_device *ndev = rio_get_drvdata(rdev);
+	struct rio_dev *rdev = to_rio_dev(dev);
 	unsigned char netid = rdev->net->hport->id;
-	struct rionet_peer *peer, *tmp;
+	struct rionet_peer *peer;
+	int state, found = 0;
 
-	unregister_netdev(ndev);
+	if (!dev_rionet_capable(rdev))
+		return 0;
 
-	free_pages((unsigned long)nets[netid].active, get_order(sizeof(void *) *
-			RIO_MAX_ROUTE_ENTRIES(rdev->net->hport->sys_size)));
-	nets[netid].active = NULL;
-
-	list_for_each_entry_safe(peer, tmp, &nets[netid].peers, node) {
-		list_del(&peer->node);
-		kfree(peer);
+	list_for_each_entry(peer, &nets[netid].peers, node) {
+		if (peer->rdev == rdev) {
+			list_del(&peer->node);
+			kfree(peer);
+			found = 1;
+			break;
+		}
 	}
 
-	free_netdev(ndev);
+	if (found) {
+		if (nets[netid].active[rdev->destid]) {
+			state = atomic_read(&rdev->state);
+			if (state != RIO_DEVICE_GONE &&
+			    state != RIO_DEVICE_INITIALIZING)
+				rio_send_doorbell(rdev, RIONET_DOORBELL_LEAVE);
+			nets[netid].active[rdev->destid] = NULL;
+			nets[netid].nact--;
+		}
+	}
+
+	return 0;
 }
 
 static void rionet_get_drvinfo(struct net_device *ndev,
@@ -426,6 +481,16 @@ static void rionet_set_msglevel(struct net_device *ndev, u32 value)
 	rnet->msg_enable = value;
 }
 
+static int rionet_change_mtu(struct net_device *ndev, int new_mtu)
+{
+	if ((new_mtu < 68) || (new_mtu > RIONET_MAX_MTU)) {
+		printk(KERN_ERR "%s: Invalid MTU size %d\n", ndev->name, new_mtu);
+		return -EINVAL;
+	}
+	ndev->mtu = new_mtu;
+	return 0;
+}
+
 static const struct ethtool_ops rionet_ethtool_ops = {
 	.get_drvinfo = rionet_get_drvinfo,
 	.get_msglevel = rionet_get_msglevel,
@@ -437,7 +502,7 @@ static const struct net_device_ops rionet_netdev_ops = {
 	.ndo_open		= rionet_open,
 	.ndo_stop		= rionet_close,
 	.ndo_start_xmit		= rionet_start_xmit,
-	.ndo_change_mtu		= eth_change_mtu,
+	.ndo_change_mtu		= rionet_change_mtu,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_mac_address	= eth_mac_addr,
 };
@@ -472,8 +537,9 @@ static int rionet_setup_netdev(struct rio_mport *mport, struct net_device *ndev)
 	ndev->dev_addr[5] = device_id & 0xff;
 
 	ndev->netdev_ops = &rionet_netdev_ops;
-	ndev->mtu = RIO_MAX_MSG_SIZE - 14;
+	ndev->mtu = RIONET_MAX_MTU;
 	ndev->features = NETIF_F_LLTX;
+	SET_NETDEV_DEV(ndev, &mport->dev);
 	SET_ETHTOOL_OPS(ndev, &rionet_ethtool_ops);
 
 	spin_lock_init(&rnet->lock);
@@ -482,8 +548,11 @@ static int rionet_setup_netdev(struct rio_mport *mport, struct net_device *ndev)
 	rnet->msg_enable = RIONET_DEFAULT_MSGLEVEL;
 
 	rc = register_netdev(ndev);
-	if (rc != 0)
+	if (rc != 0) {
+		free_pages((unsigned long)nets[mport->id].active,
+			   get_order(rionet_active_bytes));
 		goto out;
+	}
 
 	printk(KERN_INFO "%s: %s %s Version %s, MAC %pM, %s\n",
 	       ndev->name,
@@ -497,27 +566,24 @@ static int rionet_setup_netdev(struct rio_mport *mport, struct net_device *ndev)
 	return rc;
 }
 
-static unsigned long net_table[RIONET_MAX_NETS/sizeof(unsigned long) + 1];
-
-static int rionet_probe(struct rio_dev *rdev, const struct rio_device_id *id)
+static int rionet_add_dev(struct device *dev, struct subsys_interface *sif)
 {
 	int rc = -ENODEV;
 	u32 lsrc_ops, ldst_ops;
 	struct rionet_peer *peer;
 	struct net_device *ndev = NULL;
+	struct rio_dev *rdev = to_rio_dev(dev);
 	unsigned char netid = rdev->net->hport->id;
-	int oldnet;
 
 	if (netid >= RIONET_MAX_NETS)
 		return rc;
 
-	oldnet = test_and_set_bit(netid, net_table);
-
 	/*
-	 * First time through, make sure local device is rionet
-	 * capable, setup netdev (will be skipped on later probes)
+	 * If first time through this net, make sure local device is rionet
+	 * capable and setup netdev (this step will be skipped in later probes
+	 * on the same net).
 	 */
-	if (!oldnet) {
+	if (nets[netid].ndev == NULL) {
 		rio_local_read_config_32(rdev->net->hport, RIO_SRC_OPS_CAR,
 					 &lsrc_ops);
 		rio_local_read_config_32(rdev->net->hport, RIO_DST_OPS_CAR,
@@ -535,13 +601,21 @@ static int rionet_probe(struct rio_dev *rdev, const struct rio_device_id *id)
 			rc = -ENOMEM;
 			goto out;
 		}
-		nets[netid].ndev = ndev;
+
 		rc = rionet_setup_netdev(rdev->net->hport, ndev);
+		if (rc) {
+			printk(KERN_ERR "%s: failed to setup netdev (rc=%d)\n",
+			       DRV_NAME, rc);
+			free_netdev(ndev);
+			goto out;
+		}
+
 		INIT_LIST_HEAD(&nets[netid].peers);
 		nets[netid].nact = 0;
-	} else if (nets[netid].ndev == NULL)
-		goto out;
+		nets[netid].ndev = ndev;
+	}
 
+#if !defined(CONFIG_TI_KEYSTONE_RAPIDIO)
 	/*
 	 * If the remote device has mailbox/doorbell capabilities,
 	 * add it to the peer list.
@@ -554,32 +628,132 @@ static int rionet_probe(struct rio_dev *rdev, const struct rio_device_id *id)
 		peer->rdev = rdev;
 		list_add_tail(&peer->node, &nets[netid].peers);
 	}
+#else
+	if (!(rdev->pef & RIO_PEF_SWITCH)) {
+		peer = kmalloc(sizeof(struct rionet_peer), GFP_KERNEL);
+		if (!peer) {
+			rc = -ENOMEM;
+			goto out;
+		}
+		peer->rdev = rdev;
 
-	rio_set_drvdata(rdev, nets[netid].ndev);
+		pr_info("Using %s (vid %4.4x did %4.4x)\n",
+		       rio_name(rdev), rdev->vid, rdev->did);
 
-      out:
+		list_add_tail(&peer->node, &nets[netid].peers);
+	}
+#endif
+
+	return 0;
+out:
 	return rc;
 }
 
+static int rionet_shutdown(struct notifier_block *nb, unsigned long code,
+			   void *unused)
+{
+	struct rionet_peer *peer, *tmp;
+	int i;
+
+	pr_debug("%s: %s\n", DRV_NAME, __func__);
+
+	for (i = 0; i < RIONET_MAX_NETS; i++) {
+		if (nets[i].ndev == NULL)
+			continue;
+
+		list_for_each_entry_safe(peer, tmp, &nets[i].peers, node) {
+			if (nets[i].active[peer->rdev->destid]) {
+				rio_send_doorbell(peer->rdev,
+						  RIONET_DOORBELL_LEAVE);
+				nets[i].active[peer->rdev->destid] = NULL;
+			}
+		}
+	}
+
+	return NOTIFY_DONE;
+}
+
+static void rionet_remove_mport(struct device *dev,
+				struct class_interface *class_intf)
+{
+	struct rio_mport *mport = to_rio_mport(dev);
+	struct net_device *ndev;
+	int id = mport->id;
+
+	pr_debug("%s %s\n", __func__, mport->name);
+
+	WARN(nets[id].nact, "%s called when connected to %d peers\n",
+	     __func__, nets[id].nact);
+	WARN(nets[id].ndev == NULL, "%s called for mport without NDEV\n",
+	     __func__);
+
+	if (nets[id].ndev != NULL) {
+		ndev = nets[id].ndev;
+		netif_stop_queue(ndev);
+		unregister_netdev(ndev);
+
+		free_pages((unsigned long)nets[id].active,
+			   get_order(sizeof(void *) *
+			   RIO_MAX_ROUTE_ENTRIES(mport->sys_size)));
+		nets[id].active = NULL;
+		free_netdev(ndev);
+		nets[id].ndev = NULL;
+	}
+}
+
+#ifdef MODULE
 static struct rio_device_id rionet_id_table[] = {
-	{RIO_DEVICE(RIO_ANY_ID, RIO_ANY_ID)}
+	{RIO_DEVICE(RIO_ANY_ID, RIO_ANY_ID)},
+	{ 0, }	/* terminate list */
 };
 
-static struct rio_driver rionet_driver = {
-	.name = "rionet",
-	.id_table = rionet_id_table,
-	.probe = rionet_probe,
-	.remove = rionet_remove,
+MODULE_DEVICE_TABLE(rapidio, rionet_id_table);
+#endif
+
+static struct subsys_interface rionet_interface = {
+	.name		= "rionet",
+	.subsys		= &rio_bus_type,
+	.add_dev	= rionet_add_dev,
+	.remove_dev	= rionet_remove_dev,
+};
+
+static struct notifier_block rionet_notifier = {
+	.notifier_call = rionet_shutdown,
+};
+
+/* the rio_mport_interface is used to handle local mport devices */
+static struct class_interface rio_mport_interface __refdata = {
+	.class = &rio_mport_class,
+	.add_dev = NULL,
+	.remove_dev = rionet_remove_mport,
 };
 
 static int __init rionet_init(void)
 {
-	return rio_register_driver(&rionet_driver);
+	int ret;
+
+	ret = register_reboot_notifier(&rionet_notifier);
+	if (ret) {
+		pr_err("%s: failed to register reboot notifier (err=%d)\n",
+		       DRV_NAME, ret);
+		return ret;
+	}
+
+	ret = class_interface_register(&rio_mport_interface);
+	if (ret) {
+		pr_err("%s: class_interface_register error: %d\n",
+		       DRV_NAME, ret);
+		return ret;
+	}
+
+	return subsys_interface_register(&rionet_interface);
 }
 
 static void __exit rionet_exit(void)
 {
-	rio_unregister_driver(&rionet_driver);
+	unregister_reboot_notifier(&rionet_notifier);
+	subsys_interface_unregister(&rionet_interface);
+	class_interface_unregister(&rio_mport_interface);
 }
 
 late_initcall(rionet_init);
