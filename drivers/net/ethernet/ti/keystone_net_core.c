@@ -2163,7 +2163,7 @@ int netcp_create_interface(struct netcp_device *netcp_device,
 	netif_napi_add(ndev, &netcp->napi, netcp_poll, NETCP_NAPI_WEIGHT_RX);
 
 	/* Register the network device */
-	ndev->dev_id		= cpsw_port;
+	ndev->dev_id		= 0;
 	ndev->watchdog_timeo	= NETCP_TX_TIMEOUT;
 	ndev->netdev_ops	= &netcp_netdev_ops;
 
