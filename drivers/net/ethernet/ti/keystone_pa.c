@@ -974,7 +974,8 @@ static void tstamp_complete(u32 context, struct pa_packet *p_info)
 		err = sock_queue_err_skb(pend->sock, skb);
 	}
 
-	sock_put(skb->sk);
+	if (skb->sk)
+		sock_put(skb->sk);
 	if (!p_info || err)
 		kfree_skb(skb);
 
