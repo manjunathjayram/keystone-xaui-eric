@@ -187,16 +187,20 @@ static irqreturn_t khwq_acc_int_handler(int irq, void *_instdata)
 			kq = hwqueue_inst_to_priv(inst);
 		}
 
+		spin_lock(&kq->lock);
 		if (atomic_inc_return(&kq->desc_count) >= ACC_DESCS_MAX) {
 			atomic_dec(&kq->desc_count);
 			dev_err(kdev->dev, "acc-irq: queue %d full"
 				", entry dropped\n", queue + range_base);
+			spin_unlock(&kq->lock);
 			/* TODO: need a statistics counter for such drops */
 			continue;
 		}
 
 		idx = atomic_inc_return(&kq->desc_tail) & ACC_DESCS_MASK;
 		kq->descs[idx] = val;
+		spin_unlock(&kq->lock);
+
 		kq->notify_needed = 1;
 		dev_dbg(kdev->dev, "acc-irq: enqueue %08x at %d, queue %d\n",
 			val, idx, queue + range_base);
