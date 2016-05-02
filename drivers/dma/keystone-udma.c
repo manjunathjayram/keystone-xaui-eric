@@ -89,6 +89,7 @@ struct udma_chan {
 	int				 id;
 	struct udma_chan_data		 data;
 	wait_queue_head_t		 wqh;
+	spinlock_t			 lock;
 };
 
 #define udma_chan_dev(chan)	udma_map_dev((chan)->map)
@@ -268,6 +269,9 @@ static void udma_chan_complete_rx(struct udma_chan *chan,
 		vring->used->ring[used_idx].len = req->sg[0].length;
 	else
 		vring->used->ring[used_idx].len = -1;
+	/* flush writes before incrementing 'idx' which other software
+	 * uses as a flag to indicate the descriptor is available */
+	wmb();
 
 	vring->used->idx++;
 
@@ -336,7 +340,7 @@ static struct dma_async_tx_descriptor *udma_rxpool_alloc(void *arg,
 
 		req->dma_desc = dmaengine_prep_slave_sg(chan->chan, req->sg, 1,
 							chan->xfer_dir, 0);
-		if (unlikely(IS_ERR(req->dma_desc))) {
+		if (unlikely(IS_ERR_OR_NULL(req->dma_desc))) {
 			dev_err(udma_user_dev(user), " (%s) fail to prep dma\n",
 				udma_chan_name(chan));
 			dma_unmap_sg(udma_chan_dev(chan), req->sg, 1,
@@ -346,6 +350,10 @@ static struct dma_async_tx_descriptor *udma_rxpool_alloc(void *arg,
 
 		req->dma_desc->callback = udma_chan_complete_rx_cb;
 		req->dma_desc->callback_param = req;
+		/* flush descriptor fields to memory before submitting
+		 * to DMA layer */
+		wmb();
+
 		req->cookie = dmaengine_submit(req->dma_desc);
 
 		idx++;
@@ -464,6 +472,9 @@ static void udma_chan_complete_tx(struct udma_chan *chan,
 		vring->used->ring[used_idx].len = req->sg[0].length;
 	else
 		vring->used->ring[used_idx].len = -1;
+	/* flush writes before incrementing 'idx' which other software
+	 * uses as a flag to indicate the descriptor is available */
+	wmb();
 
 	vring->used->idx++;
 
@@ -519,7 +530,7 @@ static int udma_chan_submit_tx(struct udma_chan *chan, __u16 idx)
 
 	req->dma_desc = dmaengine_prep_slave_sg(chan->chan, req->sg, 1,
 						chan->xfer_dir, 0);
-	if (unlikely(IS_ERR(req->dma_desc))) {
+	if (unlikely(IS_ERR_OR_NULL(req->dma_desc))) {
 		dev_err(udma_user_dev(user), " (%s) failed to prep dma\n",
 			udma_chan_name(chan));
 		udma_chan_complete_tx(chan, req, DMA_ERROR);
@@ -528,7 +539,19 @@ static int udma_chan_submit_tx(struct udma_chan *chan, __u16 idx)
 
 	req->dma_desc->callback = udma_chan_complete_tx_cb;
 	req->dma_desc->callback_param = req;
+	/* flush descriptor fields to memory before submitting to DMA layer */
+	wmb();
+
+	/* hold a lock during the DMA submit in case other cores try to push */
+	spin_lock(&chan->lock);
 	req->cookie = dmaengine_submit(req->dma_desc);
+	spin_unlock(&chan->lock);
+	if (dma_submit_error(req->cookie)) {
+		dev_warn(udma_user_dev(user),
+			 "failed to submit packet for dma: %d\n", req->cookie);
+		udma_chan_complete_tx(chan, req, DMA_ERROR);
+		return -ENOMEM;
+	}
 
 	return 0;
 }
@@ -680,6 +703,7 @@ udma_chan_create(struct udma_user *user, struct udma_chan_data *data)
 		return ERR_PTR(-ENOMEM);
 	}
 
+	spin_lock_init(&chan->lock);
 	chan->data = *data;
 	chan->user =  user;
 	chan->map  =  map;
