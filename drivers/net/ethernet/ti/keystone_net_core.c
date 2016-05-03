@@ -374,7 +374,7 @@ int netcp_register_txhook(struct netcp_priv *netcp_priv, int order,
 
 	rcu_assign_pointer(netcp_priv->txhook_list_array, new_array);
 	spin_unlock(&netcp_priv->lock);
-	synchronize_rcu();
+	synchronize_rcu_bh();
 
 	if (old_array != NULL)
 		kfree(old_array);
@@ -443,7 +443,7 @@ int netcp_unregister_txhook(struct netcp_priv *netcp_priv, int order,
 
 	rcu_assign_pointer(netcp_priv->txhook_list_array, new_array);
 	spin_unlock(&netcp_priv->lock);
-	synchronize_rcu();
+	synchronize_rcu_bh();
 
 	kfree(old_array);
 	return 0;
@@ -498,7 +498,7 @@ int netcp_register_rxhook(struct netcp_priv *netcp_priv, int order,
 
 	rcu_assign_pointer(netcp_priv->rxhook_list_array, new_array);
 	spin_unlock(&netcp_priv->lock);
-	synchronize_rcu();
+	synchronize_rcu_bh();
 
 	if (old_array != NULL)
 		kfree(old_array);
@@ -567,7 +567,7 @@ int netcp_unregister_rxhook(struct netcp_priv *netcp_priv, int order,
 
 	rcu_assign_pointer(netcp_priv->rxhook_list_array, new_array);
 	spin_unlock(&netcp_priv->lock);
-	synchronize_rcu();
+	synchronize_rcu_bh();
 
 	kfree(old_array);
 	return 0;
@@ -760,8 +760,8 @@ static void netcp_rx_complete(void *data)
 
 	/* Call each of the RX hooks */
 	p_info->rxtstamp_complete = false;
-	rcu_read_lock();
-	rx_hook = rcu_dereference(netcp->rxhook_list_array);
+	rcu_read_lock_bh();
+	rx_hook = rcu_dereference_bh(netcp->rxhook_list_array);
 	if (rx_hook) {
 		for (; rx_hook->hook_rtn; ++rx_hook) {
 			int ret;
@@ -769,7 +769,7 @@ static void netcp_rx_complete(void *data)
 						rx_hook->hook_data,
 						p_info);
 			if (ret) {
-				rcu_read_unlock();
+				rcu_read_unlock_bh();
 				dev_err(netcp->dev, "RX hook %d failed: %d\n",
 					rx_hook->order, ret);
 				dev_kfree_skb(skb);
@@ -778,7 +778,7 @@ static void netcp_rx_complete(void *data)
 			}
 		}
 	}
-	rcu_read_unlock();
+	rcu_read_unlock_bh();
 
 	u64_stats_update_begin(&rx_stats->syncp_rx);
 	rx_stats->rx_packets++;
@@ -1207,8 +1207,8 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	memset(p_info.epib, 0, sizeof(p_info.epib));
 
 	/* Find out where to inject the packet for transmission */
-	rcu_read_lock();
-	tx_hook = rcu_dereference(netcp->txhook_list_array);
+	rcu_read_lock_bh();
+	tx_hook = rcu_dereference_bh(netcp->txhook_list_array);
 	if (tx_hook) {
 		for (; tx_hook->hook_rtn; ++tx_hook) {
 			ret = tx_hook->hook_rtn(tx_hook->order,
@@ -1220,13 +1220,13 @@ static int netcp_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 						"rejected the packet: %d\n",
 						tx_hook->order, ret);
 				}
-				rcu_read_unlock();
+				rcu_read_unlock_bh();
 				dev_kfree_skb(skb);
 				return (ret < 0) ? ret : NETDEV_TX_OK;
 			}
 		}
 	}
-	rcu_read_unlock();
+	rcu_read_unlock_bh();
 
 	/* Make sure some TX hook claimed the packet */
 	tx_pipe = p_info.tx_pipe;
