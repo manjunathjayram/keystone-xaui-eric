@@ -251,6 +251,7 @@ static dma_addr_t khwq_pop(struct hwqueue_instance *inst, unsigned *size,
 	u32 val, desc_size, idx;
 	dma_addr_t dma;
 	unsigned id;
+	unsigned long irqs;
 
 	qmgr = khwq_find_qmgr(inst);
 	if (unlikely(!qmgr))
@@ -260,10 +261,13 @@ static dma_addr_t khwq_pop(struct hwqueue_instance *inst, unsigned *size,
 
 	/* are we accumulated? */
 	if (kq->descs) {
+		spin_lock_irqsave(&kq->lock, irqs);
 		if (unlikely(atomic_dec_return(&kq->desc_count) < 0)) {
 			atomic_inc(&kq->desc_count);
+			spin_unlock_irqrestore(&kq->lock, irqs);
 			return 0;
 		}
+		spin_unlock_irqrestore(&kq->lock, irqs);
 
 		idx  = atomic_inc_return(&kq->desc_head);
 		idx &= ACC_DESCS_MASK;
@@ -1120,6 +1124,7 @@ static int khwq_init_queue(struct khwq_device *kdev,
 	kq->kdev = kdev;
 	kq->range = range;
 	kq->irq_num = -1;
+	spin_lock_init(&kq->lock);
 
 	inst->ops = &range->inst_ops;
 
